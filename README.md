@@ -107,16 +107,39 @@ SKILL_NAME=do TRIGGER=+++ INSTALL_DIR=~/.local/share/senior-by-default \
 
 ## Configure your project
 
-Drop `.claude/do/config.json` at your project (or workspace) root. Start with the minimal example:
+Drop `.claude/do/config.json` at your project (or workspace) root. The path the example lives at depends on how you installed:
+
+### Option A: install-agnostic (works for any install method)
+
+Pull the example straight from GitHub:
+```bash
+mkdir -p .claude/do
+curl -fsSL https://raw.githubusercontent.com/mitiay7/senior-by-default/main/examples/minimal-config.json \
+  -o .claude/do/config.json
+$EDITOR .claude/do/config.json    # set issue_tracker.repo to your owner/repo
+```
+
+Available examples (substitute the filename in the URL):
+- `minimal-config.json` — single-repo + GitHub
+- `multi-repo-go-react-config.json` — workspace with Go API + React web + docs
+- `python-fastapi-config.json` — Python + Alembic + GitHub
+- `rust-workspace-config.json` — Rust workspace + GitLab
+
+### Option B: copy from your local install
+
+| Install method | Examples directory |
+|---|---|
+| Plugin install (`/plugin install ...`) | `~/.claude/plugins/senior-by-default/examples/` |
+| Manual symlink (default install dir) | `~/.local/share/senior-by-default/examples/` |
+| Manual clone elsewhere | `<your-clone>/examples/` |
 
 ```bash
 mkdir -p .claude/do
-cp ~/.claude/skills/do/../../examples/minimal-config.json .claude/do/config.json
-# Set issue_tracker.repo to your owner/repo
+cp <examples-dir>/minimal-config.json .claude/do/config.json    # ← pick row above
 $EDITOR .claude/do/config.json
 ```
 
-For multi-repo workspaces, monorepo, Python, or Rust projects, see [`examples/`](examples/) for full configs.
+For multi-repo workspaces, monorepo, Python, or Rust projects, see [`examples/`](examples/) on GitHub for full configs.
 
 Full schema: [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md).
 JSON Schema for programmatic validation: [`skills/do/references/config.schema.json`](skills/do/references/config.schema.json).

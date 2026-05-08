@@ -1,11 +1,25 @@
 ---
 name: do
 version: 0.1.0
+model: opus
+disable-model-invocation: true
 description: |
   Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Opus plan + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
   TRIGGER when: user invokes /do (or +++ shortcut); task describes a coding change (≥1 file modified or created, defined outcome); `.claude/do/config.json` present in repo or workspace root.
   SKIP when: pure Q&A or explanation; code review without implementation; scaffolding-from-scratch ("create new project"); exploratory ("how would I…"); single-line edits where the pipeline is overkill.
 ---
+
+<!--
+Frontmatter rationale:
+- `model: opus` — pins the orchestrator (Phase 0 routing, Phase 3 review,
+  Phase 4 decisions) to Opus regardless of session model. Implementation
+  delegates to Sonnet/Haiku via explicit `Agent(model: "...")` calls.
+- `disable-model-invocation: true` — skill performs side effects (creates
+  issues, commits, pushes, opens PRs, optionally auto-merges). It must
+  fire only on explicit `/do` invocation or `+++` user trigger, never
+  auto-discovered from description matching mid-conversation.
+-->
+
 
 # Multi-Actor Implementation Pipeline
 

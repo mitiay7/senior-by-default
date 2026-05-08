@@ -76,11 +76,15 @@ jobs:
           parts = p.read_text().split('---', 2)
           assert len(parts) >= 3, 'no frontmatter delimiter found'
           fm = yaml.safe_load(parts[1])
-          for required in ('name', 'version', 'description'):
+          for required in ('name', 'version', 'description', 'model', 'disable-model-invocation'):
               assert required in fm, f'missing frontmatter key: {required}'
           assert fm['name'] == 'do', f'name must be "do", got {fm["name"]!r}'
           assert isinstance(fm['version'], str) and fm['version'].count('.') == 2, \
               f'version must be semver string, got {fm["version"]!r}'
+          assert fm['model'] == 'opus', \
+              f'model must be "opus" (architect/reviewer role pinned regardless of session), got {fm["model"]!r}'
+          assert fm['disable-model-invocation'] is True, \
+              f'disable-model-invocation must be true (skill performs side effects, must not auto-trigger), got {fm["disable-model-invocation"]!r}'
           desc = fm['description']
           assert 'TRIGGER' in desc and 'SKIP' in desc, \
               'description should include TRIGGER:/SKIP: blocks'
