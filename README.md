@@ -4,6 +4,7 @@ You type:
 ```
 /do add user avatars to settings page
 ```
+(or `/senior-by-default:do add user avatars to settings page` if installed as a plugin — see [Install](#install))
 
 The skill creates an issue, spins up a worktree on `feat/i42-add-user-avatars`, has Sonnet implement it (with self-review), runs gated quality checks (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens the PR, and — if you opted in — waits for green CI and auto-merges.
 
@@ -45,6 +46,13 @@ The skill inherits whatever auth `gh`/`git` already have on your machine — ass
 
 ## Install
 
+The two install paths invoke the skill with **different slash-commands** because plugins are namespaced. Pick one and stick to it:
+
+| Install method | Slash-command | Customizable? |
+|---|---|---|
+| Plugin install (recommended) | `/senior-by-default:do <task>` | Skill name fixed by plugin manifest |
+| Manual symlink (`install.sh` or by hand) | `/do <task>` | Yes — `install.sh` lets you rename via `SKILL_NAME` |
+
 ### Recommended — Claude Code plugin install
 
 Once `senior-by-default` is listed in a marketplace you've added (or you point Claude Code at this repo as a marketplace):
@@ -53,11 +61,25 @@ Once `senior-by-default` is listed in a marketplace you've added (or you point C
 /plugin install senior-by-default@mitiay7/senior-by-default
 ```
 
-This installs into Claude Code's plugin directory and registers the `/do` skill automatically.
+After install, run tasks with the **plugin-namespaced command**:
+
+```
+/senior-by-default:do add user avatars to settings page
+```
+
+If you want a `+++` shortcut, add this block to `~/.claude/CLAUDE.md` manually (the plugin path doesn't run `install.sh`, so the trigger isn't auto-installed):
+
+```md
+<!-- senior-by-default:trigger:start -->
+## +++ Trigger
+
+When a user message starts with `+++`, treat everything after `+++` as the argument and invoke the `/senior-by-default:do` skill with that text.
+<!-- senior-by-default:trigger:end -->
+```
 
 ### Manual — clone + symlink
 
-For users who want to track `main` directly or hack on the skill:
+For users who want to track `main` directly, hack on the skill, or use the bare `/do` command without a plugin namespace:
 
 ```bash
 git clone https://github.com/mitiay7/senior-by-default ~/.local/share/senior-by-default
@@ -65,11 +87,13 @@ mkdir -p ~/.claude/skills
 ln -s ~/.local/share/senior-by-default/skills/do ~/.claude/skills/do
 ```
 
+Run tasks with `/do <task>` (no plugin namespace).
+
 ### One-liner (review the script first)
 
 The `install.sh` is interactive — it asks for skill name (default `do`), trigger shortcut (default `+++`, `none` to skip), and install dir. It writes a symlink, optionally appends a trigger block to `~/.claude/CLAUDE.md`, and runs dependency checks.
 
-**Read it first**: <https://github.com/mitiay7/senior-by-default/blob/main/install.sh>
+**This script does manual symlink install, NOT plugin install.** It registers `/do` (or your custom name), not `/senior-by-default:do`. **Read it first**: <https://github.com/mitiay7/senior-by-default/blob/main/install.sh>
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mitiay7/senior-by-default/main/install.sh | bash

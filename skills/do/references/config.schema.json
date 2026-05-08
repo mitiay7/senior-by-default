@@ -10,12 +10,12 @@
       "description": "Underscore-prefixed keys are reserved for human comments (_description, _notes, _setup_notes, etc.) and ignored by validators."
     }
   },
-  "required": ["version"],
   "properties": {
     "version": {
       "type": "integer",
       "const": 1,
-      "description": "Schema version. Currently 1. Validators may default to 1 if omitted (with warning) for back-compat."
+      "default": 1,
+      "description": "Schema version. Currently 1. Optional for back-compat: when omitted, validators MUST default to 1 and emit a warning rather than fail. This matches the documented behavior in references/config-validation.md."
     },
 
     "workspace": {
