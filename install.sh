@@ -124,15 +124,46 @@ else
   git clone "$REPO_URL" "$INSTALL_DIR"
 fi
 
-# --- Step 4: symlink into ~/.claude/skills/ ---------------------------------
+# --- Step 4: resolve symlink target (pristine vs rendered) ------------------
+
+# Pristine source — never modified, so `git pull` always works.
+PRISTINE_SOURCE="$INSTALL_DIR/skills/do"
+if [ ! -d "$PRISTINE_SOURCE" ]; then
+  die "Expected $PRISTINE_SOURCE to exist but it doesn't — install dir layout is wrong"
+fi
+
+if [ "$SKILL_NAME" = "$DEFAULT_SKILL_NAME" ]; then
+  # Default name: symlink directly to pristine source (no copy needed)
+  SYMLINK_TARGET="$PRISTINE_SOURCE"
+else
+  # Custom name: regenerate a patched copy in .rendered-skills/<name>/
+  # This dir is gitignored, so the pristine clone stays clean for `git pull`.
+  RENDERED_ROOT="$INSTALL_DIR/.rendered-skills"
+  RENDERED_DIR="$RENDERED_ROOT/$SKILL_NAME"
+  log "Generating patched skill copy at $RENDERED_DIR"
+  rm -rf "$RENDERED_DIR"
+  mkdir -p "$RENDERED_DIR"
+  cp -R "$PRISTINE_SOURCE/." "$RENDERED_DIR/"
+  python3 - "$RENDERED_DIR/SKILL.md" "$DEFAULT_SKILL_NAME" "$SKILL_NAME" <<'PY'
+import re, sys
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f:
+    content = f.read()
+# Frontmatter `name: <old>` → `name: <new>`
+content = re.sub(r'^(name:\s*)' + re.escape(old) + r'\b', r'\1' + new, content, count=1, flags=re.MULTILINE)
+# Slash-command refs `/<old>` → `/<new>` (where followed by space, paren, period, slash, or EOL)
+content = re.sub(r'/' + re.escape(old) + r'(?=[\s).\\/]|$)', '/' + new, content)
+with open(path, 'w') as f:
+    f.write(content)
+print(f"  patched RENDERED copy (pristine source untouched)")
+PY
+  SYMLINK_TARGET="$RENDERED_DIR"
+fi
+
+# --- Step 5: symlink into ~/.claude/skills/ ---------------------------------
 
 mkdir -p "$CLAUDE_SKILLS_DIR"
 SYMLINK_PATH="$CLAUDE_SKILLS_DIR/$SKILL_NAME"
-SYMLINK_TARGET="$INSTALL_DIR/skills/do"
-
-if [ ! -d "$SYMLINK_TARGET" ]; then
-  die "Expected $SYMLINK_TARGET to exist but it doesn't — install dir layout is wrong"
-fi
 
 if [ -L "$SYMLINK_PATH" ]; then
   CURRENT_TARGET=$(readlink "$SYMLINK_PATH")
@@ -153,23 +184,6 @@ elif [ -e "$SYMLINK_PATH" ]; then
 else
   ln -s "$SYMLINK_TARGET" "$SYMLINK_PATH"
   ok "Symlinked $SYMLINK_PATH → $SYMLINK_TARGET"
-fi
-
-# --- Step 5: customize SKILL.md if non-default name -------------------------
-
-if [ "$SKILL_NAME" != "$DEFAULT_SKILL_NAME" ]; then
-  log "Patching SKILL.md frontmatter for custom name '$SKILL_NAME'"
-  python3 - "$SYMLINK_TARGET/SKILL.md" "$DEFAULT_SKILL_NAME" "$SKILL_NAME" <<'PY'
-import re, sys
-path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path) as f:
-    content = f.read()
-content = re.sub(r'^(name:\s*)' + re.escape(old) + r'\b', r'\1' + new, content, count=1, flags=re.MULTILINE)
-content = re.sub(r'/' + re.escape(old) + r'(?=[\s).\\/]|$)', '/' + new, content)
-with open(path, 'w') as f:
-    f.write(content)
-print("  patched")
-PY
 fi
 
 # --- Step 6: trigger setup with begin/end markers (safe round-trip) ---------

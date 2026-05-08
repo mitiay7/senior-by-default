@@ -13,6 +13,9 @@
 .claude/do/cache/
 .claude/worktrees/
 
+# install.sh generates patched skill copies here for custom SKILL_NAME
+.rendered-skills/
+
 # Per-user metrics output (if anyone runs the skill from inside this repo)
 ~/.claude/do/metrics/
 

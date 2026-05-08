@@ -125,13 +125,16 @@ Available examples (substitute the filename in the URL):
 - `python-fastapi-config.json` — Python + Alembic + GitHub
 - `rust-workspace-config.json` — Rust workspace + GitLab
 
-### Option B: copy from your local install
+### Option B: copy from a local clone
+
+If you have a local clone of this repo (manual install, or you cloned separately for hacking):
 
 | Install method | Examples directory |
 |---|---|
-| Plugin install (`/plugin install ...`) | `~/.claude/plugins/senior-by-default/examples/` |
 | Manual symlink (default install dir) | `~/.local/share/senior-by-default/examples/` |
 | Manual clone elsewhere | `<your-clone>/examples/` |
+
+> **Note for plugin install users:** Claude Code stores plugins under `~/.claude/plugins/cache/...` with versioned subdirectories that change across updates — this path is **not stable** to copy from. Use Option A (curl) instead, or clone the repo separately just for the examples.
 
 ```bash
 mkdir -p .claude/do

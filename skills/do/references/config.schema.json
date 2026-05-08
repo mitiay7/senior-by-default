@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mitiay7/senior-by-default/blob/main/skills/do/references/config.schema.json",
   "title": "senior-by-default config",
-  "description": "Schema for .claude/do/config.json. All fields except `version` are optional; defaults documented in config-schema.md. All path-bearing fields resolve relative to the directory containing this config file (not CWD).",
+  "description": "Schema for .claude/do/config.json. `version` is recommended; if omitted, validators MUST default to 1 and emit a warning rather than fail (back-compat). All other fields are optional; defaults documented in config-schema.md. Explicit mismatches (e.g. `version: 2` with this schema) are hard failures. All path-bearing fields resolve relative to the directory containing this config file (not CWD).",
   "type": "object",
   "additionalProperties": false,
   "patternProperties": {
@@ -21,6 +21,7 @@
     "workspace": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["is_workspace", "repos"],
       "properties": {
         "is_workspace": { "type": "boolean", "const": true },
         "repos": {

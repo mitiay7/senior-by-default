@@ -20,9 +20,9 @@ Validators (Phase 0.0) and runtime path checks MUST apply this rule consistently
 
 ## Full schema
 
-`version` is the only **required** field — it identifies the schema version. All other fields are optional; missing fields fall back to defaults documented below.
+**No fields are strictly required.** `version` is *recommended* — it identifies the schema version. If omitted, validators default to `1` and emit a warning (back-compat for early hand-written configs). Explicit mismatches (`version: 2` against this schema) are hard failures.
 
-If `version` is missing, validators should default to `1` and emit a warning rather than hard-fail (back-compat for early hand-written configs).
+All other fields are optional; missing fields fall back to defaults documented below. The JSON Schema in [`config.schema.json`](config.schema.json) reflects this — `version` is **not** in the schema's `required` array.
 
 ```json
 {
