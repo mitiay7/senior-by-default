@@ -271,7 +271,7 @@ See [`config-schema.md`](config-schema.md) under `metrics` for the full Tier 1 e
 DORA-ish self-analysis: cycle time per complexity, review-iterations distribution, gate failure rate, self-review calibration trend, CI flakiness (when CI gate is opt-in-on).
 
 ## 4.12 Notify completion
-If `config.notifications` configured AND `task_completed` in events → send. See [`references/notifications.md`](references/notifications.md). Include PR url, auto-merge status, ADR ref if applicable.
+If `config.notifications` configured AND `task_completed` in events → send. See [`notifications.md`](notifications.md). Include PR url, auto-merge status, ADR ref if applicable.
 
 ## Announce
 

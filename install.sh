@@ -20,13 +20,17 @@ DEFAULT_TRIGGER="+++"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 
+# Markers for safe install/uninstall round-trip in CLAUDE.md
+TRIGGER_BEGIN="<!-- senior-by-default:trigger:start -->"
+TRIGGER_END="<!-- senior-by-default:trigger:end -->"
+
 log()  { printf "▸ %s\n" "$*"; }
 warn() { printf "⚠ %s\n" "$*" >&2; }
 ok()   { printf "✓ %s\n" "$*"; }
+die()  { printf "✗ %s\n" "$*" >&2; exit 1; }
 
 # --- Interactive helpers (work under curl-pipe via /dev/tty) ----------------
 
-# tty_in: stream to read user input from. /dev/tty if available, else stdin.
 if [ -e /dev/tty ] && [ -r /dev/tty ]; then
   TTY_IN=/dev/tty
 else
@@ -72,14 +76,13 @@ TRIGGER=$(prompt "Trigger shortcut (use 'none' to skip)" "$DEFAULT_TRIGGER" "TRI
 
 # Validate skill name (must be valid filesystem name)
 if ! [[ "$SKILL_NAME" =~ ^[a-z][a-z0-9_-]*$ ]]; then
-  warn "Skill name must be lowercase alphanumeric with - or _ (got '$SKILL_NAME')"
-  exit 1
+  die "Skill name must be lowercase alphanumeric with - or _ (got '$SKILL_NAME')"
 fi
 
 echo
 log "Plan:"
 echo "  • Install repo at: $INSTALL_DIR"
-echo "  • Symlink:         $CLAUDE_SKILLS_DIR/$SKILL_NAME → \$INSTALL_DIR"
+echo "  • Symlink:         $CLAUDE_SKILLS_DIR/$SKILL_NAME → \$INSTALL_DIR/skills/do"
 echo "  • Slash command:   /$SKILL_NAME"
 if [ "$TRIGGER" != "none" ] && [ -n "$TRIGGER" ]; then
   echo "  • Trigger:         '$TRIGGER ...' → /$SKILL_NAME ..."
@@ -88,89 +91,109 @@ else
 fi
 echo
 
-# --- Step 2: clone / update repo --------------------------------------------
+# --- Step 2: hard-dependency check (fail-fast) ------------------------------
+
+log "Checking required tools..."
+hard_missing=()
+for cmd in git python3; do
+  command -v "$cmd" >/dev/null 2>&1 || hard_missing+=("$cmd")
+done
+if [ ${#hard_missing[@]} -gt 0 ]; then
+  die "Missing required tools: ${hard_missing[*]} (install before running)"
+fi
+
+soft_missing=()
+for cmd in jq gh; do
+  command -v "$cmd" >/dev/null 2>&1 || soft_missing+=("$cmd")
+done
+
+# --- Step 3: clone / update repo --------------------------------------------
 
 if [ -d "$INSTALL_DIR/.git" ]; then
-  log "Updating existing install at $INSTALL_DIR"
-  git -C "$INSTALL_DIR" pull --ff-only
+  log "Existing install at $INSTALL_DIR — checking state"
+  if ! git -C "$INSTALL_DIR" diff --quiet || ! git -C "$INSTALL_DIR" diff --cached --quiet; then
+    warn "Local changes detected in $INSTALL_DIR — skipping pull"
+    warn "Stash or commit them, then re-run install.sh"
+  else
+    log "Pulling latest"
+    git -C "$INSTALL_DIR" pull --ff-only || warn "git pull --ff-only failed — your branch may have diverged"
+  fi
 else
   log "Cloning $REPO_URL → $INSTALL_DIR"
   mkdir -p "$(dirname "$INSTALL_DIR")"
   git clone "$REPO_URL" "$INSTALL_DIR"
 fi
 
-# --- Step 3: symlink into ~/.claude/skills/ ---------------------------------
+# --- Step 4: symlink into ~/.claude/skills/ ---------------------------------
 
 mkdir -p "$CLAUDE_SKILLS_DIR"
 SYMLINK_PATH="$CLAUDE_SKILLS_DIR/$SKILL_NAME"
+SYMLINK_TARGET="$INSTALL_DIR/skills/do"
+
+if [ ! -d "$SYMLINK_TARGET" ]; then
+  die "Expected $SYMLINK_TARGET to exist but it doesn't — install dir layout is wrong"
+fi
 
 if [ -L "$SYMLINK_PATH" ]; then
   CURRENT_TARGET=$(readlink "$SYMLINK_PATH")
-  if [ "$CURRENT_TARGET" = "$INSTALL_DIR" ]; then
+  if [ "$CURRENT_TARGET" = "$SYMLINK_TARGET" ]; then
     ok "Symlink already correct"
   else
     warn "$SYMLINK_PATH points elsewhere ($CURRENT_TARGET)"
     if confirm "Replace it?" "N"; then
       rm "$SYMLINK_PATH"
-      ln -s "$INSTALL_DIR" "$SYMLINK_PATH"
+      ln -s "$SYMLINK_TARGET" "$SYMLINK_PATH"
       ok "Symlink updated"
     else
       warn "Skipped symlink — your /$SKILL_NAME may not work"
     fi
   fi
 elif [ -e "$SYMLINK_PATH" ]; then
-  warn "$SYMLINK_PATH exists and is NOT a symlink — won't overwrite"
-  warn "Move/remove it manually, then re-run install.sh"
-  exit 1
+  die "$SYMLINK_PATH exists and is NOT a symlink — move/remove it manually then re-run install.sh"
 else
-  ln -s "$INSTALL_DIR" "$SYMLINK_PATH"
-  ok "Symlinked $SYMLINK_PATH → $INSTALL_DIR"
+  ln -s "$SYMLINK_TARGET" "$SYMLINK_PATH"
+  ok "Symlinked $SYMLINK_PATH → $SYMLINK_TARGET"
 fi
 
-# --- Step 4: customize SKILL.md if non-default name -------------------------
+# --- Step 5: customize SKILL.md if non-default name -------------------------
 
 if [ "$SKILL_NAME" != "$DEFAULT_SKILL_NAME" ]; then
   log "Patching SKILL.md frontmatter for custom name '$SKILL_NAME'"
-  # Replace `name: do` (frontmatter), `/do` (slash-command refs), and `do` skill mentions in description
-  python3 - "$INSTALL_DIR/SKILL.md" "$DEFAULT_SKILL_NAME" "$SKILL_NAME" <<'PY'
+  python3 - "$SYMLINK_TARGET/SKILL.md" "$DEFAULT_SKILL_NAME" "$SKILL_NAME" <<'PY'
 import re, sys
 path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as f:
     content = f.read()
-
-# 1. Frontmatter `name: <old>` → `name: <new>`
 content = re.sub(r'^(name:\s*)' + re.escape(old) + r'\b', r'\1' + new, content, count=1, flags=re.MULTILINE)
-
-# 2. /<old> slash-command references → /<new>  (only when followed by space, paren, period, slash, or end)
 content = re.sub(r'/' + re.escape(old) + r'(?=[\s).\\/]|$)', '/' + new, content)
-
 with open(path, 'w') as f:
     f.write(content)
 print("  patched")
 PY
 fi
 
-# --- Step 5: trigger setup (optional) --------------------------------------
+# --- Step 6: trigger setup with begin/end markers (safe round-trip) ---------
 
 if [ "$TRIGGER" != "none" ] && [ -n "$TRIGGER" ]; then
-  TRIGGER_HEADER="## ${TRIGGER} Trigger"
   TRIGGER_BLOCK=$(cat <<EOF
 
 
-${TRIGGER_HEADER}
+$TRIGGER_BEGIN
+## ${TRIGGER} Trigger
 
 When a user message starts with \`${TRIGGER}\`, treat everything after \`${TRIGGER}\` as the argument and invoke the \`/${SKILL_NAME}\` skill with that text. This is a shorthand — \`${TRIGGER} add user avatars\` is equivalent to \`/${SKILL_NAME} add user avatars\`.
+$TRIGGER_END
 EOF
 )
 
   if [ -f "$CLAUDE_MD" ]; then
-    if grep -qF "$TRIGGER_HEADER" "$CLAUDE_MD" 2>/dev/null; then
-      ok "Trigger already configured in $CLAUDE_MD"
-    elif confirm "Append trigger to existing $CLAUDE_MD?" "Y"; then
+    if grep -qF "$TRIGGER_BEGIN" "$CLAUDE_MD" 2>/dev/null; then
+      ok "Trigger block already present in $CLAUDE_MD (markers found)"
+    elif confirm "Append trigger block to $CLAUDE_MD?" "Y"; then
       printf "%s\n" "$TRIGGER_BLOCK" >> "$CLAUDE_MD"
-      ok "Trigger added to $CLAUDE_MD"
+      ok "Trigger added to $CLAUDE_MD (between $TRIGGER_BEGIN ... $TRIGGER_END)"
     else
-      log "Skipped. Add this manually to $CLAUDE_MD when ready:"
+      log "Skipped. Add manually if you want it later:"
       echo "$TRIGGER_BLOCK"
     fi
   else
@@ -181,22 +204,14 @@ EOF
   fi
 fi
 
-# --- Step 6: dependency check ----------------------------------------------
+# --- Step 7: soft-dependency status report ---------------------------------
 
-echo
-log "Checking dependencies..."
-missing=()
-for cmd in git jq python3; do
-  command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
-done
-command -v gh >/dev/null 2>&1 || missing+=("gh (GitHub CLI)")
-
-if [ ${#missing[@]} -gt 0 ]; then
-  warn "Missing tools: ${missing[*]}"
-  warn "macOS: brew install ${missing[*]}"
-  warn "Linux: use your distro's package manager"
+if [ ${#soft_missing[@]} -gt 0 ]; then
+  warn "Optional tools missing: ${soft_missing[*]}"
+  warn "  • jq     — required for tracker output parsing (install before running tasks)"
+  warn "  • gh     — required for GitHub tracker (install + run 'gh auth login')"
+  warn "  macOS:    brew install ${soft_missing[*]}"
 fi
-
 if command -v gh >/dev/null 2>&1; then
   if ! gh auth status >/dev/null 2>&1; then
     warn "gh is installed but not authenticated. Run: gh auth login"
@@ -205,7 +220,7 @@ if command -v gh >/dev/null 2>&1; then
   fi
 fi
 
-# --- Step 7: done ----------------------------------------------------------
+# --- Step 8: done ----------------------------------------------------------
 
 cat <<EOF
 
@@ -234,8 +249,11 @@ else
 fi
 cat <<EOF
 
+  3. Uninstall any time:
+       $INSTALL_DIR/uninstall.sh
+
 Documentation: $INSTALL_DIR/README.md
-Schema:        $INSTALL_DIR/references/config-schema.md
+Schema:        $INSTALL_DIR/skills/do/references/config-schema.md
 Issues:        https://github.com/mitiay7/senior-by-default/issues
 
 EOF

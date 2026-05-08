@@ -7,13 +7,17 @@ Phase 0.2 only. **If cache exists and `$ARGUMENTS` doesn't request re-detection,
 `~/.claude/do/cache/<slug>.json`
 
 ### Slug rule
-Apply this **exact** transformation to the absolute repo path:
+Replace every run of non-alphanumeric characters (including `/`, `.`, ` `, `_`) with a single `-`, then strip leading and trailing `-`. Reference implementation in bash:
 
-```
-slug = path.replace(/[^a-zA-Z0-9]+/g, '-').strip('-')
+```bash
+slug() {
+  printf '%s' "$1" | LC_ALL=C tr -c '[:alnum:]' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//'
+}
+slug /Users/alice/work/api                                # → Users-alice-work-api
+slug "/Users/alice/work/my project"                       # → Users-alice-work-my-project
 ```
 
-That is: every run of non-alphanumeric characters (including `/`, `.`, ` `, `_`, etc.) collapses into a single `-`; leading/trailing `-` stripped.
+Equivalent regex (for spec verification): `s/[^a-zA-Z0-9]+/-/g` then trim leading/trailing `-`.
 
 Examples (verified):
 | Repo path | Slug |
@@ -48,10 +52,13 @@ This matches Claude Code's project-path slug convention so cache files don't col
 Re-detect (and overwrite cache) only when:
 - Cache file does not exist
 - `cache.version != 1` (schema migrated)
+- **`cache.repo_path` does not match the current repo's absolute path** — guards against slug collisions for paths like `/Users/alice/work-api` and `/Users/alice/work/api` (both produce the same slug `Users-alice-work-api`)
 - `$ARGUMENTS` contains literal `--redetect`
 - `$ARGUMENTS` contains natural-language equivalent: "re-detect stack", "повторно определи стек", "пере-определи", "redetect stack", etc.
 
 **Do NOT** auto-invalidate by file mtime, dependency changes, or time elapsed. Stack changes are infrequent and the user has full control.
+
+When writing cache, always include `repo_path` (canonical absolute path, no symlinks resolved unless via `realpath`). The verification step on load uses string equality.
 
 ## Detection rules
 

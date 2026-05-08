@@ -1,0 +1,26 @@
+{
+  "name": "senior-by-default",
+  "version": "0.1.0",
+  "description": "Multi-actor implementation pipeline for Claude Code: Opus architects & reviews, Sonnet implements, Haiku handles trivial mechanical changes. Auto-routes by complexity, runs gated quality checks (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), and integrates with GitHub/GitLab/custom trackers.",
+  "author": {
+    "name": "Dmitry Bychkov",
+    "url": "https://github.com/mitiay7"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/mitiay7/senior-by-default",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mitiay7/senior-by-default.git"
+  },
+  "keywords": [
+    "claude-code",
+    "skill",
+    "pipeline",
+    "code-review",
+    "multi-agent",
+    "architect",
+    "migrations",
+    "ci",
+    "automation"
+  ]
+}

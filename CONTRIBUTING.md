@@ -24,11 +24,54 @@ Small / focused PRs are easier to review than rewrites. Touch one phase per PR i
 For non-trivial changes:
 
 - Add an ADR in `docs/adr/` (if architectural decision)
-- Update relevant `references/*.md` files
-- Bump version in `CHANGELOG.md`
+- Update relevant `skills/do/references/*.md` files
+- Update `skills/do/references/config.schema.json` if config shape changes
+- Bump version in `CHANGELOG.md` and SKILL.md frontmatter
 - Add a sanitized example to `examples/` if you're introducing a new config field
 
 The skill is **opinionated**. Some PRs will be declined for fit reasons — not quality. If unsure, open an issue first to discuss direction.
+
+### Acceptance criteria for PRs
+
+- [ ] CI green (lint workflow runs shellcheck + JSON schema validation + frontmatter check + markdown-link sanity)
+- [ ] If config shape changed: `config.schema.json` updated AND all `examples/*.json` re-validate
+- [ ] If reference content changed: linked from `SKILL.md` references table OR there's a clear progressive-disclosure trigger
+- [ ] No personal paths/usernames/repo names committed (run `grep -rn "yourname\|/Users/yourname" skills/ examples/` before push)
+- [ ] CHANGELOG entry under `[Unreleased]`
+
+### Versioning (SemVer)
+
+Applied to `version` in `.claude-plugin/plugin.json` AND `SKILL.md` frontmatter (kept in sync):
+
+- **Major** (`X.0.0`) — Breaking change to existing user configs OR phase-flow contract. Examples: required field added to existing config block; renamed gate; removed override flag; changed metrics JSONL schema in incompatible way.
+- **Minor** (`0.X.0`) — New optional config fields, new opt-in features, new gates that don't run unless configured. Existing configs continue to work unchanged.
+- **Patch** (`0.0.X`) — Bug fixes, doc improvements, prompt tweaks. No config or output changes.
+
+**Rule of thumb for "breaking"**: if a user with a working `.claude/do/config.json` would see different behavior after upgrade without editing config, that's at least minor; if they'd see an *error*, that's major.
+
+### Reference docs vs prompt logic
+
+`skills/do/references/*.md` are **read by Opus during phases**. Changes here change behavior. Treat them like code:
+
+- Adding a step → minor version bump
+- Renaming a phase or removing an instruction → major version bump
+- Tightening wording, fixing typos → patch
+- Adding examples without changing rules → patch
+
+Don't treat references as "just docs". They're prompt material that gates real work.
+
+### Test checklist before PR
+
+There's no automated functional test suite — the skill runs through Claude. Smoke-test manually:
+
+1. Run a real `+++` task on a sandbox repo. Verify:
+   - Final announce includes `Metrics: <count> entries in <path>` (if metrics configured)
+   - Branch name matches `config.naming` template (no `claude/<adj>-<noun>`)
+   - Phase you changed actually fires the new behavior
+2. If your change touches stack detection, test with at least 2 stacks (e.g. pure Go + JS monorepo).
+3. If your change touches a gate, force a failure case + a pass case to verify both paths.
+4. Inspect last metrics entry: `tail -1 ~/.claude/do/metrics/<repo-slug>.jsonl | jq` — does it have the data you expected?
+5. Check: did anything regress? Re-run a previously-working task type.
 
 ## Adding a new tracker
 

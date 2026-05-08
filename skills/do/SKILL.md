@@ -1,9 +1,21 @@
 ---
 name: do
-description: "Senior-by-default. Multi-actor complex-task pipeline for Claude Code: Opus architects & reviews, Sonnet implements, Haiku handles trivial mechanical changes. Auto-routes by complexity (Trivial/Low/Medium/High). Stack auto-detected and cached per repo. Distributed-team practices: PR-size guards, CODEOWNERS-aware review, zero-downtime migration audit, Sonnet self-review, ADRs for High; opt-in: CI gating, auto-merge, async notifications. Project-specific behavior via .claude/do/config.json. Trigger: /do (optional `+++` shorthand — see README)."
+version: 0.1.0
+description: |
+  Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Opus plan + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
+  TRIGGER when: user invokes /do (or +++ shortcut); task describes a coding change (≥1 file modified or created, defined outcome); `.claude/do/config.json` present in repo or workspace root.
+  SKIP when: pure Q&A or explanation; code review without implementation; scaffolding-from-scratch ("create new project"); exploratory ("how would I…"); single-line edits where the pipeline is overkill.
 ---
 
-# Universal Complex Task Pipeline
+# Multi-Actor Implementation Pipeline
+
+## Notation conventions
+
+This SKILL.md uses shorthand for Claude Code primitives — clarification for adopters reading the source:
+
+- **`Agent(model: "<X>")`** — invoke the Task tool with the `subagent_type` mapping to model `<X>`. Concrete subagent types come from installed plugins (e.g. `code-refactoring:code-reviewer`); when none specified, harness defaults are used.
+- **Worktree creation** — always explicit `git worktree add` (per [`references/git-rules.md`](references/git-rules.md)). The Task tool's `isolation: "worktree"` parameter is **forbidden** here because it auto-names branches, breaking `config.naming` traceability.
+- **`<current model from environment>`** — Co-Authored-By footer reads the running model identifier from the harness session metadata (e.g. "Claude Opus 4.7 (1M context)"). Never hardcode a model version.
 
 > **Opus** — analysis, issue creation, code review, merge decisions. NEVER writes code **except** when explicitly invoked via `--implementer=opus` (rare: deep algorithmic, security-critical, complex concurrency). When Opus implements, the Phase 3 Opus review MUST be a fresh cold-context `Agent` invocation — independence of review is preserved by separation of context, not separation of model.
 > **Sonnet** (`Agent(model: "sonnet")`) — plan, implement, test, self-review. NEVER makes architectural decisions. Also reviews Haiku's diffs for Trivial tasks.
@@ -34,11 +46,11 @@ Do NOT preload these. Read each only when its trigger fires.
 | Slack/Teams notifications | [`references/notifications.md`](references/notifications.md) |
 | Pre-finalize sanity check | [`references/anti-patterns.md`](references/anti-patterns.md) |
 
-Example real-world configs:
-- [`examples/lea-config.json`](examples/lea-config.json) — multi-repo workspace (Go API + React web + docs + GitHub)
-- [`examples/minimal-config.json`](examples/minimal-config.json) — single-repo with GitHub only
-- [`examples/python-fastapi-config.json`](examples/python-fastapi-config.json) — Python + Alembic + GitHub
-- [`examples/rust-workspace-config.json`](examples/rust-workspace-config.json) — Rust workspace + GitLab tracker
+Example real-world configs (at repo root):
+- [`multi-repo-go-react-config.json`](../../examples/multi-repo-go-react-config.json) — multi-repo workspace (Go API + React web + docs + GitHub)
+- [`minimal-config.json`](../../examples/minimal-config.json) — single-repo with GitHub only
+- [`python-fastapi-config.json`](../../examples/python-fastapi-config.json) — Python + Alembic + GitHub
+- [`rust-workspace-config.json`](../../examples/rust-workspace-config.json) — Rust workspace + GitLab tracker
 
 ## $ARGUMENTS handling
 
@@ -50,7 +62,7 @@ Recognize override flags (free-form — accept natural-language equivalents too)
 |---|---|
 | `--redetect` | Force stack re-detection (skip cache) |
 | `--repo=NAME` | Force target repo (skip routing) |
-| `--complexity=T|L|M|H` | Force complexity bucket (T = Trivial → Haiku) |
+| `--complexity=T\|L\|M\|H` | Force complexity bucket (T = Trivial → Haiku) |
 | `--implementer=opus\|sonnet\|haiku` | Override default implementer for this task. See "Implementer override" below. |
 | `--auto-merge` / `--no-auto-merge` | Force auto-merge ON/OFF for this task |
 | `--skip-ci-wait` | Don't wait for CI before final announce |
@@ -110,16 +122,17 @@ Else → CWD must be inside a git repo. Use `git rev-parse --show-toplevel` as t
 
 For each target repo:
 
-1. Compute cache slug: `repo_path.lstrip('/').replace('/', '-')` — e.g. `/Users/alice/work/api` → `Users-alice-work-api`.
+1. Compute cache slug from the repo's absolute path. Slug rule (see [`references/stack-detection.md`](references/stack-detection.md) for canonical version): replace every run of non-alphanumeric characters with a single `-`, then strip leading/trailing `-`. Example: `/Users/alice/work/api` → `Users-alice-work-api`.
 2. Cache file: `~/.claude/do/cache/<slug>.json`.
 3. **If cache file exists**:
    - Load it
    - Verify `cache.version == 1`
-   - If `$ARGUMENTS` does NOT contain `--redetect` (or natural-language equivalent like "re-detect stack", "пере-определи стек") AND version matches → **USE CACHE AS-IS, skip detection entirely**
-4. **Else** (no cache, or version mismatch, or explicit `--redetect`):
+   - **Verify `cache.repo_path` matches the current repo's absolute path** — guards against slug collisions (e.g. `/Users/alice/work-api` and `/Users/alice/work/api` collide to the same slug). If mismatch → treat as cache miss, re-detect, overwrite.
+   - If all checks pass AND `$ARGUMENTS` does NOT contain `--redetect` (or natural-language equivalent like "re-detect stack", "пере-определи стек") → **USE CACHE AS-IS, skip detection entirely**
+4. **Else** (no cache, version mismatch, repo_path mismatch, or explicit `--redetect`):
    - Run detection per [`references/stack-detection.md`](references/stack-detection.md)
    - Detect monorepo affected-graph tool: if `nx.json` or `turbo.json` present, set `affected_graph_tool` accordingly. Override build/test commands if `config.affected_graph` enabled.
-   - Write the result to cache file (mkdir -p the cache dir if missing)
+   - Write the result to cache file (mkdir -p the cache dir if missing). Always include the canonical `repo_path` field.
 
 Cache contains: `stack`, `package_manager`, `build_cmds`, `lint_cmds`, `test_cmd`, `ui_files`, `ui_extensions`, `migration_dir`, `migration_pattern`, `affected_graph_tool`. Use these throughout phases 1-4 — never re-derive them mid-task.
 
@@ -135,8 +148,17 @@ Always:
 Duplicate issue or branch → STOP, ask user. Stale worktrees → warn.
 
 If `config.concurrent_edit_check.enabled` (default true) AND Phase 1 will identify planned files:
-- After hint files known: `git -C {repo} log --since="{lookback_days} days ago" --name-only --pretty="%h %an" origin/main -- {planned_files}`
-- Recent commits on planned files → WARN with author+SHA list. Proceed but note the overlap.
+
+```bash
+# REQUIRED: refresh origin/main first — otherwise we miss recent commits
+git -C "$REPO" fetch origin main --quiet
+# Then check
+git -C "$REPO" log --since="${LOOKBACK_DAYS} days ago" --name-only --pretty="%h %an" origin/main -- $PLANNED_FILES
+```
+
+Recent commits on planned files → WARN with author+SHA list. Proceed but note the overlap.
+
+Without the `git fetch`, the check reads stale `origin/main` and silently misses new activity — exactly the failure mode it's meant to prevent.
 
 ### 0.4 Complexity & scope
 

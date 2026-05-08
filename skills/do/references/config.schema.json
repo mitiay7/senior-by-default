@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mitiay7/senior-by-default/blob/main/skills/do/references/config.schema.json",
+  "title": "senior-by-default config",
+  "description": "Schema for .claude/do/config.json. All fields except `version` are optional; defaults documented in config-schema.md. All path-bearing fields resolve relative to the directory containing this config file (not CWD).",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^_": {
+      "description": "Underscore-prefixed keys are reserved for human comments (_description, _notes, _setup_notes, etc.) and ignored by validators."
+    }
+  },
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently 1. Validators may default to 1 if omitted (with warning) for back-compat."
+    },
+
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "is_workspace": { "type": "boolean", "const": true },
+        "repos": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[A-Za-z][A-Za-z0-9_-]*$": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "scope_keywords"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "scope_keywords": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "issue_tracker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["github", "gitlab", "none", "custom"] },
+        "repo": { "type": "string" },
+        "required_labels": { "type": "array", "items": { "type": "string" } },
+        "optional_labels": { "type": "array", "items": { "type": "string" } },
+        "domain_labels": { "type": "array", "items": { "type": "string" } },
+        "commands": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "list_open": { "type": "string" },
+            "create": { "type": "string" },
+            "view_body": { "type": "string" },
+            "edit_body": { "type": "string" },
+            "comment": { "type": "string" },
+            "view_url": { "type": "string" },
+            "close_keyword": { "type": "string" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "enum": ["github", "gitlab"] } } },
+          "then": { "required": ["repo"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "custom" } } },
+          "then": {
+            "properties": { "commands": { "required": ["create"] } },
+            "required": ["commands"]
+          }
+        }
+      ]
+    },
+
+    "context_doc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "sections": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "integer" },
+              { "type": "string" }
+            ]
+          }
+        },
+        "required_for_finalize": { "type": "boolean" }
+      }
+    },
+
+    "tech_debt_doc": { "type": "string" },
+
+    "i18n": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fn", "locale_files"],
+      "properties": {
+        "fn": { "type": "string", "minLength": 1 },
+        "locale_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "ui_extensions": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^\\." }
+        }
+      }
+    },
+
+    "ui_gate": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "infra_cmd": { "type": "string" },
+            "dev_cmd": { "type": "string" },
+            "url": { "type": "string", "format": "uri" },
+            "login_script": { "type": ["string", "null"] }
+          }
+        }
+      ],
+      "description": "null = explicitly disable UI gate; object = enable with given commands."
+    },
+
+    "contract_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "frontend_types_path": { "type": "string" },
+        "backend_handlers_path": { "type": "string" }
+      }
+    },
+
+    "specialists": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string", "pattern": "^[a-z0-9-]+:[a-z0-9-]+$" }
+      }
+    },
+
+    "naming": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "low": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "worktree_suffix": { "type": "string" },
+            "branch": { "type": "string" }
+          }
+        },
+        "issue": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "worktree_suffix": { "type": "string" },
+            "branch": { "type": "string" },
+            "ref_format": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "issue_locale": { "enum": ["ru", "en"] },
+
+    "worktree": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "base": { "type": "string" },
+        "cleanup_cmd": { "type": "string" }
+      }
+    },
+
+    "memory_path": { "type": "string" },
+
+    "acceptance_extensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trigger_keywords", "criterion"],
+        "properties": {
+          "trigger_keywords": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "minItems": 1
+          },
+          "criterion": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+
+    "ci": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "required": { "type": "boolean" },
+        "wait_command": { "type": "string" },
+        "status_command": { "type": "string" },
+        "timeout_seconds": { "type": "integer", "minimum": 0 },
+        "fail_action": { "enum": ["block", "warn"] }
+      }
+    },
+
+    "auto_merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "method": { "enum": ["squash", "merge", "rebase"] },
+        "delete_branch": { "type": "boolean" },
+        "command": { "type": "string" }
+      }
+    },
+
+    "pr_size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "warn_lines":  { "type": "integer", "minimum": 0 },
+        "warn_files":  { "type": "integer", "minimum": 0 },
+        "block_lines": { "type": "integer", "minimum": 0 },
+        "block_files": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "stale_main": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "warn_commits_behind":  { "type": "integer", "minimum": 0 },
+        "block_commits_behind": { "type": "integer", "minimum": 0 },
+        "auto_rebase": { "type": "boolean" }
+      }
+    },
+
+    "self_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+
+    "codeowners": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "paths": { "type": "array", "items": { "type": "string" } },
+        "agent_map": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
+    "wip_limit": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "null" }
+      ],
+      "description": "Opt-in. Omit/null disables Phase 0.0.1 entirely."
+    },
+
+    "concurrent_edit_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "lookback_days": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "feature_flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "system": { "type": "string" },
+        "registry_path": { "type": "string" },
+        "naming_convention": { "enum": ["snake_case", "kebab-case", "camelCase", "SCREAMING_SNAKE"] },
+        "default_state": { "enum": ["off", "on"] },
+        "required_for_scopes": {
+          "type": "array",
+          "items": { "enum": ["frontend", "backend", "fullstack"] }
+        }
+      }
+    },
+
+    "adr": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": { "type": "string" },
+        "min_complexity": { "enum": ["low", "medium", "high"] },
+        "template_path": { "type": ["string", "null"] },
+        "filename_format": { "type": "string" }
+      }
+    },
+
+    "affected_graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "enum": ["nx", "turbo", "auto"] },
+        "base_ref": { "type": "string" },
+        "test_command_override": { "type": ["string", "null"] },
+        "lint_command_override": { "type": ["string", "null"] }
+      }
+    },
+
+    "security_scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "threshold": { "enum": ["low", "moderate", "high", "critical"] },
+        "command_override_by_pm": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "slack_webhook": { "type": ["string", "null"] },
+        "teams_webhook": { "type": ["string", "null"] },
+        "events": {
+          "type": "array",
+          "items": { "enum": ["task_started", "task_blocked", "task_completed", "migration_proposed", "ci_failed"] }
+        },
+        "templates": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
+    "public_docs_dir": { "type": "string" },
+
+    "lessons_doc": { "type": "string" },
+
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "log_path": { "type": "string" },
+        "include_phase_durations": { "type": "boolean" },
+        "tier": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "capture_failure_details": { "type": "boolean" },
+        "capture_self_review_calibration": { "type": "boolean" },
+        "capture_specialist_iterations": { "type": "boolean" },
+        "max_string_length": { "type": "integer", "minimum": 50 }
+      }
+    },
+
+    "postmortem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trigger_keywords": { "type": "array", "items": { "type": "string" } },
+        "branch_prefixes": { "type": "array", "items": { "type": "string" } },
+        "template_path": { "type": ["string", "null"] }
+      }
+    }
+  },
+
+  "x-allow-extras": {
+    "description": "Fields prefixed with `_` (e.g. `_notes`, `_setup_notes`, `_description`) are reserved for human comments and are tolerated by validators. Strict additionalProperties=false above intentionally rejects unknowns to catch typos; extend the schema rather than add ad-hoc keys."
+  }
+}

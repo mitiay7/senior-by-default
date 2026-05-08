@@ -7,7 +7,22 @@ The skill **reads but never writes** config. Hand-edited.
 
 Validate with [`config-validation.md`](config-validation.md) on every load.
 
-## Full schema (all fields optional)
+## Path resolution
+
+All path-bearing fields (`context_doc.path`, `tech_debt_doc`, `lessons_doc`, `i18n.locale_files`, `worktree.base`, `ui_gate.login_script`, `metrics.log_path`, `adr.dir`, `public_docs_dir`, etc.) accept either:
+
+- **Absolute path** — used as-is
+- **Relative path** — resolved against the **directory containing `config.json`** (NOT the current working directory). For workspace configs at `/path/to/workspace/.claude/do/config.json`, a relative `docs/AGENT_CONTEXT.md` resolves to `/path/to/workspace/docs/AGENT_CONTEXT.md`.
+
+`~` (home tilde) is expanded.
+
+Validators (Phase 0.0) and runtime path checks MUST apply this rule consistently.
+
+## Full schema
+
+`version` is the only **required** field — it identifies the schema version. All other fields are optional; missing fields fall back to defaults documented below.
+
+If `version` is missing, validators should default to `1` and emit a warning rather than hard-fail (back-compat for early hand-written configs).
 
 ```json
 {
@@ -390,7 +405,14 @@ JSONL entry schema (Tier 1):
 Set tier=0 to revert to lean metrics (just outcome + per-gate pass/fail/skip booleans).
 
 #### `postmortem`
-Phase 0 detection: if `$ARGUMENTS` matches keywords OR branch matches prefixes → suggest postmortem template addition to issue body / link to a separate `/postmortem` skill.
+Phase 0 detection: if `$ARGUMENTS` matches `trigger_keywords` OR branch matches `branch_prefixes` → suggest postmortem template addition to issue body / link to a separate `/postmortem` skill.
+
+Defaults if `postmortem` is omitted entirely:
+- `trigger_keywords`: `["incident", "regression", "postmortem", "outage", "p0", "p1", "hotfix", "revert"]`
+- `branch_prefixes`: `["fix/", "hotfix/"]`
+- `template_path`: null (use built-in template — see Phase 1 issue-body section)
+
+Override either array to customize. Set `trigger_keywords: []` AND `branch_prefixes: []` to effectively disable.
 
 ## Defaults if no config
 
@@ -402,7 +424,9 @@ Phase 0 detection: if `$ARGUMENTS` matches keywords OR branch matches prefixes �
 
 ## Examples
 
-- [`examples/lea-config.json`](../examples/lea-config.json) — full multi-repo workspace
-- [`examples/minimal-config.json`](../examples/minimal-config.json) — single-repo + GitHub
-- [`examples/python-fastapi-config.json`](../examples/python-fastapi-config.json) — Python + Alembic
-- [`examples/rust-workspace-config.json`](../examples/rust-workspace-config.json) — Rust + GitLab
+Live at repo root, not inside the skill (paths assume the plugin layout `<plugin>/skills/do/references/`):
+
+- [`multi-repo-go-react-config.json`](../../../examples/multi-repo-go-react-config.json) — full multi-repo workspace (Go + React + docs)
+- [`minimal-config.json`](../../../examples/minimal-config.json) — single-repo + GitHub
+- [`python-fastapi-config.json`](../../../examples/python-fastapi-config.json) — Python + Alembic
+- [`rust-workspace-config.json`](../../../examples/rust-workspace-config.json) — Rust + GitLab

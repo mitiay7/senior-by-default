@@ -4,6 +4,28 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Changed (post-audit)
+- **Restructured to plugin format**: `SKILL.md` and `references/` moved under `skills/do/`; added `.claude-plugin/plugin.json` manifest. Enables `/plugin install` distribution path.
+- **`SKILL.md` frontmatter**: switched from prose blob to `TRIGGER:`/`SKIP:` format per Anthropic skill conventions; added `version: 0.1.0`.
+- **README**: example-first lead, then tagline. Install order: plugin install → manual symlink → curl-pipe (last, with "review the script" warning). Added security/permissions section.
+- **`config.schema.json`**: full JSON Schema (draft 2020-12) for programmatic validation. CI validates all examples against it.
+- **`config-schema.md` + `config-validation.md`**: documented relative-path resolution (relative to config.json's dir, not CWD); `version` default-to-1 behavior with warning instead of hard-fail.
+- **`stack-detection.md`** + Phase 0.2: cache verification now compares `cache.repo_path` against current repo (guards slug collision for `/foo/work-api` vs `/foo/work/api`).
+- **Phase 0.3 concurrent-edit check**: now runs `git fetch origin main` first (was reading stale local ref).
+- **`postmortem` defaults documented**: trigger keywords + branch prefixes listed in config-schema prose.
+- **Notation section** added to `SKILL.md`: `Agent(model: ...)` shorthand explained for adopters reading source.
+- **Pseudocode unification**: bash-first reference implementations (slug rule, etc.).
+- **Markdown table escaping**: `--complexity=T\|L\|M\|H` no longer breaks GitHub rendering.
+
+### Added (post-audit)
+- `.github/workflows/lint.yml` — shellcheck + JSON validate + frontmatter check + markdown-link sanity.
+- `uninstall.sh` — symlink removal, marker-aware trigger-block stripping from `~/.claude/CLAUDE.md`, optional cache/metrics/install-dir purge.
+- `install.sh`: marker-wrapped trigger blocks (`<!-- senior-by-default:trigger:start/end -->`), local-changes detection before pull, fail-fast on hard deps (git/python3), warn on soft deps (jq/gh).
+
+### Fixed (post-audit)
+- Broken links in `SKILL.md` and `config-schema.md` to renamed `examples/multi-repo-go-react-config.json` (was `lea-config.json`).
+- Self-referential link in `phase-4-finalize.md` (`references/notifications.md` → `notifications.md`).
+
 ## [0.1.0] — 2026-05-08
 
 Initial public release.

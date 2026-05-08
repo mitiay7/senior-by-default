@@ -2,12 +2,18 @@
 
 Run validation **once per task** after loading `config.json` in Phase 0.0. Skip silently for missing/optional fields. Hard-fail only on malformed schema.
 
+For programmatic validation, use [`config.schema.json`](config.schema.json) (JSON Schema draft 2020-12). The rules below mirror the schema; the JSON Schema is the source of truth.
+
+## Path resolution
+
+All path-bearing fields resolve **relative to the directory containing `config.json`** (not CWD). Absolute paths and `~`-expanded paths are passed through unchanged. See [`config-schema.md`](config-schema.md) §"Path resolution" for the full list of affected fields.
+
 ## Validation rules
 
 ### `version`
-- Required field
-- Must equal `1`
-- Mismatch → STOP, tell user: `Config version mismatch (got {n}, expected 1). Update .claude/do/config.json or upgrade the skill.`
+- Should be present; if missing, default to `1` and emit a WARNING (don't hard-fail — back-compat)
+- If present, must equal `1`
+- Explicit mismatch (`version: 2`, etc.) → STOP, tell user: `Config version mismatch (got {n}, expected 1). Update .claude/do/config.json or upgrade the skill.`
 
 ### `workspace`
 If present:
