@@ -1,0 +1,105 @@
+{
+  "version": 1,
+
+  "_description": "Example: multi-repo workspace where Go API, React web, and docs each live in separate sibling repos. Issue tracker and context doc live in the docs repo. Adapt repo paths, owner/repo, label list, and locale_files to your project.",
+
+  "workspace": {
+    "is_workspace": true,
+    "repos": {
+      "api": {
+        "path": "/path/to/workspace/api",
+        "scope_keywords": ["go", "backend", "api", "handler", "migration", "db", "service", "endpoint"]
+      },
+      "web": {
+        "path": "/path/to/workspace/web",
+        "scope_keywords": ["ts", "tsx", "react", "frontend", "ui", "component", "page", "form"]
+      },
+      "docs": {
+        "path": "/path/to/workspace/docs",
+        "scope_keywords": ["docs", "documentation", "context", "agent-context"]
+      }
+    }
+  },
+
+  "issue_tracker": {
+    "type": "github",
+    "repo": "your-org/your-issues-repo",
+    "required_labels": ["task"],
+    "optional_labels": ["refactoring", "deploy", "stabilization"],
+    "domain_labels": ["api", "web", "docs", "infra"]
+  },
+
+  "context_doc": {
+    "path": "/path/to/workspace/docs/AGENT_CONTEXT.md",
+    "sections": {
+      "current_state": 6,
+      "structure": 4,
+      "deployment": 11,
+      "constraints": 12
+    },
+    "required_for_finalize": true
+  },
+
+  "tech_debt_doc": "/path/to/workspace/docs/tech-debt.md",
+
+  "i18n": {
+    "fn": "t",
+    "locale_files": [
+      "/path/to/workspace/web/src/locales/en.json",
+      "/path/to/workspace/web/src/locales/fr.json"
+    ],
+    "ui_extensions": [".tsx", ".jsx"]
+  },
+
+  "ui_gate": {
+    "infra_cmd": "make up",
+    "dev_cmd": "pnpm dev",
+    "url": "http://localhost:3000",
+    "login_script": null
+  },
+
+  "specialists": {
+    "backend_plan": [
+      "backend-development:backend-architect",
+      "backend-development:security-auditor",
+      "database-design:database-architect"
+    ],
+    "frontend_plan": [
+      "frontend-excellence:react-specialist",
+      "frontend-excellence:component-architect",
+      "frontend-excellence:frontend-optimizer"
+    ],
+    "backend_audit": [
+      "code-refactoring:code-reviewer",
+      "backend-development:backend-architect",
+      "backend-development:security-auditor"
+    ],
+    "frontend_audit": [
+      "code-refactoring:code-reviewer",
+      "frontend-excellence:react-specialist",
+      "pr-review-toolkit:silent-failure-hunter"
+    ],
+    "migration_audit": [
+      "database-design:database-architect"
+    ]
+  },
+
+  "issue_locale": "en",
+
+  "worktree": {
+    "base": "/path/to/workspace",
+    "cleanup_cmd": "git -C '{repo_path}' worktree remove '{worktree_path}' && git -C '{repo_path}' branch -D {branch}"
+  },
+
+  "memory_path": "auto",
+
+  "metrics": {
+    "log_path": "~/.claude/do/metrics/your-project.jsonl",
+    "tier": 1,
+    "include_phase_durations": true,
+    "capture_failure_details": true,
+    "capture_self_review_calibration": true,
+    "capture_specialist_iterations": true,
+    "max_string_length": 500
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+
+  "issue_tracker": {
+    "type": "github",
+    "repo": "your-org/your-repo",
+    "required_labels": ["task"],
+    "domain_labels": []
+  },
+
+  "issue_locale": "en"
+}

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+
+  "issue_tracker": {
+    "type": "github",
+    "repo": "myteam/api-service",
+    "required_labels": ["task"],
+    "optional_labels": ["bug", "enhancement", "infra"],
+    "domain_labels": ["auth", "billing", "users", "webhooks"]
+  },
+
+  "context_doc": {
+    "path": "docs/AGENT_CONTEXT.md",
+    "sections": {
+      "current_state": 1,
+      "structure": 2,
+      "deployment": 5,
+      "constraints": 6
+    },
+    "required_for_finalize": true
+  },
+
+  "tech_debt_doc": "docs/tech-debt.md",
+
+  "ui_gate": null,
+
+  "specialists": {
+    "backend_plan": [
+      "backend-development:backend-architect",
+      "backend-development:security-auditor"
+    ],
+    "backend_audit": [
+      "code-refactoring:code-reviewer",
+      "backend-development:security-auditor"
+    ],
+    "migration_audit": [
+      "database-design:database-architect"
+    ]
+  },
+
+  "issue_locale": "en",
+
+  "memory_path": "auto",
+
+  "acceptance_extensions": [
+    {
+      "trigger_keywords": ["webhook", "callback"],
+      "criterion": "Webhook signature verification covered with both valid and tampered-payload tests"
+    }
+  ]
+}

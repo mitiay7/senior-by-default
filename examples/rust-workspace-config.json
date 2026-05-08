@@ -1,0 +1,45 @@
+{
+  "version": 1,
+
+  "issue_tracker": {
+    "type": "gitlab",
+    "repo": "myteam/rust-platform",
+    "required_labels": ["task"],
+    "optional_labels": ["perf", "security", "refactor"],
+    "domain_labels": ["api", "worker", "scheduler", "shared"]
+  },
+
+  "context_doc": {
+    "path": "docs/ARCHITECTURE.md",
+    "sections": {
+      "current_state": 4,
+      "structure": 2,
+      "deployment": 7,
+      "constraints": 8
+    },
+    "required_for_finalize": true
+  },
+
+  "specialists": {
+    "backend_plan": [
+      "backend-development:backend-architect",
+      "backend-development:security-auditor"
+    ],
+    "backend_audit": [
+      "code-refactoring:code-reviewer",
+      "backend-development:backend-architect"
+    ]
+  },
+
+  "naming": {
+    "issue": {
+      "worktree_suffix": "i{N}",
+      "branch":          "feat/i{N}-{slug}",
+      "ref_format":      "i{N}"
+    }
+  },
+
+  "issue_locale": "en",
+
+  "memory_path": "auto"
+}
