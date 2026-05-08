@@ -11,6 +11,7 @@
 .claude/settings.local.json
 .claude/cache/
 .claude/do/cache/
+.claude/worktrees/
 
 # Per-user metrics output (if anyone runs the skill from inside this repo)
 ~/.claude/do/metrics/
