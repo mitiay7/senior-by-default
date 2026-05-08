@@ -58,13 +58,14 @@
         "commands": {
           "type": "object",
           "additionalProperties": false,
+          "description": "Per-operation tracker commands. Each command (except close_keyword) accepts either argv array (preferred — argv-safe) or shell string (DEPRECATED — vulnerable to injection through user-controlled {title}/{labels}). See references/trackers.md §Security.",
           "properties": {
-            "list_open": { "type": "string" },
-            "create": { "type": "string" },
-            "view_body": { "type": "string" },
-            "edit_body": { "type": "string" },
-            "comment": { "type": "string" },
-            "view_url": { "type": "string" },
+            "list_open": { "$ref": "#/$defs/trackerCommand" },
+            "create":    { "$ref": "#/$defs/trackerCommand" },
+            "view_body": { "$ref": "#/$defs/trackerCommand" },
+            "edit_body": { "$ref": "#/$defs/trackerCommand" },
+            "comment":   { "$ref": "#/$defs/trackerCommand" },
+            "view_url":  { "$ref": "#/$defs/trackerCommand" },
             "close_keyword": { "type": "string" }
           }
         }
@@ -392,5 +393,22 @@
 
   "x-allow-extras": {
     "description": "Fields prefixed with `_` (e.g. `_notes`, `_setup_notes`, `_description`) are reserved for human comments and are tolerated by validators. Strict additionalProperties=false above intentionally rejects unknowns to catch typos; extend the schema rather than add ad-hoc keys."
+  },
+
+  "$defs": {
+    "trackerCommand": {
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "PREFERRED: argv array. Each placeholder ({repo}, {title}, {N}, {body_file}, {labels}) occupies a dedicated argv slot — substitution happens after argv split, so user-controlled values cannot smuggle CLI flags."
+        },
+        {
+          "type": "string",
+          "description": "DEPRECATED: shell-string template. Vulnerable to injection through user-controlled {title}/{labels}. Validators MUST emit a warning when encountering this form. Skill MUST shell-quote each placeholder before substitution as a fallback. Migrate to argv array form."
+        }
+      ]
+    }
   }
 }

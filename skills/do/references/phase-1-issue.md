@@ -4,11 +4,11 @@
 
 ## Tracker abstraction
 
-All tracker operations go through templates in `config.issue_tracker.commands` (defaults filled per `type` — see [`trackers.md`](trackers.md)).
+All tracker operations go through `config.issue_tracker.commands` (defaults filled per `type` — see [`trackers.md`](trackers.md)).
 
-In this document, `{Tracker.OP}` denotes the resolved command for operation `OP` with placeholders substituted.
+In this document, `{Tracker.OP}` denotes the operation `OP`. **Execution is argv-safe** — user-controlled `{title}` and `{labels}` are passed via env vars (built-in github/gitlab) or argv array slots (custom trackers), never substituted into shell strings. See [`trackers.md`](trackers.md) §Security for the threat model and the concrete invocation pattern.
 
-For multi-line bodies, write to a temp file first (`mktemp`), then pass the path as `{body_file}` to avoid shell-escaping issues.
+For multi-line bodies, write to a temp file first (`mktemp`), then pass the path as `{body_file}` — body content stays out of shell entirely.
 
 ## Labels
 - **Required**: `config.issue_tracker.required_labels` (always applied)
