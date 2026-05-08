@@ -62,7 +62,19 @@ For `type: "custom"`, prefer the **argv array form** in config — substitution 
 
 Each `{...}` placeholder occupies one argv slot. The skill substitutes the literal value (no shell parse) into that slot. Even `--milestone 5 --label injected` as a title stays a single string in `argv[6]`.
 
-The string form is still accepted for back-compat but **logs a deprecation warning** and is unsafe with user-controlled content.
+### Why the string form CANNOT carry user content (and is schema-rejected for it)
+
+A naive instinct is to allow `"create": "linear ... --title \"{title}\" ..."` as long as the skill `shlex.quote`'s placeholders before substitution. **This is unsafe and the schema rejects it.** Reproducible exploit:
+
+- Template: `--title "{title}"`  (placeholder already inside `"..."`)
+- Title from `$ARGUMENTS`: `x" --milestone 5 --label injected "y`
+- After `shlex.quote`: `'x" --milestone 5 --label injected "y'`  (single-quoted whole string)
+- Naive substitution: `--title "'x" --milestone 5 --label injected "y'"`
+- Shell parses → `--title 'x · --milestone · 5 · --label · injected · y'` (six argv elements; injection succeeded)
+
+The `"` inside the title content closes the template's surrounding `"..."` regardless of what we wrap *outside* the substitution. There is no `shlex.quote`-style fix — the only safe form is argv-array, where placeholders aren't shell-parsed at all.
+
+`config.schema.json` enforces this: any string form for `commands.<op>` containing literal `{title}` or `{labels}` fails validation. To carry user content, the command MUST be an argv array.
 
 ---
 
@@ -145,13 +157,22 @@ For Linear, Jira, Trello, internal trackers, etc. — provide the `commands` blo
 
 Each placeholder occupies a dedicated argv element; substitution happens **after** argv parsing, so values cannot inject flags. For commands needing pipes (`linear ... | jq ...`), wrap as `["sh", "-c", "...", "_", "{N}"]` and reference `$1` in the inline script — the substituted `{N}` becomes `$1`, never reaches the parent shell parser.
 
-**Legacy string form (back-compat, with security caveat):**
+**String form (back-compat, restricted):**
+
+Allowed ONLY for commands that don't carry user-controlled content — i.e., **must NOT contain `{title}` or `{labels}`**. JSON Schema rejects strings containing those placeholders. Examples that ARE acceptable:
+
 ```json
 "commands": {
-  "create": "linear issue create --team {repo} --title \"{title}\" --description-file {body_file}"
+  "view_body": "linear issue view {N} --json | jq -r .description",
+  "view_url":  "linear issue view {N} --json | jq -r .url"
 }
 ```
-The skill MUST emit a deprecation warning when string forms are detected and MUST shell-quote each placeholder before substitution (`shlex.quote` / `printf '%q'`). New configs should use the argv array form.
+
+(`{N}` is parsed from tracker output, `{repo}` is config-controlled — neither carries `$ARGUMENTS` content.)
+
+For `create` (always carries `{title}`) and any command that uses `{labels}` — argv array form is **mandatory**. See "Why the string form CANNOT carry user content" above for the exploit and the schema rule.
+
+When the skill detects a string-form command containing `{title}`/`{labels}`: validation fails fast with a security explanation, and the user is directed to migrate that command to argv-array form.
 
 All seven keys recommended (six commands + `close_keyword`). Missing keys → that operation is skipped (e.g., no `comment` template → no completion comment posted; warn user).
 

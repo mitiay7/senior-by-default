@@ -406,7 +406,10 @@
         },
         {
           "type": "string",
-          "description": "DEPRECATED: shell-string template. Vulnerable to injection through user-controlled {title}/{labels}. Validators MUST emit a warning when encountering this form. Skill MUST shell-quote each placeholder before substitution as a fallback. Migrate to argv array form."
+          "not": {
+            "pattern": "\\{(title|labels)\\}"
+          },
+          "description": "DEPRECATED string form, accepted ONLY for commands with no user-controlled placeholders. MUST NOT contain `{title}` or `{labels}` — those carry $ARGUMENTS-derived content and are vulnerable to shell injection regardless of `shlex.quote` fallback (the placeholder may already be wrapped in template-side quotes that user content can break out of). Commands carrying user content (typically `create`) MUST use the argv array form."
         }
       ]
     }
