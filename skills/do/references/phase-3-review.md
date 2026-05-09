@@ -159,6 +159,15 @@ Inputs to each auditor:
 - The ADR if exists (Phase 2 High)
 - Phase 2.5 self-review output
 
+Before invoking, announce the roster (visible to user — makes it clear which models/agents handle the audit and how many will run):
+
+```
+[Phase 3.6] Specialist audit cycle {N} — invoking {K} agents in parallel:
+  - {subagent_type_1}
+  - {subagent_type_2}
+  - {subagent_type_3}
+```
+
 Run in parallel.
 
 **Plan fidelity**: reviewers verify (1) all planned files present in diff, (2) architectural patterns match plan + ADR, (3) endpoints/routes match, (4) data model matches.

@@ -49,6 +49,24 @@ Do NOT create another worktree. Do NOT use Agent's isolation parameter (you ARE 
 First action: cd to that path and verify `git rev-parse --abbrev-ref HEAD` matches {BRANCH}.
 ```
 
+### Spawn announce (visible to user)
+
+Immediately before spawning the Sub-Agent, print a one-line announce so the user sees which model is being invoked for which role:
+
+```
+[Phase 2] Spawning Agent(model: "{IMPLEMENTER_MODEL}") in {WORKTREE_PATH} on branch {BRANCH}
+```
+
+Where `{IMPLEMENTER_MODEL}` is from Phase 0 announce (`haiku` for Trivial, `sonnet` for Low/Medium, `sonnet` for High default — `opus` only with explicit `--implementer=opus` override).
+
+For High complexity with specialist plan-review (Step 2 below), also announce each specialist before invocation:
+```
+[Phase 2 Step 2] Spawning specialists in parallel for plan review:
+  - {subagent_type_1}
+  - {subagent_type_2}
+  - {subagent_type_3}
+```
+
 ## 2.0 Stale-main check (before each Sonnet launch)
 
 Before launching Sonnet (or relaunching after a fix cycle), check how far behind `main` the worktree is:

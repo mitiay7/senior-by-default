@@ -4,6 +4,31 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-05-09
+
+Patch release. Adds explicit model-usage visibility so users see (and metrics record) which model handles which role per task.
+
+### Added
+- **Phase 0 announce now includes `Models:` line** — `Models: orchestrator=opus | implementer={haiku|sonnet|opus}`. Implementer auto-derived from complexity (T→haiku, L/M→sonnet, H→sonnet); appended `(override)` when `--implementer=X` flag was passed.
+- **Phase 2 spawn announce** — before invoking the implementer Sub-Agent, prints `[Phase 2] Spawning Agent(model: "<X>") in <worktree> on branch <branch>`. For High-complexity plan-review with specialists: prints the parallel-spawn list of `subagent_type` strings.
+- **Phase 3.6 specialist roster announce** — before invoking audit specialists, prints the cycle number + count + list of `subagent_type` strings being invoked in parallel.
+- **Phase 4.13 announce now includes `Models:` line** — `Models: orchestrator=opus, implementer=sonnet, specialists=[...]`. Provides full audit trail of which models touched the task.
+- **Metrics entry `models` block** — new field in Tier 1 schema:
+  ```json
+  "models": {
+    "orchestrator": "opus",
+    "implementer": "sonnet|opus|haiku",
+    "specialists": ["backend-development:backend-architect", "..."]
+  }
+  ```
+  Enables downstream analysis like "did Haiku tasks have higher false_positive rate than Sonnet?", "which specialist combos correlate with longer review cycles?", etc.
+
+### Why
+Skill design routes work across three models (Opus/Sonnet/Haiku) plus optional plugin-provided specialists. Until v0.3.3 this was implicit — user had to read CHANGELOG / spec to know what spawned where. Now every spawn is visible at the moment it happens.
+
+### No breaking changes
+Output additions only; existing announce parsers (looking for `Metrics:` line) still work — `Models:` line precedes `Metrics:` but doesn't shadow it.
+
 ## [0.3.2] — 2026-05-09
 
 Patch release. Closes the remaining gap from v0.3.1 after learning the actual production execution model.

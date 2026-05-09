@@ -1,6 +1,6 @@
 ---
 name: do
-version: 0.3.2
+version: 0.3.3
 model: opus
 description: |
   Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Opus plan + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
@@ -260,10 +260,17 @@ If `config.notifications` configured AND `task_started` in events → send. See 
 ```
 [Phase 0] Repo: {repo} | Stack: {stack} (cached: {y/n}) | Scope: {B/F/FS} | Complexity: {T/L/M/H}
   Files: ~{N} | Tests: {YES/NO} | Migration: {YES NNN/NO} | Context doc: {required/none}
+  Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
   WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
   [+ if concurrent edits → "⚠ Concurrent edits on planned files in last {N} days"]
   [+ if postmortem context → "ℹ Postmortem section will be added to issue"]
 ```
+
+The `Models:` line is mandatory — it makes model usage explicit so users see (and metrics record) which model handles which role for this task. Compute `implementer` from:
+- Complexity T → `haiku` (default)
+- Complexity L/M → `sonnet` (default)
+- Complexity H → `sonnet` (default; orchestrator is opus, sub-agent that implements is sonnet)
+- `--implementer=<X>` flag in `$ARGUMENTS` → overrides default (announce as `implementer=X (override)`)
 
 ## PHASES 1-4 — load reference per phase
 

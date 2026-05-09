@@ -358,6 +358,11 @@ JSONL entry schema (Tier 1):
   "complexity": "M",
   "scope": "Frontend|Backend|Fullstack",
   "implementer": "sonnet|opus|haiku",
+  "models": {
+    "orchestrator": "opus",
+    "implementer": "sonnet|opus|haiku",
+    "specialists": ["backend-development:backend-architect", "code-refactoring:code-reviewer"]
+  },
   "files_changed": 7,
   "lines_added": 320,
   "lines_deleted": 45,

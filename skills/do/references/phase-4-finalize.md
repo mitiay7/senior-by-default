@@ -316,11 +316,19 @@ fi
 [ -n "$CONTEXT_DOC_UPDATED" ] && CTX_LINE="Context: $CONTEXT_DOC_PATH §$SECTIONS updated."
 [ -n "$ADR_NUMBER"          ] && ADR_LINE="ADR-${ADR_NUMBER} committed."
 
+# Models line: makes the audit trail explicit — which models handled which roles.
+# ORCHESTRATOR_MODEL = "opus" (per SKILL.md frontmatter `model: opus`)
+# IMPLEMENTER_MODEL  = computed in Phase 0 from complexity + --implementer override
+# SPECIALISTS_LIST   = comma-separated subagent_type strings used in Phase 2 plan-review
+#                      and Phase 3.6 audit, OR "none" if no specialists invoked
+MODELS_LINE="Models: orchestrator=${ORCHESTRATOR_MODEL:-opus}, implementer=${IMPLEMENTER_MODEL:-sonnet}, specialists=[${SPECIALISTS_LIST:-none}]"
+
 cat <<EOF
 Complete. Branch: $EXPECTED. PR: ${PR_URL:--}. CI: ${CI_STATUS:-skipped}. Auto-merge: ${AUTO_MERGE_STATUS:-off}.
 ${CTX_LINE:+$CTX_LINE
 }${ADR_LINE:+$ADR_LINE
-}${METRICS_LINE}.
+}${MODELS_LINE}.
+${METRICS_LINE}.
 EOF
 ```
 
