@@ -216,7 +216,7 @@ with open(path, 'w') as f:
 PY
     ok "Legacy trigger block removed (rest of $CLAUDE_MD preserved)"
   else
-    log "Kept legacy block. It does nothing — `/do <task>` works regardless."
+    log 'Kept legacy block. It does nothing — /do <task> works regardless.'
   fi
 fi
 
