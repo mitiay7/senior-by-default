@@ -1,12 +1,15 @@
 ---
 name: do
-version: 0.2.5
+version: 0.3.0
 model: opus
-disable-model-invocation: true
 description: |
   Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Opus plan + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
-  TRIGGER when: user invokes /do; task describes a coding change (≥1 file modified or created, defined outcome); `.claude/do/config.json` present in repo or workspace root.
-  SKIP when: pure Q&A or explanation; code review without implementation; scaffolding-from-scratch ("create new project"); exploratory ("how would I…"); single-line edits where the pipeline is overkill.
+
+  TRIGGER ONLY when the user's message LITERALLY starts with `/do`, `/<plugin>:do`, or `+++` — these are explicit invocations. NEVER auto-trigger from description matching, perceived task fit, or conversational context, EVEN IF a coding task otherwise matches every other criterion.
+
+  Side effects (creates issues, commits, pushes, opens PRs, optionally auto-merges) make false-positive triggering destructive. When in doubt, do not invoke — let the user invoke explicitly.
+
+  SKIP: pure Q&A, code review without implementation, scaffolding-from-scratch ("create new project"), exploratory ("how would I…"), single-line edits where the pipeline is overkill, ANY task not prefixed with the explicit invocation tokens above.
 ---
 
 <!--
@@ -14,15 +17,22 @@ Frontmatter rationale:
 - `model: opus` — pins the orchestrator (Phase 0 routing, Phase 3 review,
   Phase 4 decisions) to Opus regardless of session model. Implementation
   delegates to Sonnet/Haiku via explicit `Agent(model: "...")` calls.
-- `disable-model-invocation: true` — skill performs side effects (creates
-  issues, commits, pushes, opens PRs, optionally auto-merges). It must
-  fire only on explicit `/do` slash-command invocation, never
-  auto-discovered from description matching mid-conversation. Note this
-  also blocks Skill-tool invocation, so any "shortcut" mechanism (e.g.
-  rewriting `+++ X` → `/do X`) MUST happen at CLI level (e.g. a
-  `UserPromptSubmit` hook in `~/.claude/settings.json`), not via a
-  CLAUDE.md instruction asking the model to invoke this skill.
+- NO `disable-model-invocation: true` — that flag was added in v0.2.0 per
+  third-pass audit (correct intent: prevent description-match auto-trigger
+  for a side-effect-heavy skill) but it ALSO blocks Skill-tool invocations
+  routed through a `+++` CLAUDE.md trigger. Claude Code does not currently
+  support CLI-level prompt rewriting (no `UserPromptSubmit` replace mode),
+  so the only paths to a working `+++` shortcut are: (a) keep the flag and
+  drop `+++` entirely, or (b) drop the flag and rely on a STRICT description
+  ("TRIGGER ONLY when LITERALLY starts with...") as soft guard. v0.3.0
+  picks (b) — see CHANGELOG [0.3.0] for the trade-off discussion.
+  The defense-in-depth that's lost: hard architectural enforcement that the
+  skill cannot fire from description match. The defense that remains: the
+  description above is explicit and prescriptive about ONLY firing on
+  literal prefix; Claude is generally good at following such rules when
+  they're clearly enumerated.
 -->
+
 
 
 # Multi-Actor Implementation Pipeline

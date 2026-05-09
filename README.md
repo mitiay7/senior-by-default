@@ -4,7 +4,11 @@ You type:
 ```
 /do add user avatars to settings page
 ```
-(or `/senior-by-default:do add user avatars to settings page` if installed as a plugin — see [Install](#install). Want a shorter prefix like `+++`? See [Shortcut setup (CLI hook)](#shortcut-setup-cli-hook).)
+or with the optional shortcut (set up by `install.sh`):
+```
++++ add user avatars to settings page
+```
+(or `/senior-by-default:do add user avatars to settings page` if installed as a plugin — see [Install](#install).)
 
 The skill creates an issue, spins up a worktree on `feat/i42-add-user-avatars`, has Sonnet implement it (with self-review), runs gated quality checks (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens the PR, and — if you opted in — waits for green CI and auto-merges.
 
@@ -67,7 +71,15 @@ After install, run tasks with the **plugin-namespaced command**:
 /senior-by-default:do add user avatars to settings page
 ```
 
-> **No `+++` shortcut via SKILL.md description** — the skill has `disable-model-invocation: true` for safety (see [Why](#why-no--shortcut-via-claudemd)). Want a short prefix anyway? See [Shortcut setup (CLI hook)](#shortcut-setup-cli-hook) for a `~/.claude/settings.json` `UserPromptSubmit` hook that rewrites `+++ X` → `/<skill>:do X` at the CLI level (works regardless of `disable-model-invocation`).
+If you want a `+++` shortcut, add this block to `~/.claude/CLAUDE.md` manually (the plugin path doesn't run `install.sh`, so the trigger isn't auto-installed):
+
+```md
+<!-- senior-by-default:trigger:start -->
+## +++ Trigger
+
+When a user message starts with `+++`, treat everything after `+++` as the argument and invoke the `/senior-by-default:do` skill with that text.
+<!-- senior-by-default:trigger:end -->
+```
 
 ### Manual — clone + symlink
 
@@ -83,7 +95,7 @@ Run tasks with `/do <task>` (no plugin namespace).
 
 ### One-liner (review the script first)
 
-The `install.sh` is interactive — it asks for skill name (default `do`) and install dir. It writes a symlink and runs dependency checks. If a legacy `+++` trigger block exists in `~/.claude/CLAUDE.md` from earlier installs (v0.2.0–v0.2.3), it offers to remove it (the block was a no-op because of `disable-model-invocation: true`).
+The `install.sh` is interactive — it asks for skill name (default `do`), trigger shortcut (default `+++`, `none` to skip), and install dir. It writes a symlink, optionally appends a marker-wrapped trigger block to `~/.claude/CLAUDE.md`, and runs dependency checks.
 
 **This script does manual symlink install, NOT plugin install.** It registers `/do` (or your custom name), not `/senior-by-default:do`. **Read it first**: <https://github.com/mitiay7/senior-by-default/blob/main/install.sh>
 
@@ -93,7 +105,7 @@ curl -fsSL https://raw.githubusercontent.com/mitiay7/senior-by-default/main/inst
 
 Non-interactive (env vars override prompts):
 ```bash
-SKILL_NAME=do INSTALL_DIR=~/.local/share/senior-by-default \
+SKILL_NAME=do TRIGGER=+++ INSTALL_DIR=~/.local/share/senior-by-default \
   curl -fsSL https://raw.githubusercontent.com/mitiay7/senior-by-default/main/install.sh | bash
 ```
 
@@ -281,39 +293,9 @@ Pass these in the task argument:
 
 **Stack detection wrong for monorepo** → If your stack markers (`go.mod`, `package.json`) live in subdirs (e.g., `apps/`, `App/`, `services/`), the detector scans depth-3. If still wrong: hand-edit `~/.claude/do/cache/<slug>.json` with correct values. Force re-detect with `--redetect`.
 
-### Why no `+++` shortcut via CLAUDE.md
+**`+++` doesn't trigger anything** → install.sh writes the trigger block to `~/.claude/CLAUDE.md`, wrapped in `<!-- senior-by-default:trigger:start/end -->` markers. Open the file and verify the block is there. If you installed via plugin (which doesn't run install.sh), add the block manually — see the snippet under [Recommended — Claude Code plugin install](#recommended--claude-code-plugin-install) above.
 
-The skill has `disable-model-invocation: true` — required by audit (third pass) because the skill performs side effects (creates issues, commits, pushes, opens PRs, optionally auto-merges) and must not auto-trigger from description matching mid-conversation.
-
-A `+++` shortcut written as a CLAUDE.md instruction asking the model to invoke `/do` via the Skill tool gets blocked by the same flag — the harness can't tell "model decided to fire it" from "user typed +++ which the model is forwarding". So the shortcut would simply error:
-
-```
-Skill do cannot be used with Skill tool due to disable-model-invocation
-```
-
-`/do <task>` (or `/senior-by-default:do <task>` for plugin install) works fine — slash commands are handled by the CLI before the Skill tool path, bypassing the flag.
-
-### Shortcut setup (CLI hook)
-
-If you want a short prefix anyway, set it up at the **CLI level** via a `UserPromptSubmit` hook in `~/.claude/settings.json`. The hook rewrites `+++ X` → `/do X` (or `/senior-by-default:do X` for plugin install) **before** Claude sees the prompt — so the slash-command path fires, `disable-model-invocation` doesn't apply, and you get the shortcut without losing the safety guarantee.
-
-Sketch (verify the exact hook syntax against your Claude Code version):
-
-```jsonc
-{
-  "hooks": {
-    "UserPromptSubmit": [{
-      "matcher": "^\\+\\+\\+\\s",
-      "hooks": [{
-        "type": "command",
-        "command": "sed 's|^+++ |/do |'"
-      }]
-    }]
-  }
-}
-```
-
-This is **outside the skill's scope** — the skill itself stays safe-by-default. PRs welcome with a verified hook config for popular Claude Code versions.
+**Worry about auto-trigger from description match** → The skill's frontmatter has explicit "TRIGGER ONLY when LITERALLY starts with `/do`, `/<plugin>:do`, or `+++`" + "NEVER auto-trigger from description matching". This is a soft guard — Claude generally respects it, but if you want hard enforcement, you can add `disable-model-invocation: true` back to the SKILL.md frontmatter (this disables `+++` shortcut as a side effect). See [CHANGELOG [0.3.0]](CHANGELOG.md) for the trade-off discussion.
 
 ## Status
 

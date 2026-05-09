@@ -76,18 +76,27 @@ jobs:
           parts = p.read_text().split('---', 2)
           assert len(parts) >= 3, 'no frontmatter delimiter found'
           fm = yaml.safe_load(parts[1])
-          for required in ('name', 'version', 'description', 'model', 'disable-model-invocation'):
+          for required in ('name', 'version', 'description', 'model'):
               assert required in fm, f'missing frontmatter key: {required}'
           assert fm['name'] == 'do', f'name must be "do", got {fm["name"]!r}'
           assert isinstance(fm['version'], str) and fm['version'].count('.') == 2, \
               f'version must be semver string, got {fm["version"]!r}'
           assert fm['model'] == 'opus', \
               f'model must be "opus" (architect/reviewer role pinned regardless of session), got {fm["model"]!r}'
-          assert fm['disable-model-invocation'] is True, \
-              f'disable-model-invocation must be true (skill performs side effects, must not auto-trigger), got {fm["disable-model-invocation"]!r}'
+          # v0.3.0: disable-model-invocation removed to enable +++ trigger.
+          # If reintroduced, it MUST be paired with removing the +++ trigger
+          # from install.sh + README — otherwise it silently breaks the
+          # shortcut (see v0.2.0-v0.2.5 history).
+          assert 'disable-model-invocation' not in fm or fm.get('disable-model-invocation') is not True, \
+              ('disable-model-invocation: true is incompatible with the +++ trigger '
+               'that install.sh writes to CLAUDE.md. If you intentionally want hard '
+               'auto-trigger blocking, also remove the trigger feature from install.sh '
+               'and the +++ section from README.')
           desc = fm['description']
-          assert 'TRIGGER' in desc and 'SKIP' in desc, \
-              'description should include TRIGGER:/SKIP: blocks'
+          assert 'TRIGGER ONLY' in desc and 'NEVER auto-trigger' in desc and 'SKIP' in desc, \
+              ('description must include strict "TRIGGER ONLY when LITERALLY starts with..." + '
+               '"NEVER auto-trigger from description matching" + SKIP block — the soft guard '
+               'against false-positive triggering when disable-model-invocation is not set.')
           print('frontmatter OK:', {k: v if k != 'description' else f'{len(v)} chars' for k, v in fm.items()})
           PY
 
