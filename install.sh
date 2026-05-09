@@ -8,7 +8,7 @@
 #   ./install.sh
 #
 # Non-interactive mode (env vars override prompts):
-#   SKILL_NAME=do TRIGGER=+++ INSTALL_DIR=~/.local/share/senior-by-default \
+#   SKILL_NAME=do INSTALL_DIR=~/.local/share/senior-by-default \
 #     curl -fsSL .../install.sh | bash
 
 set -euo pipefail
@@ -16,11 +16,16 @@ set -euo pipefail
 REPO_URL="https://github.com/mitiay7/senior-by-default.git"
 DEFAULT_INSTALL_DIR="$HOME/.local/share/senior-by-default"
 DEFAULT_SKILL_NAME="do"
-DEFAULT_TRIGGER="+++"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 
-# Markers for safe install/uninstall round-trip in CLAUDE.md
+# Markers used by uninstall.sh to clean up legacy +++ trigger blocks
+# from earlier installs (v0.2.0–v0.2.3) that wrote them. New installs
+# don't write trigger blocks because the skill has disable-model-invocation:
+# true — a CLAUDE.md instruction asking the model to invoke /do via Skill
+# tool gets blocked. Use a CLI-level UserPromptSubmit hook in
+# ~/.claude/settings.json if you want a +++ shortcut (see README
+# Troubleshooting section).
 TRIGGER_BEGIN="<!-- senior-by-default:trigger:start -->"
 TRIGGER_END="<!-- senior-by-default:trigger:end -->"
 
@@ -42,8 +47,8 @@ prompt() {
   # Returns the chosen value on stdout. ALL user-facing prints go to stderr —
   # otherwise they'd be captured into the value by `VAR=$(prompt ...)` and break
   # downstream validation (e.g. `[[ "$VAR" =~ ^[a-z]... ]]` would see the entire
-  # banner string as the "value"). This bit hard the first time install.sh ran
-  # under env-var override (`SKILL_NAME=do TRIGGER=+++ curl ... | bash`).
+  # banner string as the "value"). This bit hard in v0.2.0–v0.2.2 under
+  # env-var override (`SKILL_NAME=do curl ... | bash`); fixed in v0.2.3.
   local label="$1" default="$2" envvar="$3" answer=""
   local override="${!envvar:-}"
   if [ -n "$override" ]; then
@@ -77,7 +82,6 @@ echo
 
 INSTALL_DIR=$(prompt "Install directory" "$DEFAULT_INSTALL_DIR" "INSTALL_DIR")
 SKILL_NAME=$(prompt "Skill name (becomes /$DEFAULT_SKILL_NAME slash-command)" "$DEFAULT_SKILL_NAME" "SKILL_NAME")
-TRIGGER=$(prompt "Trigger shortcut (use 'none' to skip)" "$DEFAULT_TRIGGER" "TRIGGER")
 
 # Validate skill name (must be valid filesystem name)
 if ! [[ "$SKILL_NAME" =~ ^[a-z][a-z0-9_-]*$ ]]; then
@@ -89,11 +93,6 @@ log "Plan:"
 echo "  • Install repo at: $INSTALL_DIR"
 echo "  • Symlink:         $CLAUDE_SKILLS_DIR/$SKILL_NAME → \$INSTALL_DIR/skills/do"
 echo "  • Slash command:   /$SKILL_NAME"
-if [ "$TRIGGER" != "none" ] && [ -n "$TRIGGER" ]; then
-  echo "  • Trigger:         '$TRIGGER ...' → /$SKILL_NAME ..."
-else
-  echo "  • Trigger:         (skipped — use /$SKILL_NAME directly)"
-fi
 echo
 
 # --- Step 2: hard-dependency check (fail-fast) ------------------------------
@@ -191,35 +190,33 @@ else
   ok "Symlinked $SYMLINK_PATH → $SYMLINK_TARGET"
 fi
 
-# --- Step 6: trigger setup with begin/end markers (safe round-trip) ---------
+# --- Step 6: legacy trigger cleanup ----------------------------------------
 
-if [ "$TRIGGER" != "none" ] && [ -n "$TRIGGER" ]; then
-  TRIGGER_BLOCK=$(cat <<EOF
+# Versions 0.2.0–0.2.3 wrote a "+++ Trigger" block to ~/.claude/CLAUDE.md
+# instructing the model to invoke /do via Skill tool when seeing +++.
+# That trigger never worked because the skill has disable-model-invocation:
+# true (Skill-tool invocations are blocked, including supposedly-explicit
+# ones). On install/update, we offer to strip the legacy marker-wrapped
+# block so users aren't left with a dead instruction in their CLAUDE.md.
+# Use a CLI-level UserPromptSubmit hook in ~/.claude/settings.json if you
+# want a `+++` shortcut — see README "Troubleshooting" / "Shortcut setup".
 
-
-$TRIGGER_BEGIN
-## ${TRIGGER} Trigger
-
-When a user message starts with \`${TRIGGER}\`, treat everything after \`${TRIGGER}\` as the argument and invoke the \`/${SKILL_NAME}\` skill with that text. This is a shorthand — \`${TRIGGER} add user avatars\` is equivalent to \`/${SKILL_NAME} add user avatars\`.
-$TRIGGER_END
-EOF
-)
-
-  if [ -f "$CLAUDE_MD" ]; then
-    if grep -qF "$TRIGGER_BEGIN" "$CLAUDE_MD" 2>/dev/null; then
-      ok "Trigger block already present in $CLAUDE_MD (markers found)"
-    elif confirm "Append trigger block to $CLAUDE_MD?" "Y"; then
-      printf "%s\n" "$TRIGGER_BLOCK" >> "$CLAUDE_MD"
-      ok "Trigger added to $CLAUDE_MD (between $TRIGGER_BEGIN ... $TRIGGER_END)"
-    else
-      log "Skipped. Add manually if you want it later:"
-      echo "$TRIGGER_BLOCK"
-    fi
+if [ -f "$CLAUDE_MD" ] && grep -qF "$TRIGGER_BEGIN" "$CLAUDE_MD" 2>/dev/null; then
+  warn "Found legacy +++ trigger block in $CLAUDE_MD (broken since skill has disable-model-invocation: true)"
+  if confirm "Remove the legacy block?" "Y"; then
+    python3 - "$CLAUDE_MD" "$TRIGGER_BEGIN" "$TRIGGER_END" <<'PY'
+import sys, re
+path, begin, end = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f:
+    text = f.read()
+pattern = re.compile(r'\n*' + re.escape(begin) + r'.*?' + re.escape(end) + r'\n*', re.DOTALL)
+new = pattern.sub('\n', text)
+with open(path, 'w') as f:
+    f.write(new)
+PY
+    ok "Legacy trigger block removed (rest of $CLAUDE_MD preserved)"
   else
-    log "Creating $CLAUDE_MD with trigger"
-    mkdir -p "$(dirname "$CLAUDE_MD")"
-    printf "# Global Instructions\n%s\n" "$TRIGGER_BLOCK" > "$CLAUDE_MD"
-    ok "Created $CLAUDE_MD"
+    log "Kept legacy block. It does nothing — `/do <task>` works regardless."
   fi
 fi
 
@@ -259,14 +256,12 @@ Next steps:
 
   2. Run your first task in any Claude Code session:
 
-EOF
-if [ "$TRIGGER" != "none" ] && [ -n "$TRIGGER" ]; then
-  printf "       %s add a /health endpoint that checks DB connectivity\n" "$TRIGGER"
-  printf "     (or)  /%s add a /health endpoint ...\n" "$SKILL_NAME"
-else
-  printf "       /%s add a /health endpoint that checks DB connectivity\n" "$SKILL_NAME"
-fi
-cat <<EOF
+       /$SKILL_NAME add a /health endpoint that checks DB connectivity
+
+     (Want a shorter prefix like \`+++\`? It can't go through SKILL.md
+     description because the skill has \`disable-model-invocation: true\`
+     for safety. Set up a CLI-level UserPromptSubmit hook in
+     ~/.claude/settings.json instead — see README "Shortcut setup".)
 
   3. Uninstall any time:
        $INSTALL_DIR/uninstall.sh

@@ -6,7 +6,7 @@ Welcome. The skill works for me — that doesn't mean it works for you. Bug repo
 
 Open a GitHub issue with:
 
-1. **What you ran** — the `+++` / `/do` command verbatim
+1. **What you ran** — the `/do` command verbatim
 2. **What happened** — exact final announce text from the skill (the `Complete. Branch: ... Metrics: ...` line)
 3. **What you expected**
 4. **Your config** — sanitize personal paths/repo names, paste relevant section of `.claude/do/config.json`
@@ -64,7 +64,7 @@ Don't treat references as "just docs". They're prompt material that gates real w
 
 There's no automated functional test suite — the skill runs through Claude. Smoke-test manually:
 
-1. Run a real `+++` task on a sandbox repo. Verify:
+1. Run a real `/do` task on a sandbox repo. Verify:
    - Final announce includes `Metrics: <count> entries in <path>` (if metrics configured)
    - Branch name matches `config.naming` template (no `claude/<adj>-<noun>`)
    - Phase you changed actually fires the new behavior

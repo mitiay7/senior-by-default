@@ -13,7 +13,7 @@ Naive shell-template form (HISTORICAL — do NOT use):
 gh issue create --repo {repo} --title "{title}" --body-file {body_file} --label "{labels}"
 ```
 
-If a user runs `+++ x" --milestone 5 --label injected "y` (an unusual but valid title), naive substitution produces:
+If a user runs `/do x" --milestone 5 --label injected "y` (an unusual but valid title), naive substitution produces:
 ```
 gh issue create --repo foo/bar --title "x" --milestone 5 --label injected "y" --body-file /tmp/...
 ```

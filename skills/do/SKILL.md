@@ -1,11 +1,11 @@
 ---
 name: do
-version: 0.2.3
+version: 0.2.4
 model: opus
 disable-model-invocation: true
 description: |
   Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Opus plan + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
-  TRIGGER when: user invokes /do (or +++ shortcut); task describes a coding change (≥1 file modified or created, defined outcome); `.claude/do/config.json` present in repo or workspace root.
+  TRIGGER when: user invokes /do; task describes a coding change (≥1 file modified or created, defined outcome); `.claude/do/config.json` present in repo or workspace root.
   SKIP when: pure Q&A or explanation; code review without implementation; scaffolding-from-scratch ("create new project"); exploratory ("how would I…"); single-line edits where the pipeline is overkill.
 ---
 
@@ -16,8 +16,12 @@ Frontmatter rationale:
   delegates to Sonnet/Haiku via explicit `Agent(model: "...")` calls.
 - `disable-model-invocation: true` — skill performs side effects (creates
   issues, commits, pushes, opens PRs, optionally auto-merges). It must
-  fire only on explicit `/do` invocation or `+++` user trigger, never
-  auto-discovered from description matching mid-conversation.
+  fire only on explicit `/do` slash-command invocation, never
+  auto-discovered from description matching mid-conversation. Note this
+  also blocks Skill-tool invocation, so any "shortcut" mechanism (e.g.
+  rewriting `+++ X` → `/do X`) MUST happen at CLI level (e.g. a
+  `UserPromptSubmit` hook in `~/.claude/settings.json`), not via a
+  CLAUDE.md instruction asking the model to invoke this skill.
 -->
 
 

@@ -189,4 +189,4 @@ Then use the `Write` tool to create the JSON file (not raw bash with `cat <<EOF`
 ## Manual cache clear (user-facing)
 - Wipe all caches: `rm -rf ~/.claude/do/cache/`
 - Single repo: `rm ~/.claude/do/cache/<slug>.json`
-- Force re-detect inline: add `--redetect` to the next `+++ ...` invocation
+- Force re-detect inline: add `--redetect` to the next `/do ...` invocation
