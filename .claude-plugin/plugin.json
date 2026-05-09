@@ -1,6 +1,6 @@
 {
   "name": "senior-by-default",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Multi-actor implementation pipeline for Claude Code: Opus architects & reviews, Sonnet implements, Haiku handles trivial mechanical changes. Auto-routes by complexity, runs gated quality checks (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), and integrates with GitHub/GitLab/custom trackers.",
   "author": {
     "name": "Dmitry Bychkov",

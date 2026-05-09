@@ -39,10 +39,15 @@ fi
 
 prompt() {
   # prompt <label> <default> <env-var-name>
+  # Returns the chosen value on stdout. ALL user-facing prints go to stderr —
+  # otherwise they'd be captured into the value by `VAR=$(prompt ...)` and break
+  # downstream validation (e.g. `[[ "$VAR" =~ ^[a-z]... ]]` would see the entire
+  # banner string as the "value"). This bit hard the first time install.sh ran
+  # under env-var override (`SKILL_NAME=do TRIGGER=+++ curl ... | bash`).
   local label="$1" default="$2" envvar="$3" answer=""
   local override="${!envvar:-}"
   if [ -n "$override" ]; then
-    printf "%s: %s (from \$%s)\n" "$label" "$override" "$envvar"
+    printf "%s: %s (from \$%s)\n" "$label" "$override" "$envvar" >&2
     echo "$override"
     return
   fi
