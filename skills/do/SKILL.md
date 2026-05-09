@@ -84,6 +84,7 @@ Recognize override flags (free-form — accept natural-language equivalents too)
 | `--no-codeowners` | Skip CODEOWNERS-based reviewer routing |
 | `--no-notify` | Skip notifications for this task |
 | `--no-affected-graph` | Run full build/test even if monorepo affected-graph is detected |
+| `--no-caveman` | Skip companion-skill detection ([caveman](https://github.com/JuliusBrussee/caveman) output compression) for this task |
 
 ### Implementer override
 
@@ -120,6 +121,25 @@ WIP limits derive from Kanban literature for **human** teams where context-switc
 If `config.postmortem.trigger_keywords` matches `$ARGUMENTS` OR `$ARGUMENTS` mentions a branch matching `config.postmortem.branch_prefixes` (e.g. `fix/...`):
 - Suggest invoking a `/postmortem` skill if installed
 - Otherwise: add a `## Postmortem` section to the issue body in Phase 1 (cause, impact, detection, mitigation, prevention)
+
+### 0.0.3 Companion skills (token-saving — caveman) — load FIRST
+
+**Run before any Phase 1+ work** so Sub-Agents spawned later inherit token-compressed mode.
+
+Skip if `--no-caveman` flag in `$ARGUMENTS`.
+
+Detect [`caveman`](https://github.com/JuliusBrussee/caveman) (the Claude Code skill that compresses agent output ~75% via "caveman speak", preserving technical accuracy):
+
+```bash
+test -d "$HOME/.claude/skills/caveman" \
+  || test -d "$HOME/.claude/plugins/cache/caveman" \
+  || test -d "$HOME/.claude/plugins/cache/JuliusBrussee/caveman"
+```
+
+- **Found** → caveman's SessionStart hook auto-activates compression. Print: `Caveman: ACTIVE (output compressed)`. Note for Phase 2 prompt construction: Sub-Agents will be instructed to respond in caveman style.
+- **Not found** → print: `Caveman: NOT INSTALLED — agent outputs will not be compressed. Install for ~75% output token savings: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash`. Continue without it (caveman is recommended, not required).
+
+Caveman is **passive** — once active, all assistant output (Opus orchestration AND Sub-Agent responses) flows through its compression hook. No wrapping needed in our Phase 2 spawn calls; just instruct the Sub-Agent in its prompt that caveman style applies.
 
 ### 0.1 Resolve target repo(s)
 
@@ -265,4 +285,4 @@ Before announcing completion, scan [`references/anti-patterns.md`](references/an
 
 ## Top-level anti-patterns (full list: [`references/anti-patterns.md`](references/anti-patterns.md))
 
-Re-detecting stack on every run · Re-exploring code instead of trusting `context_doc` · Subjective reviews · Tests after review · Scope creep · Opus writing code without `--implementer=opus` flag · Opus reviewing its own implementation in the same context (cold-context required when `--implementer=opus`) · Haiku making logic decisions or skipping its diff-scan · Hardcoded user-facing strings (if i18n configured) · Committing secrets · Amending migrations · Finalizing without context doc update (if required) · Adding deps not in Requirements · Bypassing CODEOWNERS · Skipping zero-downtime migration audit · Auto-merge without CI configured (only relevant if BOTH ci.required AND auto_merge.enabled are set) · **Skipping Phase 4.11 metrics emission when `config.metrics.log_path` is set** · **Using `Agent(isolation: "worktree")` for Phase 2** (auto-named branches break `config.naming` traceability — Opus pre-creates worktree via `git worktree add`) · **Auto-named branches without `i{N}` for M/H** (Phase 4.1.0 renames + flags as spec violation in metrics) · **Shell-injecting `{title}`/`{labels}` into tracker commands** (user-controlled `$ARGUMENTS` reaches title — pass via env vars or argv-array `commands` form, never via raw shell-string templates; see `references/trackers.md` §Security).
+Re-detecting stack on every run · Re-exploring code instead of trusting `context_doc` · Subjective reviews · Tests after review · Scope creep · Opus writing code without `--implementer=opus` flag · Opus reviewing its own implementation in the same context (cold-context required when `--implementer=opus`) · Haiku making logic decisions or skipping its diff-scan · Hardcoded user-facing strings (if i18n configured) · Committing secrets · Amending migrations · Finalizing without context doc update (if required) · Adding deps not in Requirements · Bypassing CODEOWNERS · Skipping zero-downtime migration audit · Auto-merge without CI configured (only relevant if BOTH ci.required AND auto_merge.enabled are set) · **Skipping Phase 4.11 metrics emission when `config.metrics.log_path` is set** · **Using `Agent(isolation: "worktree")` for Phase 2** (auto-named branches break `config.naming` traceability — Opus pre-creates worktree via `git worktree add`) · **Auto-named branches without `i{N}` for M/H** (Phase 4.1.0 renames + flags as spec violation in metrics) · **Shell-injecting `{title}`/`{labels}` into tracker commands** (user-controlled `$ARGUMENTS` reaches title — pass via env vars or argv-array `commands` form, never via raw shell-string templates; see `references/trackers.md` §Security) · **Compressing structured output when caveman is active** — caveman style applies to natural-language framing only; code, paths, JSON, diffs, `claimed_status` self-review block, Phase 4.11 metrics JSONL, and final announce format are LITERAL and MUST stay un-compressed (they're parsed by downstream tooling).

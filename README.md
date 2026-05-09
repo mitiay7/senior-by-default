@@ -200,7 +200,25 @@ Three Claude models with hard role boundaries — see [`skills/do/SKILL.md`](ski
 
 See [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md) for the full schema and [`examples/`](examples/) for ready-to-adapt configs.
 
-## Recommended Claude Code plugins
+## Recommended companion: caveman (install FIRST)
+
+[caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill that compresses agent output by ~75% via "caveman speak" while preserving full technical accuracy. It's passive (SessionStart hook), so once installed it just works for any session — including ours.
+
+**Install it before senior-by-default** so all Sub-Agent spawns from Phase 2 inherit compressed output:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
+```
+
+Phase 0.0.3 detects whether caveman is installed:
+- **Active** → prints `Caveman: ACTIVE (output compressed)`. Sub-Agent prompts include a directive to respond in caveman style for natural-language framing (code, paths, JSON, diffs, completion-report formats are NEVER compressed).
+- **Not installed** → warns once, proceeds without compression. The skill works without caveman; you just spend more output tokens.
+
+Per-task opt-out: `--no-caveman` in `$ARGUMENTS`.
+
+Why install caveman first: SessionStart hooks fire at session boot; if you install caveman after senior-by-default, you'll need to restart your Claude Code session for compression to take effect.
+
+## Recommended Claude Code plugins for Phase 3 specialist review
 
 The skill uses `subagent_type` strings from these plugins for parallel specialist review (Phase 2 plan review, Phase 3.6 audit). All optional — without them, Opus does inline review:
 

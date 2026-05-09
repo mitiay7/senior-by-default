@@ -120,6 +120,8 @@ Test:  {cache.test_cmd}
 "- Wrap entry point with feature flag `{flag_name}` ({feature_flags.system}). Default `{feature_flags.default_state}`. Register in `{feature_flags.registry_path}`."]
 [+ if config.security_scan.enabled →
 "- Do not introduce dependencies with known CVEs at threshold {threshold}. Phase 3 will scan; resolve before review."]
+[+ if Phase 0.0.3 detected caveman as ACTIVE →
+"- Respond in caveman style — compressed prose, technical accuracy preserved (e.g. 'Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:' instead of 5-sentence narrative). Code, file paths, error messages, and structured output (tables, JSON, diffs) are NEVER compressed — only natural-language framing. The caveman skill is active in this session and will compress output by ~75% — match its register so structure stays consistent. Self-review section, completion reports, and metrics output (Phase 4.11 calibration parsing) follow strict format below — those are LITERAL strings, not prose, do not compress them."]
 - No backwards compat — clean breaks only.
 - No new dependencies without explicit listing in Requirements.
 - Commit specific files only. Convention: `feat|fix|refactor|test|chore|wip(module): desc`
