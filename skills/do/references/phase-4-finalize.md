@@ -285,17 +285,27 @@ If the announce comes out without `Metrics: ...` at the end (when `config.metric
 ### The procedure (run this whole block as one Bash command)
 
 ```bash
-# === Phase 4.11 metrics emit (atomic with announce) ===
+# === Phase 4.0.5 pre-emit sanity check — capture pre-count ===
 if [ -n "$LOG_PATH" ]; then
   mkdir -p "$(dirname "$LOG_PATH")"
+  PRE_COUNT=$(wc -l < "$LOG_PATH" 2>/dev/null | tr -d ' ' || echo 0)
+fi
+
+# === Phase 4.11 metrics emit (atomic with announce) ===
+if [ -n "$LOG_PATH" ]; then
   # JSON_ENTRY constructed earlier in Phase 4.11 (see §4.11 for schema).
   # Truncate, then append the line.
-  echo "$JSON_ENTRY" >> "$LOG_PATH" || { echo "Metrics: APPEND FAILED — write error to $LOG_PATH" >&2; FAILED=1; }
-  if [ -z "$FAILED" ]; then
-    COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
-    METRICS_LINE="Metrics: $COUNT entries in $LOG_PATH"
+  if echo "$JSON_ENTRY" >> "$LOG_PATH"; then
+    POST_COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
+    DELTA=$((POST_COUNT - PRE_COUNT))
+    if [ "$DELTA" -eq 1 ]; then
+      METRICS_LINE="Metrics: $POST_COUNT entries in $LOG_PATH"
+    else
+      # Append "succeeded" but file didn't grow by exactly 1 — silent corruption
+      METRICS_LINE="Metrics: APPEND FAILED — pre=$PRE_COUNT post=$POST_COUNT delta=$DELTA expected=1"
+    fi
   else
-    METRICS_LINE="Metrics: APPEND FAILED"
+    METRICS_LINE="Metrics: APPEND FAILED — write error to $LOG_PATH (exit $?)"
   fi
 else
   METRICS_LINE="Metrics: not configured (set config.metrics.log_path to enable)"
@@ -313,6 +323,12 @@ ${CTX_LINE:+$CTX_LINE
 }${METRICS_LINE}.
 EOF
 ```
+
+### Why pre-count + delta verification
+
+Just running `echo >> file` and reading `wc -l` after isn't sufficient — `>>` can succeed (returns exit 0) while the actual write is partial or zero (e.g., disk full, file locked, permission flipped mid-write). Capturing PRE_COUNT before and verifying DELTA == 1 after is the cheapest way to fail loud on silent corruption. If something went wrong, the announce reports `APPEND FAILED` with diagnostic numbers — user sees it immediately rather than discovering a missing entry days later when reviewing metrics.
+
+For the spawned-agent execution model (where the agent runs everything start-to-finish and returns to a parent), this matters extra because the agent's final message is the only thing the parent sees — if the diagnostic ends up there, parent flags it; if announce is plain prose, parent thinks success.
 
 ### Why the coupling
 

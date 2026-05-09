@@ -115,13 +115,19 @@ Test:  {cache.test_cmd}
 
 ## Rules
 
-**Critical Phase 4 reminder for Opus orchestrator (you'll forget by then if you don't pin this now):**
+**Critical Phase 4 reminders — pinned at top so they don't get forgotten by end-of-task:**
 
-When this Sub-Agent reports done, you (Opus) MUST run the Phase 4.13 final-announce bash procedure verbatim from [`phase-4-finalize.md`](phase-4-finalize.md) — it's structurally coupled with Phase 4.11 metrics emission via shared bash variables. The announce text references `$METRICS_LINE` which is set ONLY by the metrics-append block. You cannot produce the announce without first running the emit. If your final user-visible message ends with PR-summary prose and no `Metrics: ...` line at the very end, you skipped Phase 4.13 procedure — go back. Five rounds of audit + production runs proved this slips when treated as a separate "should-do" instruction; the bash coupling is the only enforcement that works.
+These apply to **whoever is currently executing this skill flow** — whether you are the spawned agent doing everything yourself, or a parent orchestrator that spawned a sub-agent. There is no separate "Opus picks up after Sub-Agent reports" step in most real installs (the spawned agent typically runs the entire flow start-to-finish and returns). So if you are reading this prompt, **you** are responsible for Phase 4.0 + Phase 4.13 procedures.
 
-Same for Phase 4.0 branch normalization: BEFORE you open the PR (Phase 4.2), verify the branch matches `config.naming.{low|issue}.branch` template. If you find yourself in a worktree with auto-named `claude/<adj>-<noun>-<hash>` branch, RENAME UNCONDITIONALLY (`git branch -m`). Do NOT rationalize "the worktree was pre-spawned" as an excuse to keep the auto-name — the worktree path is fine to keep, the BRANCH must follow `config.naming` for `i{N}`-traceability.
+1. **Phase 4.0 (branch rename) MUST run BEFORE Phase 4.2 (PR open)**, not after. Verify your worktree's branch matches `config.naming.{low|issue}.branch`. If you're in a worktree with auto-named `claude/<adj>-<noun>-<hash>` (Claude Code harness pre-spawn) — RENAME UNCONDITIONALLY via `git branch -m`. The worktree PATH is fine to keep; the BRANCH must follow spec so PR title / commit `Ref:` / metrics `branch_rename` field / tracker comments all cross-reference via `i{N}`. **Pre-spawned worktree is NOT an excuse** — `git branch -m` works on pre-spawned worktrees just fine. Anti-pattern 31c.
 
-Now, the rules for the Sub-Agent (you):
+2. **Phase 4.13 (final announce) is a single bash procedure, structurally coupled with Phase 4.11 metrics emission** via shared `$METRICS_LINE` shell variable. Run the bash verbatim from [`phase-4-finalize.md`](phase-4-finalize.md) §4.13. You CANNOT produce the announce text without running the emit (variable doesn't exist otherwise). If your final user-visible message ends with PR-summary prose and no `Metrics: ...` line at the very end — you composed prose announce instead of running the bash flow. That's the bug. Anti-pattern 31a.
+
+3. **Phase 4.0.5 (pre-emit sanity check)**: AFTER the bash flow runs, verify `wc -l` of `$LOG_PATH` grew by exactly 1 vs the pre-count you captured before the append. If it didn't grow, the append failed silently — re-run or fail loud with `Metrics: APPEND FAILED — <reason>` in the announce. Don't gloss over.
+
+These three are NOT optional and NOT ceremony. They're the fail-fast contract that makes the skill self-verifying — if you skip them, downstream metrics-driven skill iteration breaks silently.
+
+Now, the rules for the implementation work:
 
 [+ if i18n configured AND scope is Frontend or Fullstack →
 "- ALL user-facing strings must use `{i18n.fn}()`. Add keys to ALL of: {i18n.locale_files joined by ', '}."]

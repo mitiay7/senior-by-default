@@ -4,6 +4,34 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-05-09
+
+Patch release. Closes the remaining gap from v0.3.1 after learning the actual production execution model.
+
+### Context
+
+User clarified: skill is invoked from a **parent Claude Code session that uses Task tool to spawn sub-agents** with `isolation: "worktree"`. User confirms each spawn manually. The spawned agent runs the entire skill flow start-to-finish and returns. There is no "Opus parent picks up after Sub-Agent reports done" — the spawned agent IS the orchestrator and implementer.
+
+### Why v0.3.1 framing was wrong
+
+v0.3.1's Phase 2 prompt addressed "Opus orchestrator" expecting a parent that finalizes after sub-agent. In the actual execution model, the spawned agent reads "you (Opus) MUST run Phase 4.13 after Sub-Agent reports done" and rationalizes: "I'm the sub-agent, the Opus parent will do this" — except there is no Opus parent that returns to do that. So the step gets skipped.
+
+### Fixed
+
+- **Phase 2 prompt template framing fixed**: critical Phase 4 reminders now address "whoever is currently executing this skill flow — whether you are the spawned agent doing everything yourself, or a parent orchestrator". Explicit: "if you're reading this, you are the executor". No more deferring to a non-existent parent.
+- **Phase 4.13 procedure now includes Phase 4.0.5 pre-emit sanity check**: capture `wc -l` of `$LOG_PATH` BEFORE the append (`PRE_COUNT`), then verify after the append that `POST_COUNT - PRE_COUNT == 1`. If delta isn't exactly 1, set `METRICS_LINE="Metrics: APPEND FAILED — pre=X post=Y delta=Z expected=1"`. Catches silent corruption (disk full, permission flip mid-write, file lock, etc.) that would otherwise return exit 0 but write nothing.
+- **Anti-pattern 31a updated**: explicitly mentions execution-model framing — "applies whether you are the spawned agent doing everything yourself, or a parent orchestrator — there's no 'the other one' to defer to; if you're reading this, you are the executor."
+
+### Real-world test
+
+In a fresh `+++` task on a project with `metrics.log_path` configured, the final assistant message MUST end with one of:
+- `Metrics: <N> entries in <path>.` — success
+- `Metrics: APPEND FAILED — pre=X post=Y delta=Z expected=1.` — write succeeded but delta wrong (silent corruption)
+- `Metrics: APPEND FAILED — write error to <path> (exit N).` — write failed
+- `Metrics: not configured (set config.metrics.log_path to enable).` — feature disabled
+
+If the final message ends with PR-summary prose and no `Metrics:` line at all, the bash procedure was skipped — that's now provably the wrong path because the procedure literally generates the entire announce text. Free-form prose announce should be impossible.
+
 ## [0.3.1] — 2026-05-09
 
 Patch release. Fixes two systematic Phase 4 escapes observed in real production runs:
