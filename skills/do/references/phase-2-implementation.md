@@ -114,6 +114,15 @@ Lint:  {cache.lint_cmds joined with ' && '}
 Test:  {cache.test_cmd}
 
 ## Rules
+
+**Critical Phase 4 reminder for Opus orchestrator (you'll forget by then if you don't pin this now):**
+
+When this Sub-Agent reports done, you (Opus) MUST run the Phase 4.13 final-announce bash procedure verbatim from [`phase-4-finalize.md`](phase-4-finalize.md) — it's structurally coupled with Phase 4.11 metrics emission via shared bash variables. The announce text references `$METRICS_LINE` which is set ONLY by the metrics-append block. You cannot produce the announce without first running the emit. If your final user-visible message ends with PR-summary prose and no `Metrics: ...` line at the very end, you skipped Phase 4.13 procedure — go back. Five rounds of audit + production runs proved this slips when treated as a separate "should-do" instruction; the bash coupling is the only enforcement that works.
+
+Same for Phase 4.0 branch normalization: BEFORE you open the PR (Phase 4.2), verify the branch matches `config.naming.{low|issue}.branch` template. If you find yourself in a worktree with auto-named `claude/<adj>-<noun>-<hash>` branch, RENAME UNCONDITIONALLY (`git branch -m`). Do NOT rationalize "the worktree was pre-spawned" as an excuse to keep the auto-name — the worktree path is fine to keep, the BRANCH must follow `config.naming` for `i{N}`-traceability.
+
+Now, the rules for the Sub-Agent (you):
+
 [+ if i18n configured AND scope is Frontend or Fullstack →
 "- ALL user-facing strings must use `{i18n.fn}()`. Add keys to ALL of: {i18n.locale_files joined by ', '}."]
 [+ if feature_flags configured AND scope in feature_flags.required_for_scopes →
