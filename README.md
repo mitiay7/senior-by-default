@@ -42,6 +42,7 @@ The skill inherits whatever auth `gh`/`git` already have on your machine — ass
 ## Why this vs. other "team of agents" skills
 
 - **Three actors with strict role boundaries** — Opus *never* writes code (except with explicit `--implementer=opus` flag), Sonnet *never* makes architectural decisions, Haiku *only* does ≤2-file mechanical changes.
+- **Karpathy-style behavioral guardrails** — assumptions surfaced before side effects, simplest viable implementation, surgical diffs only, and verifiable goals for every non-trivial task.
 - **Quality gates are pass/fail against acceptance criteria** — no "rate this 1-10" subjective review.
 - **Zero-downtime migration audit** baked in: `DROP COLUMN` / `RENAME` / `NOT NULL`-without-default get blocked with expand-contract pattern suggested.
 - **Self-review calibration metric** — Sonnet declares `claimed_status: ready` before Phase 3; Phase 3 outcomes are compared and `false_positive` rate tracked over time. The highest-signal data point for skill iteration.
@@ -285,7 +286,7 @@ Pass these in the task argument:
 
 **Skill says "specialist not found"** → That `subagent_type` plugin isn't installed. Either install it (see Recommended plugins above) or remove it from `config.specialists.*` — Opus inline review takes over.
 
-**Branch is `claude/funny-leakey-...` instead of `feat/i42-...`** → Phase 4.1.0 detects and renames automatically; metrics record this as a Phase 2 spec violation. If it keeps happening, your Opus instance is using `Agent(isolation: "worktree")` — see anti-pattern 31b in [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md).
+**Branch is `claude/funny-leakey-...` instead of `feat/i42-...`** → Phase 4.0 detects and renames automatically before PR creation; metrics record this as a Phase 2 spec violation. If it keeps happening, your Opus instance is using `Agent(isolation: "worktree")` — see anti-pattern 31b in [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md).
 
 **Metrics not appearing in `~/.claude/do/metrics/*.jsonl`** → Skill is skipping Phase 4.11. Check the final announce — it MUST include `Metrics: <count> entries in <path>`. If it doesn't, that's a bug; file an issue with the announce text.
 

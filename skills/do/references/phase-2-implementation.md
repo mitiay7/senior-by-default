@@ -4,6 +4,7 @@
 - **Budget guard**: 3 Sonnet relaunches without progress → STOP, escalate to user. Progress = at least one previously-failing acceptance criterion now passes.
 - **Worktree is created by Opus BEFORE spawning Sub-Agent** — see "Worktree setup" below. Sub-Agent does NOT create the worktree.
 - **Never use `Agent(..., isolation: "worktree")`** — that mechanism auto-names branches (`claude/funny-leakey-...`) and bypasses `config.naming`. Always pre-create worktree explicitly via `git worktree add` per [`git-rules.md`](git-rules.md), then spawn `Agent(model: "sonnet")` WITHOUT isolation, passing the worktree path as the working directory in the prompt.
+- **Behavioral guardrails**: no silent assumptions, no speculative abstractions, no drive-by cleanup. Every changed line must trace to the task, an acceptance criterion, or cleanup caused by this change.
 - M/H: checkpoint commits as `wip(module): ...` between major chunks.
 - **Error recovery**: capture error → diagnose root cause → targeted fix. Don't retry blindly. Don't abandon after a single failure.
 - **No new dependencies** (`go get`, `pnpm add`, `cargo add`, `pip install`, etc.) unless explicitly listed in issue Requirements. If needed and not listed → STOP, report to Opus.
@@ -147,6 +148,10 @@ These three are NOT optional and NOT ceremony. They're the fail-fast contract th
 
 Now, the rules for the implementation work:
 
+- If multiple interpretations remain and they would change observable behavior, STOP and report the ambiguity. Otherwise state the assumption briefly and proceed.
+- Use the smallest implementation that satisfies the acceptance criteria. Do not add new abstraction layers, config knobs, feature flags, generic helpers, or future-proofing unless Requirements explicitly ask for them.
+- Match existing style even if you would design it differently. Mention unrelated dead code or cleanup as deferred work; do not edit it here.
+- Each plan step must include its verification check. If the implementation starts growing beyond the plan, pause and simplify before continuing.
 [+ if i18n configured AND scope is Frontend or Fullstack →
 "- ALL user-facing strings must use `{i18n.fn}()`. Add keys to ALL of: {i18n.locale_files joined by ', '}."]
 [+ if feature_flags configured AND scope in feature_flags.required_for_scopes →
@@ -166,8 +171,9 @@ After implementation + tests + build pass, run a self-review pass:
 1. For EACH acceptance criterion, cite the file:line that proves it implemented (or "test name" for test criteria).
 2. For EACH new public function with branching logic, name the happy-path test AND error-path test that cover it.
 3. Re-read your own diff (`git diff main...HEAD`) and check against the rules above + the issue's "Out of Scope" section.
-4. Flag anything you skipped or deferred. Don't hide it.
-5. **Declare an overall claimed_status** — one of:
+4. Confirm simplicity + surgical scope: no speculative abstraction/config/deps/flags, no unrelated formatting/comment churn, every changed line traceable to the task.
+5. Flag anything you skipped or deferred. Don't hide it.
+6. **Declare an overall claimed_status** — one of:
    - `ready` — all acceptance criteria implemented + verified, no known issues
    - `deferred` — implemented + tested, but explicitly deferred something (with note)
    - `uncertain` — uncertain about a specific aspect (Phase 3 should pay extra attention here)
@@ -181,6 +187,7 @@ Acceptance Criterion 2: ✓ {file.go:80}, test {file_test.go: TestX}
 Tests for new fns:
   - HandleFoo: TestHandleFoo_OK / TestHandleFoo_ErrInvalidInput
   - HandleBar: TestHandleBar_OK / TestHandleBar_ErrNotFound
+Simplicity/surgical check: no speculative abstractions or drive-by edits; changed lines trace to task
 Out-of-scope check: no scope creep detected
 Deferred: {nothing | "extracted shared helper, not required by acceptance — added as tech debt note"}
 Uncertain: {none | "concurrency in connection pool — flagged for reviewer"}
@@ -202,8 +209,8 @@ The first line `claimed_status: <ready|deferred|uncertain>` is REQUIRED — Phas
 0. **Worktree already exists** (Opus pre-created it per "Worktree setup" above). Sub-Agent verifies `git rev-parse --abbrev-ref HEAD` matches the expected branch name. If mismatch → STOP, alert Opus (don't try to fix from inside).
 1. Read context (per "Context" section of the prompt — context_doc, CLAUDE.md, affected files)
 2. Plan
-   - Medium: inline plan, no review
-   - High: separate plan output → specialist review (see "High — Plan Review" below)
+   - Low/Medium: concise inline plan, no review; each step names its verification check
+   - High: separate plan output → specialist review (see "High — Plan Review" below); each step names its verification check
 3. Implement
 4. Write + run tests (if Tests: YES)
 5. Run build checklist (ALL commands from `Flags` section)

@@ -10,6 +10,8 @@ Read this BEFORE finalizing any task as a sanity check (Phase 4 calls back into 
 5. **Opus fixing code directly during review** — return to Sonnet, then re-run gates
 6. **Issues without measurable acceptance criteria** — every checkbox must map to a verifiable fact
 7. **Specialist review for Low tasks** — Opus diff scan only
+7a. **Silent assumptions** — if interpretations would produce different behavior, ask before creating issues/worktrees/commits/PRs
+7b. **Weak goals** — vague acceptance like "make it work" without pass/fail checks; rewrite into verifiable criteria first
 
 ## Memory & context
 8. **Re-detecting stack on every run** — Phase 0.2 must use cache from `~/.claude/do/cache/<slug>.json` unless `--redetect` requested
@@ -32,6 +34,9 @@ Read this BEFORE finalizing any task as a sanity check (Phase 4 calls back into 
 21. Amending migration files during review — always write a NEW migration with a higher number
 22. Backwards-compat shims, re-exports, `_unused` vars marked just-in-case — clean breaks only
 23. Comments explaining WHAT (well-named identifiers do that) — only comment WHY when non-obvious
+23a. Speculative abstractions, config, feature flags, extension points, or "future flexibility" not required by acceptance criteria
+23b. Drive-by refactors, formatting churn, comment rewrites, or unrelated cleanup in files touched for another reason
+23c. Changed lines that cannot be traced to the user's request, a requirement, an acceptance criterion, or cleanup introduced by this change
 
 ## Universalization-specific (post-rewrite)
 24. Hardcoding repo paths, build commands, or specialists in SKILL.md — all project-specific values come from `config.json`; if it's not in config, it's not part of the skill

@@ -57,12 +57,16 @@ Locale: `config.issue_locale`. Below shows `en` as canonical; for `ru` use the R
 [+ if context_doc → "Before starting, read `{context_doc.path}` — it has the project structure, conventions, current state, and open work. Do not re-explore the repos."
                   | ru: "Перед началом прочитай `{context_doc.path}` — там структура проекта, конвенции, текущее состояние и открытые задачи. Не пере-исследуй репозитории."]
 
+[+ if any non-obvious assumption or tradeoff was resolved before issue creation → "### Assumptions / Tradeoffs
+{short list of assumptions accepted, rejected broader scope, or simpler path chosen. If ambiguity remains that changes behavior, do not create the issue yet — ask the user first.}"]
+
 ### Context — {why, architecture fit, deps}
 
 ### Requirements — {checklist of concrete deliverables}
 
 ### Acceptance Criteria — pass/fail
 - All requirements implemented (each checkbox maps to a diff)
+- Every changed line traces to a requirement, acceptance criterion, or cleanup introduced by this change
 - Tests pass (happy path + error path per public function with branching)
 - Build passes: {full build/lint/test command list from cache.build_cmds + cache.lint_cmds + cache.test_cmd}
 - No regressions (no deleted assertions, no removed error handling)
@@ -78,6 +82,7 @@ Locale: `config.issue_locale`. Below shows `en` as canonical; for `ru` use the R
 
 ### Implementation Hints
 {files, patterns, edge cases, gotchas. Pass references to similar modules from Phase 0 if relevant.}
+Prefer existing patterns and the smallest implementation that satisfies the criteria. Do not add new abstractions, config, flags, dependencies, or broad refactors unless they are listed in Requirements.
 {If concurrent-edit warning fired in Phase 0.3: "⚠ Recent activity on these files: {file: author@sha list}. Coordinate or rebase frequently."}
 
 [+ if Migration → "### Migration
@@ -100,7 +105,7 @@ Mitigation: {immediate fix this PR delivers}
 Prevention: {longer-term action — separate issue if not in scope}"]
 
 ### Out of Scope
-{explicit non-goals to prevent scope creep}
+{explicit non-goals to prevent scope creep. Include unrelated cleanup/dead-code notes here or as follow-up issues; do not fold them into the current task.}
 
 ### Worktree Setup
 Per target repo:
@@ -139,12 +144,12 @@ With `{N}` = ISSUE_NUM and `{slug}` derived from $ARGUMENTS.
 
 **en** (default):
 ```
-Read the issue and start implementation immediately. Do NOT output a plan, do NOT output a task list, do NOT ask clarifying questions.
+Read the issue and start implementation immediately. Do NOT output a plan, do NOT output a task list, do NOT ask clarifying questions unless the issue is internally contradictory or impossible to satisfy. In that case, stop and report the exact contradiction instead of guessing.
 ```
 
 **ru**:
 ```
-Прочитай issue, сразу приступай к реализации. НЕ выводи план, НЕ выводи список задач, НЕ переспрашивай.
+Прочитай issue, сразу приступай к реализации. НЕ выводи план, НЕ выводи список задач, НЕ переспрашивай, если только issue не противоречит само себе или его невозможно выполнить. В этом случае остановись и назови точное противоречие, а не угадывай.
 ```
 
 ## Announce

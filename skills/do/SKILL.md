@@ -1,6 +1,6 @@
 ---
 name: do
-version: 0.3.3
+version: 0.4.0
 model: opus
 description: |
   Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Opus plan + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
@@ -52,6 +52,15 @@ This SKILL.md uses shorthand for Claude Code primitives — clarification for ad
 > **Context doc is mandatory IF configured.** Sonnet reads it before exploring; Phase 4 updates it.
 
 **Input**: `$ARGUMENTS`
+
+## Operating principles
+
+Apply these in every phase and pass them through to spawned agents. They adapt the Karpathy-style guardrails for this side-effect-heavy pipeline: bias toward caution on non-trivial work, but do not add ceremony to obvious one-line fixes.
+
+1. **Think before coding** — do not silently choose between materially different interpretations. If ambiguity changes behavior, STOP and ask before creating issues, worktrees, commits, or PRs. If the assumption is low-risk, record it in the issue/context and continue.
+2. **Simplicity first** — implement the smallest change that satisfies the request and acceptance criteria. No speculative abstractions, new config, feature flags, dependencies, "future flexibility", or impossible-case error handling unless the task explicitly requires them.
+3. **Surgical changes** — every changed line must trace to the user's request, a requirement, an acceptance criterion, or cleanup caused by this change. Match existing style. Mention unrelated dead code or cleanup as follow-up; do not edit it in this task.
+4. **Goal-driven execution** — convert the request into pass/fail criteria before implementation. Each non-trivial plan step names its verification check. Loop on implementation until the criteria and gates pass, then stop.
 
 ## Progressive disclosure — load references on demand
 
@@ -115,6 +124,15 @@ By default the implementer is determined by complexity bucket: T → Haiku, L/M/
 If `--implementer=opus` AND complexity is L → warn ("Opus on Low is overkill — proceed?") but honor.
 
 ## PHASE 0 — SETUP & ROUTING
+
+### Preflight — intent clarity + minimal path
+
+Before any side effects (issue creation, worktree creation, commits, pushes), read `$ARGUMENTS` and decide whether the task is clear enough to execute.
+
+- If multiple interpretations would produce different behavior or data contracts, STOP and ask the user.
+- If one reasonable interpretation exists but there are assumptions, proceed only after recording the assumptions in the Phase 0 announce and, for M/H, the issue body.
+- Prefer the smallest path that meets the user goal. If the user asked for a broad change but a narrower change clearly satisfies the goal, surface the tradeoff before proceeding.
+- Convert the request into concrete pass/fail acceptance criteria before Phase 1 (M/H) or Phase 2 (T/L).
 
 ### 0.0 Find & validate config
 Walk CWD upward for `.claude/do/config.json`. First match wins. None → use defaults (single-repo, no issue tracker, no UI/i18n gates, no specialists, no context doc). Defaults defined in [`references/config-schema.md`](references/config-schema.md).
@@ -223,6 +241,8 @@ Else estimate:
 
 Boundaries: 4 trivial files in one module → prefer Low. 3 files spanning new API surface → prefer Medium. **Any judgment call about behaviour → bump to Low** (Haiku must not pick between alternatives). If task touches migrations, security-sensitive code, public API, or i18n — never Trivial.
 
+Ambiguity about user intent or observable behavior is never Trivial. Ask if it changes the outcome; otherwise record the assumption and choose the lowest complexity bucket that can verify the acceptance criteria.
+
 Announce override: `Complexity: {override} (was: {suggested})`.
 
 ### 0.5 Test detection
@@ -262,6 +282,8 @@ If `config.notifications` configured AND `task_started` in events → send. See 
   Files: ~{N} | Tests: {YES/NO} | Migration: {YES NNN/NO} | Context doc: {required/none}
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
   WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
+  [+ if assumptions recorded → "Assumptions: {short list}"]
+  [+ if simpler path chosen → "Tradeoff: {short explanation of narrower implementation}"]
   [+ if concurrent edits → "⚠ Concurrent edits on planned files in last {N} days"]
   [+ if postmortem context → "ℹ Postmortem section will be added to issue"]
 ```
@@ -306,4 +328,4 @@ Before announcing completion, scan [`references/anti-patterns.md`](references/an
 
 ## Top-level anti-patterns (full list: [`references/anti-patterns.md`](references/anti-patterns.md))
 
-Re-detecting stack on every run · Re-exploring code instead of trusting `context_doc` · Subjective reviews · Tests after review · Scope creep · Opus writing code without `--implementer=opus` flag · Opus reviewing its own implementation in the same context (cold-context required when `--implementer=opus`) · Haiku making logic decisions or skipping its diff-scan · Hardcoded user-facing strings (if i18n configured) · Committing secrets · Amending migrations · Finalizing without context doc update (if required) · Adding deps not in Requirements · Bypassing CODEOWNERS · Skipping zero-downtime migration audit · Auto-merge without CI configured (only relevant if BOTH ci.required AND auto_merge.enabled are set) · **Skipping Phase 4.11 metrics emission when `config.metrics.log_path` is set** · **Using `Agent(isolation: "worktree")` for Phase 2** (auto-named branches break `config.naming` traceability — Opus pre-creates worktree via `git worktree add`) · **Auto-named branches without `i{N}` for M/H** (Phase 4.0 — NOT 4.1.0 — runs BEFORE PR open and renames UNCONDITIONALLY; "pre-spawned worktree" is NOT an excuse) · **Final assistant message ends with PR-summary prose and NO `Metrics: ...` line** (you skipped Phase 4.13 procedure — the announce is structurally coupled to Phase 4.11 metrics emission via shared `$METRICS_LINE` bash variable; run the bash flow verbatim from `phase-4-finalize.md` instead of composing prose) · **Shell-injecting `{title}`/`{labels}` into tracker commands** (user-controlled `$ARGUMENTS` reaches title — pass via env vars or argv-array `commands` form, never via raw shell-string templates; see `references/trackers.md` §Security) · **Compressing structured output when caveman is active** — caveman style applies to natural-language framing only; code, paths, JSON, diffs, `claimed_status` self-review block, Phase 4.11 metrics JSONL, and final announce format are LITERAL and MUST stay un-compressed (they're parsed by downstream tooling).
+Re-detecting stack on every run · Re-exploring code instead of trusting `context_doc` · Subjective reviews · Tests after review · Scope creep · Silent assumptions when interpretations differ · Speculative abstractions/config/deps/flags · Drive-by refactors or formatting churn · Changed lines that cannot be traced to the request · Opus writing code without `--implementer=opus` flag · Opus reviewing its own implementation in the same context (cold-context required when `--implementer=opus`) · Haiku making logic decisions or skipping its diff-scan · Hardcoded user-facing strings (if i18n configured) · Committing secrets · Amending migrations · Finalizing without context doc update (if required) · Adding deps not in Requirements · Bypassing CODEOWNERS · Skipping zero-downtime migration audit · Auto-merge without CI configured (only relevant if BOTH ci.required AND auto_merge.enabled are set) · **Skipping Phase 4.11 metrics emission when `config.metrics.log_path` is set** · **Using `Agent(isolation: "worktree")` for Phase 2** (auto-named branches break `config.naming` traceability — Opus pre-creates worktree via `git worktree add`) · **Auto-named branches without `i{N}` for M/H** (Phase 4.0 — NOT 4.1.0 — runs BEFORE PR open and renames UNCONDITIONALLY; "pre-spawned worktree" is NOT an excuse) · **Final assistant message ends with PR-summary prose and NO `Metrics: ...` line** (you skipped Phase 4.13 procedure — the announce is structurally coupled to Phase 4.11 metrics emission via shared `$METRICS_LINE` bash variable; run the bash flow verbatim from `phase-4-finalize.md` instead of composing prose) · **Shell-injecting `{title}`/`{labels}` into tracker commands** (user-controlled `$ARGUMENTS` reaches title — pass via env vars or argv-array `commands` form, never via raw shell-string templates; see `references/trackers.md` §Security) · **Compressing structured output when caveman is active** — caveman style applies to natural-language framing only; code, paths, JSON, diffs, `claimed_status` self-review block, Phase 4.11 metrics JSONL, and final announce format are LITERAL and MUST stay un-compressed (they're parsed by downstream tooling).

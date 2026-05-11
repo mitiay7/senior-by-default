@@ -143,6 +143,8 @@ Build + tests pass + dep vuln scan pass + Opus scans `git diff` for:
 - Hardcoded user-facing strings (only if `config.i18n` set)
 - Import pattern violations (per CLAUDE.md)
 - Accidental secret files OR inline secrets
+- Speculative abstractions/config/feature flags/dependencies not required by acceptance criteria
+- Drive-by refactors, formatting churn, comment rewrites, or changed lines not traceable to the task
 
 All clear → Phase 4. Issues → one fix cycle (no specialists). Opus describes fixes, Sonnet applies.
 
@@ -194,6 +196,7 @@ Acceptance criteria PASS / FAIL — check each from the issue:
 - **No hardcoded strings** → confirmed by 3.3
 - **Migration applies** → confirmed in Sonnet report; zero-downtime audit PASS
 - **No regressions** → no deleted assertions/expects/requires, no removed `if err` blocks, no removed nil guards
+- **Simplicity + surgical scope** → no speculative abstractions/config/deps/flags, no drive-by cleanup, every changed line traces to a requirement, acceptance criterion, or cleanup caused by this change
 - **Acceptance extensions** → all matched extensions covered
 - **Dep vulns** → 3.0.5 PASS at threshold
 - **Public docs** → 3.0.6 PASS if applicable

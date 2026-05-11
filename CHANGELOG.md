@@ -4,6 +4,25 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-11
+
+Minor release. Adapts the four behavioral guardrails from [`forrestchang/andrej-karpathy-skills`](https://github.com/forrestchang/andrej-karpathy-skills) into the `do` pipeline without changing config shape or output schemas.
+
+### Added
+- **Top-level operating principles** in `SKILL.md`: think before coding, simplicity first, surgical changes, and goal-driven execution.
+- **Phase 0 intent clarity check** before side effects: ask when interpretations would change behavior; otherwise record assumptions and convert the request into pass/fail criteria.
+- **Phase 1 issue template hooks** for assumptions/tradeoffs, traceability of changed lines, and explicit no-scope-creep language.
+- **Phase 2 implementer guardrails** passed to spawned agents: no silent assumptions, no speculative abstractions/config/deps/flags, plan steps include verification checks, and self-review must confirm simplicity + surgical scope.
+- **Phase 3 review criteria** for speculative complexity, drive-by edits, and changed lines that do not trace to the task.
+- **Anti-pattern entries** for silent assumptions, weak goals, speculative abstractions, drive-by cleanup, and untraceable changes.
+
+### Changed
+- README now calls out the behavioral guardrails as a core differentiator.
+- Troubleshooting branch-normalization wording now references Phase 4.0, matching the current flow.
+
+### No breaking changes
+Prompt-only tightening. Existing `.claude/do/config.json` files, metrics JSONL shape, branch naming, and final announce format are unchanged.
+
 ## [0.3.3] — 2026-05-09
 
 Patch release. Adds explicit model-usage visibility so users see (and metrics record) which model handles which role per task.
