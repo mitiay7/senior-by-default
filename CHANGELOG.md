@@ -4,6 +4,25 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 4.11 — structural schema enforcement for metrics JSONL
+
+Sub-agents were composing the metrics entry as a free-form JSON string, producing wildly inconsistent shapes across runs (100+ distinct field names across a few dozen entries in one repo's log: `ts`/`timestamp`, `loc_added`/`added`/`insertions`/`lines_added`, `pr`/`pr_number`/`pr_url`, six spellings of `follow_up` — every run reinvented the schema). The `self_review` block — the highest-signal calibration signal — was emitted in **0 of 37** observed entries despite tier-1 config explicitly requesting it. Cross-run analysis (FP-rate, complexity vs cycles, gate failure trends) was impossible without manual normalization.
+
+#### Changed
+
+- **`phase-4-finalize.md` Step 3** — replaced the `JSON='{...}'` free-form-string example with a `jq -n --arg/--argjson` template fed from explicit env vars. `:?`-guards on required fields (`REF`, `COMPLEXITY`, `IMPLEMENTER`, `OUTCOME`, `STARTED_AT`, `ENDED_AT`, `FILES_CHANGED`, `LINES_ADDED`, `LINES_DELETED`, `SR_PERFORMED`, `SR_CLAIMED_STATUS`, `SR_CALIBRATION`) halt bash if unset. Optional fields default via plain `[ -z "${VAR:-}" ] && VAR=...` assignment (`${VAR:-{}}` parse bug: closing `}` of expansion swallows brace, leaves trailing literal that breaks `jq --argjson` — confirmed in dry-run).
+- **`phase-4-finalize.md` Step 3.5 (new)** — `jq -e` schema gate. Validates types + regex on `complexity`, `implementer`, `outcome`, `self_review.{performed, claimed_status, calibration}`. On reject sets `SCHEMA_OK=0` and `METRICS_LINE="Metrics: SCHEMA REJECT — ..."`. The reject is intentional — silently appending a malformed entry pollutes the schema and degrades calibration analysis far worse than a visible reject does.
+- **`phase-4-finalize.md` §4.13 emit block** — append now gated by `SCHEMA_OK=1`. Reject path keeps `METRICS_LINE` from Step 3.5; announce still prints. Same structural coupling as before (no emit → no announce) plus a new layer (no schema → no emit).
+- **`phase-4-finalize.md` "What broke the procedure looks like"** — added diagnostic for `SCHEMA REJECT` line in announce.
+
+#### Breaking behavior
+
+Tasks where the sub-agent doesn't populate the `SR_*` env vars from Phase 2.5 will now produce `Metrics: SCHEMA REJECT — ...` instead of silently appending an entry missing `self_review`. For tier-0 or self-review-disabled configs, set `SR_PERFORMED=false`, `SR_CLAIMED_STATUS=n/a`, `SR_CALIBRATION=skipped` — these are valid enum values, not workarounds.
+
+#### Migration
+
+Past JSONL entries are unusable for calibration (no `self_review` block, ~120 distinct field names). Delete and accumulate fresh — ~20–30 valid entries gives the first reliable FP-rate point.
+
 ## [0.5.0] — 2026-05-14
 
 Cleanup release. Audit found ~7% of repo content was structural bloat — false hierarchy (12 sub-phases in Phase 0), duplicated procedure docs (Phase 4.13 procedure repeated 3×), numbered anti-patterns with `31a/31b/31c/31d/31e/31f` chaos from incremental fixes, unsorted override flags (main vs niche slammed together), unused config sections lacking experimental marking.

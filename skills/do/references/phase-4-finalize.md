@@ -226,24 +226,115 @@ If `config.metrics.tier >= 1`, additionally:
 
 All captured strings truncated to `config.metrics.max_string_length` (default 500) to keep JSONL parseable.
 
-### Step 3: write atomically
-Build the entry as a single-line JSON object (no newlines inside) and append:
+### Step 3: build the entry — **structurally enforced shape**
+
+Do NOT compose JSON as a free-form string. Build with `jq -n` from explicit env vars so that
+(a) bash fails loudly on missing required fields and (b) the on-disk schema is uniform across runs.
+
+This template is the canonical shape. Cross-run analysis (FP-rate, complexity vs review cycles,
+gate failure trends) requires every entry to use the same keys with the same types — past audits
+found 100+ distinct field names across a few dozen entries when sub-agents built JSON freely.
 
 ```bash
-JSON='{"ref":"i42","title":"...","started_at":"2026-05-08T04:15:00Z","ended_at":"2026-05-08T04:46:00Z","complexity":"M","scope":"Backend","implementer":"sonnet","files_changed":3,"lines_added":42,"lines_deleted":7,"phase_durations_seconds":{"0":12,"1":40,"2":900,"3":180,"4":60},"review_cycles":1,"gates":{"test":{"status":"pass"},"i18n":{"status":"n-a"}},"self_review":{"performed":true,"claimed_status":"ready","calibration":"accurate","miscalibrated":[]},"specialist_iterations":[],"ci_status":"skipped","auto_merge":false,"outcome":"merged","blocked_reason":null}'
+# Required fields — sub-agent MUST set ALL before build. `:?` halts bash on unset.
+: "${REF:?REF unset (e.g. i42 for M/H, slug for L/T)}"
+: "${COMPLEXITY:?COMPLEXITY unset (T|L|M|H)}"
+: "${IMPLEMENTER:?IMPLEMENTER unset (haiku|sonnet|opus)}"
+: "${OUTCOME:?OUTCOME unset (merged|pr_opened|blocked|abandoned|verified_no_change)}"
+: "${STARTED_AT:?STARTED_AT unset (ISO-8601 UTC)}"
+: "${ENDED_AT:?ENDED_AT unset (ISO-8601 UTC)}"
+: "${FILES_CHANGED:?FILES_CHANGED unset (integer)}"
+: "${LINES_ADDED:?LINES_ADDED unset (integer)}"
+: "${LINES_DELETED:?LINES_DELETED unset (integer)}"
 
-echo "$JSON" >> "$LOG_PATH"
+# self_review block — REQUIRED when tier >= 1 AND config.self_review.enabled.
+# Even when self-review was not performed, set explicit "skipped"/"n/a" values — never omit.
+: "${SR_PERFORMED:?SR_PERFORMED unset (true|false from Phase 2.5)}"
+: "${SR_CLAIMED_STATUS:?SR_CLAIMED_STATUS unset (ready|deferred|uncertain|n/a)}"
+: "${SR_CALIBRATION:?SR_CALIBRATION unset (accurate|false_positive|false_negative|skipped) — see calibration logic below}"
+
+# Optional fields with safe defaults. Done as plain assignments because `${var:-{}}` and
+# `${var:-[]}` parse incorrectly in bash (the closing `}` of the expansion swallows the
+# brace, leaving a trailing literal that breaks `jq --argjson`).
+[ -z "${PHASE_DURATIONS_JSON:-}"     ] && PHASE_DURATIONS_JSON='{}'
+[ -z "${GATES_JSON:-}"               ] && GATES_JSON='{}'
+[ -z "${SR_MISCALIBRATED:-}"         ] && SR_MISCALIBRATED='[]'
+[ -z "${SPECIALIST_ITERATIONS_JSON:-}" ] && SPECIALIST_ITERATIONS_JSON='[]'
+REVIEW_CYCLES="${REVIEW_CYCLES:-0}"
+AUTO_MERGE_FLAG="${AUTO_MERGE_FLAG:-false}"
+CI_STATUS="${CI_STATUS:-skipped}"
+
+JSON_ENTRY=$(jq -cn \
+  --arg     ref             "$REF" \
+  --arg     title           "${TITLE:-}" \
+  --arg     started_at      "$STARTED_AT" \
+  --arg     ended_at        "$ENDED_AT" \
+  --arg     complexity      "$COMPLEXITY" \
+  --arg     scope           "${SCOPE:-}" \
+  --arg     implementer     "$IMPLEMENTER" \
+  --argjson files_changed   "$FILES_CHANGED" \
+  --argjson lines_added     "$LINES_ADDED" \
+  --argjson lines_deleted   "$LINES_DELETED" \
+  --argjson phase_durations "$PHASE_DURATIONS_JSON" \
+  --argjson review_cycles   "$REVIEW_CYCLES" \
+  --argjson gates           "$GATES_JSON" \
+  --argjson sr_performed    "$SR_PERFORMED" \
+  --arg     sr_claimed      "$SR_CLAIMED_STATUS" \
+  --arg     sr_calibration  "$SR_CALIBRATION" \
+  --argjson sr_misc         "$SR_MISCALIBRATED" \
+  --argjson specialist_iters "$SPECIALIST_ITERATIONS_JSON" \
+  --arg     ci_status       "$CI_STATUS" \
+  --argjson auto_merge      "$AUTO_MERGE_FLAG" \
+  --arg     outcome         "$OUTCOME" \
+  --arg     blocked_reason  "${BLOCKED_REASON:-}" \
+  '{
+     ref:$ref, title:$title,
+     started_at:$started_at, ended_at:$ended_at,
+     complexity:$complexity, scope:$scope, implementer:$implementer,
+     files_changed:$files_changed, lines_added:$lines_added, lines_deleted:$lines_deleted,
+     phase_durations_seconds:$phase_durations,
+     review_cycles:$review_cycles,
+     gates:$gates,
+     self_review:{
+       performed:$sr_performed,
+       claimed_status:$sr_claimed,
+       calibration:$sr_calibration,
+       miscalibrated:$sr_misc
+     },
+     specialist_iterations:$specialist_iters,
+     ci_status:$ci_status,
+     auto_merge:$auto_merge,
+     outcome:$outcome,
+     blocked_reason:(if $blocked_reason=="" then null else $blocked_reason end)
+   }')
 ```
 
-Use single-quoted bash heredoc OR build via `python3 -c 'import json,sys; print(json.dumps({...}))' >> "$LOG_PATH"` for safer escaping. **Do NOT** use multi-line JSON — JSONL = one object per line.
+### Step 3.5: schema gate — refuse to append a malformed entry
 
-### Step 4: verify (REQUIRED)
 ```bash
-COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
-echo "Metrics: $COUNT entries in $LOG_PATH"
+echo "$JSON_ENTRY" | jq -e '
+  (.ref            | type=="string" and length>0)              and
+  (.complexity     | test("^[TLMH]$"))                          and
+  (.implementer    | test("^(haiku|sonnet|opus)$"))             and
+  (.outcome        | type=="string" and length>0)               and
+  (.files_changed  | type=="number")                            and
+  (.self_review.performed     | type=="boolean")                and
+  (.self_review.claimed_status| test("^(ready|deferred|uncertain|n/a)$"))   and
+  (.self_review.calibration   | test("^(accurate|false_positive|false_negative|skipped)$"))
+' >/dev/null || {
+  # Do NOT append. Surface in the announce so it's visible, not silently dropped.
+  METRICS_LINE="Metrics: SCHEMA REJECT — required fields or self_review invalid; entry NOT appended"
+  SCHEMA_OK=0
+}
+SCHEMA_OK=${SCHEMA_OK:-1}
 ```
 
-Check the printed count grew by 1 from before. If the file didn't grow, the append failed — diagnose (permission? typo in JSON?) and retry, or report failure in the final announce as `Metrics: APPEND FAILED — <reason>`.
+### Step 4: append + verify (REQUIRED)
+
+The append + count-delta check is folded into the Phase 4.13 announce block below — it runs only
+if `SCHEMA_OK=1`. There is no separate "echo $JSON >> file" step; the announce procedure owns
+both the write and the verification, so a sub-agent cannot append without producing the announce
+and cannot produce the announce without first running the schema gate.
 
 ### Self-review calibration logic
 After Phase 3 completes, before Step 2:
@@ -290,7 +381,8 @@ if [ -n "$LOG_PATH" ]; then
 fi
 
 # Phase 4.11 emit + delta verify
-if [ -n "$LOG_PATH" ]; then
+# Skipped if Step 3.5 set SCHEMA_OK=0 (METRICS_LINE already populated with SCHEMA REJECT).
+if [ -n "$LOG_PATH" ] && [ "${SCHEMA_OK:-1}" -eq 1 ]; then
   if echo "$JSON_ENTRY" >> "$LOG_PATH"; then
     POST_COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
     DELTA=$((POST_COUNT - PRE_COUNT))
@@ -303,9 +395,10 @@ if [ -n "$LOG_PATH" ]; then
   else
     METRICS_LINE="Metrics: APPEND FAILED — write error to $LOG_PATH (exit $?)"
   fi
-else
+elif [ -z "$LOG_PATH" ]; then
   METRICS_LINE="Metrics: not configured (set config.metrics.log_path to enable)"
 fi
+# else: METRICS_LINE already set by Step 3.5 schema reject — keep as-is.
 
 # Phase 4.13 announce — uses $METRICS_LINE computed above
 [ -n "$CONTEXT_DOC_UPDATED" ] && CTX_LINE="Context: $CONTEXT_DOC_PATH §$SECTIONS updated."
@@ -337,7 +430,8 @@ If `config.metrics.log_path` is unset, METRICS_LINE = "not configured" — annou
 ### What "broke the procedure" looks like
 
 - Final assistant message ends with PR summary, no `Metrics:` line at the very end → you skipped the bash procedure
-- `Metrics:` line is present but says `APPEND FAILED` → file write returned exit 0 but didn't grow; diagnose
+- `Metrics:` line says `APPEND FAILED` → file write returned exit 0 but didn't grow; diagnose disk/lock/permission
+- `Metrics:` line says `SCHEMA REJECT` → one of the Step 3 `:?` vars was unset, or Step 3.5 jq gate rejected the entry. Fix the missing field (most often `SR_PERFORMED` / `SR_CLAIMED_STATUS` / `SR_CALIBRATION` from Phase 2.5) and re-run the emit block. The reject is intentional — appending a malformed entry pollutes the cross-run schema and silently degrades calibration analysis.
 - Announce uses different format than above (free prose) → you composed text instead of running the bash flow
 
 For the spawned-agent execution model (agent runs everything start-to-finish and returns to a parent), this matters extra: the agent's final message is the only thing the parent sees. If diagnostic ends up there, parent flags it; if announce is plain prose, parent thinks success.
