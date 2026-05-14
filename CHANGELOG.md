@@ -4,6 +4,42 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-14
+
+Cleanup release. Audit found ~7% of repo content was structural bloat — false hierarchy (12 sub-phases in Phase 0), duplicated procedure docs (Phase 4.13 procedure repeated 3×), numbered anti-patterns with `31a/31b/31c/31d/31e/31f` chaos from incremental fixes, unsorted override flags (main vs niche slammed together), unused config sections lacking experimental marking.
+
+**No behavior change.** Structural reorg only. SKILL.md shrunk from 331 → ~190 lines. Phase 0 detail extracted to dedicated reference. Anti-patterns rationalized 53 → ~25 grouped entries. Override flags split into main (5) + advanced (6). Phase 4.13 procedure consolidated to single canonical block. Experimental config sections marked.
+
+### Changed
+
+- **`SKILL.md` Phase 0 detail extracted** to new `references/phase-0-setup.md` (~170 lines). SKILL.md keeps a 6-bullet summary + pointer. Previous structure had 12 numbered sub-phases (`0.0`, `0.0.1`, `0.0.2`, `0.0.3`, `0.1`, ..., `0.8`) implying false hierarchy — `0.0.1` prefix suggested "sub-checks before main setup" when most were conditional bullets that only fire per config. Now 6 logical steps with conditionals inline.
+- **`anti-patterns.md` rationalized**: 53 numbered entries with `31a-f` chaos → 24 grouped entries across 6 categories (Process / Memory & context / Git / Code / Distributed-team & enforcement / Opt-in only / Universalization-specific). Hot ones bolded. No info loss — overlapping entries merged, historical universalization items moved to bottom.
+- **`SKILL.md` override flags split** into Main (5: `--complexity`, `--implementer`, `--repo`, `--redetect`, `--auto-merge`) + Advanced (6 niche: `--skip-ci-wait`, `--no-self-review`, `--no-codeowners`, `--no-notify`, `--no-affected-graph`, `--no-caveman`). Clearer separation of what most users override per-task vs config-level toggles.
+- **`phase-4-finalize.md` §4.13 procedure consolidated**: bash flow was implicit in 3 sections (header notice + "The procedure" + "Why" subsections). Now: one canonical bash block, "Why structural coupling" explanation, "What broke the procedure looks like" diagnostic. ~50 lines saved, single source of truth.
+- **`config-schema.md` experimental fields marked**: `wip_limit`, `feature_flags`, `lessons_doc`, `postmortem`, `concurrent_edit_check` now under "Experimental / niche fields" section with explicit "leave unset unless you specifically know what you want" guidance. Not removed for back-compat.
+- **SKILL.md top-level anti-patterns line** shortened from 12-item run-on prose to 9-bullet list grouped by what's hot in production.
+
+### Lines saved
+
+| Area | Before | After | Saved |
+|---|---|---|---|
+| SKILL.md | 331 | ~190 | 140 |
+| anti-patterns.md | 78 | ~75 | 3 (count similar but density up) |
+| phase-4-finalize.md | 353 | ~310 | 40 |
+| **Total realistic** | — | — | **~180 lines, ~5% of repo** |
+
+### Not simplified (despite size)
+
+- Phase 2 Sub-Agent prompt template (200+ lines) — each instruction bought by audit/production lesson
+- 14 reference files via progressive disclosure — works as designed
+- JSON Schema — programmatic validation, distinct consumer
+- 4 example configs — different stacks need different shapes
+- CHANGELOG — release history, archived later when v1.0+
+
+### What to verify
+
+After upgrading, run `+++ <small task>` in a sandbox/test project. Final assistant message should still end with `Metrics: <N> entries in <path>.` line (structural coupling unchanged). Phase 0 announce should still produce the `Models:` line. Branch should still be `feat/i{N}-{slug}` (not `claude/<adj>-<noun>`).
+
 ## [0.4.0] — 2026-05-11
 
 Minor release. Adapts the four behavioral guardrails from [`forrestchang/andrej-karpathy-skills`](https://github.com/forrestchang/andrej-karpathy-skills) into the `do` pipeline without changing config shape or output schemas.

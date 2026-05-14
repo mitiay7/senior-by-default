@@ -282,6 +282,12 @@ Phase 3.6 specialist routing + PR reviewer auto-request via CODEOWNERS file.
 - `paths` — search order; first existing file wins
 - `agent_map` — map CODEOWNERS group/handle → `subagent_type` for that group's audit. Specialists from this map merge with `config.specialists.*` lists for the audit phase.
 
+---
+
+## Experimental / niche fields
+
+The following config sections are accepted by validators but have **incomplete implementation** or **untested production paths**. Leave unset unless you specifically know what you want and accept the rough-edge risk. Not removed for back-compat — may be promoted or deprecated in a future release based on real-usage signal.
+
 #### `wip_limit`
 **Opt-in, no default.** Omit the field → Phase 0.0.1 skipped entirely.
 
