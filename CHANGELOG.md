@@ -4,6 +4,29 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 4.11 — external `metrics-append` wrapper (real enforcement, take 2)
+
+Audit of 9 production entries written after the prior `[Unreleased]` change showed the in-doc `jq -n` template + `:?`-guards approach **did not actually enforce anything**: 5 of 9 sub-agents bypassed the documented bash flow entirely (composed JSON via Write / echo / python with whatever shape they wanted, 100+ distinct field names across runs, `self_review` block missing in 5 of 9). The prior fix would have rejected these entries IF the sub-agent ran the documented bash block, but sub-agents don't reliably run documented bash — they read it, decide on a different approach, and write whatever JSON they want directly to the log path.
+
+#### Added
+
+- **`skills/do/scripts/metrics-append`** — standalone bash wrapper, named-args CLI. Required flags: `--log`, `--ref`, `--complexity`, `--implementer`, `--outcome`, `--started-at`, `--ended-at`, `--files-changed`, `--lines-added`, `--lines-deleted`, `--sr-performed`, `--sr-claimed`, `--sr-calibration`. Unknown flags reject. Bad enum values reject. Malformed JSON payloads (`--gates-json`, `--phase-durations-json`) reject. Append is atomic with pre/post line-count delta verification. Exit codes: 0 OK / 1 REJECT / 2 IOFAIL with explicit stderr message in each failure case.
+
+#### Changed
+
+- **`phase-4-finalize.md` Step 3** — removed the `jq -n` inline template (proven ignored). Replaced with: "the ONLY supported way to write is via `~/.claude/skills/do/scripts/metrics-append`". Documents the canonical invocation that the §4.13 announce block uses.
+- **`phase-4-finalize.md` §4.13 emit block** — now invokes the wrapper and captures stdout into `$METRICS_LINE`. No JSON composition in the announce flow anymore. Removed `SCHEMA_OK` plumbing (wrapper exit code is the gate).
+- **`phase-4-finalize.md` "Why structural coupling"** — rewritten to explain the three enforcement layers: soft instruction (failed) → bash coupling (caught the announce-skip pattern but not free-form JSON) → external wrapper (catches both).
+- **`anti-patterns.md` #19a (new)** — "Writing to `$LOG_PATH` directly instead of calling `metrics-append`". Explicitly bans `echo >>`, `Write` tool, `python3 -c '...' >>`, manual `jq` + `>>`. Points at the wrapper and at the daily-report tripwire.
+
+#### Tripwire (operator-side, not part of the skill distribution)
+
+A local `daily-report.sh` (separate from the skill) now scans for entries that don't match the canonical shape and surfaces them in a "Schema bypass" section, listing which required fields are missing per entry. Bypasses become visible in the next morning's report instead of silently polluting analytics. Sub-agents that ignore the wrapper will see their entries excluded from analytics within 24 hours.
+
+#### Migration
+
+Past JSONL entries from the prior `[Unreleased]` cycle are mixed (some valid, most bypass). Operators should drop bypass entries and accumulate fresh — the wrapper guarantees uniform schema from this version forward.
+
 ### Phase 4.11 — structural schema enforcement for metrics JSONL
 
 Sub-agents were composing the metrics entry as a free-form JSON string, producing wildly inconsistent shapes across runs (100+ distinct field names across a few dozen entries in one repo's log: `ts`/`timestamp`, `loc_added`/`added`/`insertions`/`lines_added`, `pr`/`pr_number`/`pr_url`, six spellings of `follow_up` — every run reinvented the schema). The `self_review` block — the highest-signal calibration signal — was emitted in **0 of 37** observed entries despite tier-1 config explicitly requesting it. Cross-run analysis (FP-rate, complexity vs cycles, gate failure trends) was impossible without manual normalization.

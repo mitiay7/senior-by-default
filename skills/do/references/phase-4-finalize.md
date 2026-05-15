@@ -226,115 +226,65 @@ If `config.metrics.tier >= 1`, additionally:
 
 All captured strings truncated to `config.metrics.max_string_length` (default 500) to keep JSONL parseable.
 
-### Step 3: build the entry — **structurally enforced shape**
+### Step 3: emit the entry — **ONLY via the `metrics-append` wrapper**
 
-Do NOT compose JSON as a free-form string. Build with `jq -n` from explicit env vars so that
-(a) bash fails loudly on missing required fields and (b) the on-disk schema is uniform across runs.
+There is exactly one supported way to write to the metrics log: the wrapper script at
+`~/.claude/skills/do/scripts/metrics-append` (resolves to the same path inside the installed
+skill). Direct `echo ... >> "$LOG_PATH"`, calling `python3 -c '...' >> "$LOG_PATH"`, or using
+the `Write` tool against the log path are all an [anti-pattern](anti-patterns.md) — past
+production runs proved sub-agents systematically compose free-form JSON when an in-doc template
+is "suggested", producing 100+ distinct field names across a few dozen entries and emitting the
+critical `self_review` calibration block in **0 of 37** observed entries. The wrapper's named-args
+CLI removes that freedom: unknown flags reject, missing required flags reject, bad enums reject,
+and the on-disk shape is guaranteed uniform across runs.
 
-This template is the canonical shape. Cross-run analysis (FP-rate, complexity vs review cycles,
-gate failure trends) requires every entry to use the same keys with the same types — past audits
-found 100+ distinct field names across a few dozen entries when sub-agents built JSON freely.
+The wrapper enforces:
+- Required fields present (`--ref`, `--complexity`, `--implementer`, `--outcome`,
+  `--started-at`, `--ended-at`, `--files-changed`, `--lines-added`, `--lines-deleted`,
+  `--sr-performed`, `--sr-claimed`, `--sr-calibration`)
+- Enum validation on complexity / implementer / outcome / self-review fields
+- JSON validity of `--gates-json` / `--phase-durations-json` payloads
+- Atomic append with pre/post line-count delta verification
+- Exit code 0 on success (stdout: `OK pre=N post=N+1 path=<log>`), 1 on schema reject
+  (stderr: `REJECT <reason>`), 2 on I/O failure (stderr: `IOFAIL <reason>`)
 
-```bash
-# Required fields — sub-agent MUST set ALL before build. `:?` halts bash on unset.
-: "${REF:?REF unset (e.g. i42 for M/H, slug for L/T)}"
-: "${COMPLEXITY:?COMPLEXITY unset (T|L|M|H)}"
-: "${IMPLEMENTER:?IMPLEMENTER unset (haiku|sonnet|opus)}"
-: "${OUTCOME:?OUTCOME unset (merged|pr_opened|blocked|abandoned|verified_no_change)}"
-: "${STARTED_AT:?STARTED_AT unset (ISO-8601 UTC)}"
-: "${ENDED_AT:?ENDED_AT unset (ISO-8601 UTC)}"
-: "${FILES_CHANGED:?FILES_CHANGED unset (integer)}"
-: "${LINES_ADDED:?LINES_ADDED unset (integer)}"
-: "${LINES_DELETED:?LINES_DELETED unset (integer)}"
-
-# self_review block — REQUIRED when tier >= 1 AND config.self_review.enabled.
-# Even when self-review was not performed, set explicit "skipped"/"n/a" values — never omit.
-: "${SR_PERFORMED:?SR_PERFORMED unset (true|false from Phase 2.5)}"
-: "${SR_CLAIMED_STATUS:?SR_CLAIMED_STATUS unset (ready|deferred|uncertain|n/a)}"
-: "${SR_CALIBRATION:?SR_CALIBRATION unset (accurate|false_positive|false_negative|skipped) — see calibration logic below}"
-
-# Optional fields with safe defaults. Done as plain assignments because `${var:-{}}` and
-# `${var:-[]}` parse incorrectly in bash (the closing `}` of the expansion swallows the
-# brace, leaving a trailing literal that breaks `jq --argjson`).
-[ -z "${PHASE_DURATIONS_JSON:-}"     ] && PHASE_DURATIONS_JSON='{}'
-[ -z "${GATES_JSON:-}"               ] && GATES_JSON='{}'
-[ -z "${SR_MISCALIBRATED:-}"         ] && SR_MISCALIBRATED='[]'
-[ -z "${SPECIALIST_ITERATIONS_JSON:-}" ] && SPECIALIST_ITERATIONS_JSON='[]'
-REVIEW_CYCLES="${REVIEW_CYCLES:-0}"
-AUTO_MERGE_FLAG="${AUTO_MERGE_FLAG:-false}"
-CI_STATUS="${CI_STATUS:-skipped}"
-
-JSON_ENTRY=$(jq -cn \
-  --arg     ref             "$REF" \
-  --arg     title           "${TITLE:-}" \
-  --arg     started_at      "$STARTED_AT" \
-  --arg     ended_at        "$ENDED_AT" \
-  --arg     complexity      "$COMPLEXITY" \
-  --arg     scope           "${SCOPE:-}" \
-  --arg     implementer     "$IMPLEMENTER" \
-  --argjson files_changed   "$FILES_CHANGED" \
-  --argjson lines_added     "$LINES_ADDED" \
-  --argjson lines_deleted   "$LINES_DELETED" \
-  --argjson phase_durations "$PHASE_DURATIONS_JSON" \
-  --argjson review_cycles   "$REVIEW_CYCLES" \
-  --argjson gates           "$GATES_JSON" \
-  --argjson sr_performed    "$SR_PERFORMED" \
-  --arg     sr_claimed      "$SR_CLAIMED_STATUS" \
-  --arg     sr_calibration  "$SR_CALIBRATION" \
-  --argjson sr_misc         "$SR_MISCALIBRATED" \
-  --argjson specialist_iters "$SPECIALIST_ITERATIONS_JSON" \
-  --arg     ci_status       "$CI_STATUS" \
-  --argjson auto_merge      "$AUTO_MERGE_FLAG" \
-  --arg     outcome         "$OUTCOME" \
-  --arg     blocked_reason  "${BLOCKED_REASON:-}" \
-  '{
-     ref:$ref, title:$title,
-     started_at:$started_at, ended_at:$ended_at,
-     complexity:$complexity, scope:$scope, implementer:$implementer,
-     files_changed:$files_changed, lines_added:$lines_added, lines_deleted:$lines_deleted,
-     phase_durations_seconds:$phase_durations,
-     review_cycles:$review_cycles,
-     gates:$gates,
-     self_review:{
-       performed:$sr_performed,
-       claimed_status:$sr_claimed,
-       calibration:$sr_calibration,
-       miscalibrated:$sr_misc
-     },
-     specialist_iterations:$specialist_iters,
-     ci_status:$ci_status,
-     auto_merge:$auto_merge,
-     outcome:$outcome,
-     blocked_reason:(if $blocked_reason=="" then null else $blocked_reason end)
-   }')
-```
-
-### Step 3.5: schema gate — refuse to append a malformed entry
+Canonical invocation (executed by the §4.13 announce block; do NOT run it standalone, the
+announce coupling depends on capturing its stdout into `$METRICS_LINE`):
 
 ```bash
-echo "$JSON_ENTRY" | jq -e '
-  (.ref            | type=="string" and length>0)              and
-  (.complexity     | test("^[TLMH]$"))                          and
-  (.implementer    | test("^(haiku|sonnet|opus)$"))             and
-  (.outcome        | type=="string" and length>0)               and
-  (.files_changed  | type=="number")                            and
-  (.self_review.performed     | type=="boolean")                and
-  (.self_review.claimed_status| test("^(ready|deferred|uncertain|n/a)$"))   and
-  (.self_review.calibration   | test("^(accurate|false_positive|false_negative|skipped)$"))
-' >/dev/null || {
-  # Do NOT append. Surface in the announce so it's visible, not silently dropped.
-  METRICS_LINE="Metrics: SCHEMA REJECT — required fields or self_review invalid; entry NOT appended"
-  SCHEMA_OK=0
-}
-SCHEMA_OK=${SCHEMA_OK:-1}
+~/.claude/skills/do/scripts/metrics-append \
+  --log              "$LOG_PATH" \
+  --ref              "$REF" \
+  --complexity       "$COMPLEXITY" \
+  --implementer      "$IMPLEMENTER" \
+  --outcome          "$OUTCOME" \
+  --started-at       "$STARTED_AT" \
+  --ended-at         "$ENDED_AT" \
+  --files-changed    "$FILES_CHANGED" \
+  --lines-added      "$LINES_ADDED" \
+  --lines-deleted    "$LINES_DELETED" \
+  --sr-performed     "$SR_PERFORMED" \
+  --sr-claimed       "$SR_CLAIMED_STATUS" \
+  --sr-calibration   "$SR_CALIBRATION" \
+  [--gates-json              "$GATES_JSON" \                  # optional, defaults {}
+   --phase-durations-json    "$PHASE_DURATIONS_JSON" \         # optional, defaults {}
+   --review-cycles           "$REVIEW_CYCLES" \                # optional, defaults 0
+   --ci-status               "$CI_STATUS" \                    # optional, defaults skipped
+   --auto-merge              "$AUTO_MERGE_FLAG" \              # optional, defaults false
+   --blocked-reason          "$BLOCKED_REASON" \               # optional
+   --title                   "$TITLE" \                        # optional
+   --scope                   "$SCOPE" \                        # optional
+   --notes                   "$NOTES" \                        # optional free-text
+   --specialist-iterations-json "$SPECIALIST_ITERATIONS_JSON" \# optional
+   --sr-miscalibrated-json   "$SR_MISCALIBRATED_JSON"]          # optional, defaults []
 ```
 
-### Step 4: append + verify (REQUIRED)
+#### Defense in depth
 
-The append + count-delta check is folded into the Phase 4.13 announce block below — it runs only
-if `SCHEMA_OK=1`. There is no separate "echo $JSON >> file" step; the announce procedure owns
-both the write and the verification, so a sub-agent cannot append without producing the announce
-and cannot produce the announce without first running the schema gate.
+A daily report script (`~/.claude/do/metrics/daily-report.sh`, separate from the skill)
+scans logs for schema-invalid entries and surfaces them in a dedicated section. So even if
+a sub-agent bypasses the wrapper, the bypass shows up in the next morning's report rather
+than silently polluting the analysis. Don't rely on this — it's a tripwire, not a fix.
 
 ### Self-review calibration logic
 After Phase 3 completes, before Step 2:
@@ -374,31 +324,44 @@ The announce is the final user-visible output. It MUST be generated by the bash 
 ### The procedure (run this whole block as one Bash command)
 
 ```bash
-# Phase 4.0.5 pre-emit: capture count before append
+# Phase 4.11 emit — invoke the wrapper. METRICS_LINE is set ONLY by capturing its result.
+# The wrapper does schema validation, atomic append, and pre/post line-count delta verify
+# internally. We never compose JSON here; we never `>>` to the log file here.
 if [ -n "$LOG_PATH" ]; then
-  mkdir -p "$(dirname "$LOG_PATH")"
-  PRE_COUNT=$(wc -l < "$LOG_PATH" 2>/dev/null | tr -d ' ' || echo 0)
-fi
-
-# Phase 4.11 emit + delta verify
-# Skipped if Step 3.5 set SCHEMA_OK=0 (METRICS_LINE already populated with SCHEMA REJECT).
-if [ -n "$LOG_PATH" ] && [ "${SCHEMA_OK:-1}" -eq 1 ]; then
-  if echo "$JSON_ENTRY" >> "$LOG_PATH"; then
-    POST_COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
-    DELTA=$((POST_COUNT - PRE_COUNT))
-    if [ "$DELTA" -eq 1 ]; then
-      METRICS_LINE="Metrics: $POST_COUNT entries in $LOG_PATH"
-    else
-      # `>>` returned exit 0 but file didn't grow — silent corruption (disk full, lock, etc.)
-      METRICS_LINE="Metrics: APPEND FAILED — pre=$PRE_COUNT post=$POST_COUNT delta=$DELTA expected=1"
-    fi
+  if METRICS_RESULT=$(~/.claude/skills/do/scripts/metrics-append \
+        --log              "$LOG_PATH" \
+        --ref              "$REF" \
+        --complexity       "$COMPLEXITY" \
+        --implementer      "$IMPLEMENTER" \
+        --outcome          "$OUTCOME" \
+        --started-at       "$STARTED_AT" \
+        --ended-at         "$ENDED_AT" \
+        --files-changed    "$FILES_CHANGED" \
+        --lines-added      "$LINES_ADDED" \
+        --lines-deleted    "$LINES_DELETED" \
+        --sr-performed     "$SR_PERFORMED" \
+        --sr-claimed       "$SR_CLAIMED_STATUS" \
+        --sr-calibration   "$SR_CALIBRATION" \
+        ${TITLE:+--title              "$TITLE"} \
+        ${SCOPE:+--scope              "$SCOPE"} \
+        ${NOTES:+--notes              "$NOTES"} \
+        ${GATES_JSON:+--gates-json    "$GATES_JSON"} \
+        ${PHASE_DURATIONS_JSON:+--phase-durations-json "$PHASE_DURATIONS_JSON"} \
+        ${REVIEW_CYCLES:+--review-cycles "$REVIEW_CYCLES"} \
+        ${CI_STATUS:+--ci-status      "$CI_STATUS"} \
+        ${AUTO_MERGE_FLAG:+--auto-merge "$AUTO_MERGE_FLAG"} \
+        ${BLOCKED_REASON:+--blocked-reason "$BLOCKED_REASON"} \
+        2>&1); then
+    # stdout shape: "OK pre=N post=N+1 path=<log>"
+    POST_COUNT=$(echo "$METRICS_RESULT" | sed -n 's/.*post=\([0-9]*\).*/\1/p')
+    METRICS_LINE="Metrics: $POST_COUNT entries in $LOG_PATH"
   else
-    METRICS_LINE="Metrics: APPEND FAILED — write error to $LOG_PATH (exit $?)"
+    # wrapper printed REJECT <reason> or IOFAIL <reason> to stderr (captured via 2>&1)
+    METRICS_LINE="Metrics: APPEND FAILED — $METRICS_RESULT"
   fi
-elif [ -z "$LOG_PATH" ]; then
+else
   METRICS_LINE="Metrics: not configured (set config.metrics.log_path to enable)"
 fi
-# else: METRICS_LINE already set by Step 3.5 schema reject — keep as-is.
 
 # Phase 4.13 announce — uses $METRICS_LINE computed above
 [ -n "$CONTEXT_DOC_UPDATED" ] && CTX_LINE="Context: $CONTEXT_DOC_PATH §$SECTIONS updated."
@@ -417,22 +380,25 @@ ${METRICS_LINE}.
 EOF
 ```
 
-### Why structural coupling, not soft instruction
+### Why structural coupling + external wrapper, not soft instruction
 
-Five rounds of audit (v0.2.0 → v0.3.0) + production runs proved that "Phase 4.11 mandatory" written as a separate instruction gets skipped systematically — sub-agent reads it at session start, opens the PR, writes detailed PR-summary as final output, stops without emitting metrics. The bash coupling makes the metrics-emit step a hard precondition for producing the announce text.
+Three enforcement layers, each addressing a failure mode the previous one missed:
 
-Two enforcement layers in the bash flow:
-1. **Structural** — `$METRICS_LINE` set only by emit block → no emit → can't compose announce
-2. **Pre/post delta** — `>>` can return exit 0 while writing nothing (disk full, lock, permission). PRE_COUNT vs POST_COUNT delta catches that.
+1. **Soft "mandatory" instruction** (v0.1–v0.3) — got skipped systematically. Sub-agent reads "Phase 4.11 mandatory" at session start, opens the PR, writes detailed PR-summary as final output, stops without emitting metrics.
 
-If `config.metrics.log_path` is unset, METRICS_LINE = "not configured" — announce still works, only file write is skipped.
+2. **Announce↔emit bash coupling** (v0.3–v0.5) — `$METRICS_LINE` set only by the emit block, no emit → can't compose announce. Fixed the "stops without emitting" failure. Still let sub-agents compose JSON freely inside the emit block, producing 100+ distinct field names across runs and `self_review` block missing in 0 of 37 entries (v0.6 audit).
+
+3. **External wrapper with named-args CLI** (current) — the wrapper is the only path to a valid append. Unknown flags reject, missing required flags reject, bad enums reject. Sub-agent cannot invent a new shape without making the announce print `Metrics: APPEND FAILED — REJECT <reason>`, which is visible. Pre/post line-count delta verification lives inside the wrapper too, so a `>>` that returns exit 0 without actually writing (disk full, lock) is still caught.
+
+The wrapper file (`skills/do/scripts/metrics-append`) lives in the skill and ships with the install. The §4.13 bash block above invokes it and captures stdout into `$METRICS_LINE`. If `config.metrics.log_path` is unset, the wrapper isn't called and METRICS_LINE = "not configured" — announce still works, only the file write is skipped.
 
 ### What "broke the procedure" looks like
 
 - Final assistant message ends with PR summary, no `Metrics:` line at the very end → you skipped the bash procedure
-- `Metrics:` line says `APPEND FAILED` → file write returned exit 0 but didn't grow; diagnose disk/lock/permission
-- `Metrics:` line says `SCHEMA REJECT` → one of the Step 3 `:?` vars was unset, or Step 3.5 jq gate rejected the entry. Fix the missing field (most often `SR_PERFORMED` / `SR_CLAIMED_STATUS` / `SR_CALIBRATION` from Phase 2.5) and re-run the emit block. The reject is intentional — appending a malformed entry pollutes the cross-run schema and silently degrades calibration analysis.
+- `Metrics:` line says `APPEND FAILED — REJECT <reason>` → the wrapper rejected your input. The reason is explicit (missing required arg, bad enum, malformed JSON payload). Fix the offending value and re-run the emit. Most common: forgot `--sr-performed/--sr-claimed/--sr-calibration` from Phase 2.5.
+- `Metrics:` line says `APPEND FAILED — IOFAIL <reason>` → file write or count-delta check failed. Diagnose disk/lock/permission.
 - Announce uses different format than above (free prose) → you composed text instead of running the bash flow
+- Log file gained an entry but `Metrics:` line in announce didn't reference it (or shape doesn't match the wrapper output) → you bypassed the wrapper and wrote directly. The daily-report scanner will surface the bypass in tomorrow's report; don't do this.
 
 For the spawned-agent execution model (agent runs everything start-to-finish and returns to a parent), this matters extra: the agent's final message is the only thing the parent sees. If diagnostic ends up there, parent flags it; if announce is plain prose, parent thinks success.
 

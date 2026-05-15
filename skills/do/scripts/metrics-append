@@ -1,0 +1,211 @@
+#!/bin/bash
+# metrics-append — the ONLY supported way to write to a do-metrics JSONL log.
+#
+# Why a wrapper: production showed sub-agents systematically bypass any
+# in-doc bash template, composing JSON freely via Write/echo/python.
+# Centralizing emission behind a named-args CLI removes the freedom:
+# the only path that produces a valid append is calling this script with
+# the required flags, and unknown flags are rejected.
+#
+# Direct `echo ... >> $LOG_PATH` from sub-agents is an anti-pattern
+# (see anti-patterns.md). The daily-report scanner flags entries that
+# don't match the canonical shape, so bypasses are visible too.
+#
+# Usage:
+#   metrics-append \
+#     --log /path/to/repo.jsonl \
+#     --ref i42 --complexity M --implementer sonnet --outcome pr_opened \
+#     --started-at 2026-05-15T08:00:00Z --ended-at 2026-05-15T08:30:00Z \
+#     --files-changed 3 --lines-added 42 --lines-deleted 7 \
+#     --sr-performed true --sr-claimed ready --sr-calibration accurate \
+#     [--gates-json '{...}' --phase-durations-json '{...}' --review-cycles 1 \
+#      --ci-status skipped --auto-merge false --blocked-reason '' \
+#      --title '...' --scope Backend --notes '...' \
+#      --specialist-iterations-json '[]' --sr-miscalibrated-json '[]']
+#
+# Exit codes:
+#   0   appended successfully; stdout: "OK pre=N post=N+1 path=<log>"
+#   1   rejected (missing/invalid arg or schema-gate failed); stderr: "REJECT <reason>"
+#   2   I/O failure (couldn't write to log, file lock, etc.)
+
+set -euo pipefail
+
+die() { echo "REJECT $*" >&2; exit 1; }
+iofail() { echo "IOFAIL $*" >&2; exit 2; }
+
+# --- Defaults for optional fields ---
+TITLE=""
+SCOPE=""
+NOTES=""
+BLOCKED_REASON=""
+CI_STATUS="skipped"
+AUTO_MERGE="false"
+REVIEW_CYCLES="0"
+GATES_JSON='{}'
+PHASE_DURATIONS_JSON='{}'
+SPECIALIST_ITERATIONS_JSON='[]'
+SR_MISCALIBRATED_JSON='[]'
+
+# --- Required (no defaults; verified after parse) ---
+LOG_PATH=""
+REF=""
+COMPLEXITY=""
+IMPLEMENTER=""
+OUTCOME=""
+STARTED_AT=""
+ENDED_AT=""
+FILES_CHANGED=""
+LINES_ADDED=""
+LINES_DELETED=""
+SR_PERFORMED=""
+SR_CLAIMED=""
+SR_CALIBRATION=""
+
+# --- Parse args (long-options only; unknown = reject) ---
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --log)                       LOG_PATH="$2";                  shift 2 ;;
+    --ref)                       REF="$2";                       shift 2 ;;
+    --complexity)                COMPLEXITY="$2";                shift 2 ;;
+    --implementer)               IMPLEMENTER="$2";               shift 2 ;;
+    --outcome)                   OUTCOME="$2";                   shift 2 ;;
+    --started-at)                STARTED_AT="$2";                shift 2 ;;
+    --ended-at)                  ENDED_AT="$2";                  shift 2 ;;
+    --files-changed)             FILES_CHANGED="$2";             shift 2 ;;
+    --lines-added)               LINES_ADDED="$2";               shift 2 ;;
+    --lines-deleted)             LINES_DELETED="$2";             shift 2 ;;
+    --sr-performed)              SR_PERFORMED="$2";              shift 2 ;;
+    --sr-claimed)                SR_CLAIMED="$2";                shift 2 ;;
+    --sr-calibration)            SR_CALIBRATION="$2";            shift 2 ;;
+    --sr-miscalibrated-json)     SR_MISCALIBRATED_JSON="$2";     shift 2 ;;
+    --gates-json)                GATES_JSON="$2";                shift 2 ;;
+    --phase-durations-json)      PHASE_DURATIONS_JSON="$2";      shift 2 ;;
+    --review-cycles)             REVIEW_CYCLES="$2";             shift 2 ;;
+    --ci-status)                 CI_STATUS="$2";                 shift 2 ;;
+    --auto-merge)                AUTO_MERGE="$2";                shift 2 ;;
+    --blocked-reason)            BLOCKED_REASON="$2";            shift 2 ;;
+    --title)                     TITLE="$2";                     shift 2 ;;
+    --scope)                     SCOPE="$2";                     shift 2 ;;
+    --notes)                     NOTES="$2";                     shift 2 ;;
+    --specialist-iterations-json) SPECIALIST_ITERATIONS_JSON="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '3,30p' "$0"
+      exit 0
+      ;;
+    *) die "unknown arg: $1" ;;
+  esac
+done
+
+# --- Verify required ---
+[ -n "$LOG_PATH" ]       || die "--log required"
+[ -n "$REF" ]            || die "--ref required"
+[ -n "$COMPLEXITY" ]     || die "--complexity required (T|L|M|H)"
+[ -n "$IMPLEMENTER" ]    || die "--implementer required (haiku|sonnet|opus)"
+[ -n "$OUTCOME" ]        || die "--outcome required"
+[ -n "$STARTED_AT" ]     || die "--started-at required (ISO-8601 UTC)"
+[ -n "$ENDED_AT" ]       || die "--ended-at required (ISO-8601 UTC)"
+[ -n "$FILES_CHANGED" ]  || die "--files-changed required (int)"
+[ -n "$LINES_ADDED" ]    || die "--lines-added required (int)"
+[ -n "$LINES_DELETED" ]  || die "--lines-deleted required (int)"
+[ -n "$SR_PERFORMED" ]   || die "--sr-performed required (true|false)"
+[ -n "$SR_CLAIMED" ]     || die "--sr-claimed required (ready|deferred|uncertain|n/a)"
+[ -n "$SR_CALIBRATION" ] || die "--sr-calibration required (accurate|false_positive|false_negative|skipped)"
+
+# --- Enum / type validation (fail-fast, before jq) ---
+[[ "$COMPLEXITY"     =~ ^[TLMH]$ ]]                                              || die "--complexity must be T|L|M|H, got: $COMPLEXITY"
+[[ "$IMPLEMENTER"    =~ ^(haiku|sonnet|opus)$ ]]                                 || die "--implementer must be haiku|sonnet|opus, got: $IMPLEMENTER"
+[[ "$SR_PERFORMED"   =~ ^(true|false)$ ]]                                        || die "--sr-performed must be true|false, got: $SR_PERFORMED"
+[[ "$SR_CLAIMED"     =~ ^(ready|deferred|uncertain|n/a)$ ]]                      || die "--sr-claimed invalid, got: $SR_CLAIMED"
+[[ "$SR_CALIBRATION" =~ ^(accurate|false_positive|false_negative|skipped)$ ]]    || die "--sr-calibration invalid, got: $SR_CALIBRATION"
+[[ "$AUTO_MERGE"     =~ ^(true|false)$ ]]                                        || die "--auto-merge must be true|false, got: $AUTO_MERGE"
+[[ "$FILES_CHANGED"  =~ ^[0-9]+$ ]]                                              || die "--files-changed must be int, got: $FILES_CHANGED"
+[[ "$LINES_ADDED"    =~ ^[0-9]+$ ]]                                              || die "--lines-added must be int, got: $LINES_ADDED"
+[[ "$LINES_DELETED"  =~ ^[0-9]+$ ]]                                              || die "--lines-deleted must be int, got: $LINES_DELETED"
+[[ "$REVIEW_CYCLES"  =~ ^[0-9]+$ ]]                                              || die "--review-cycles must be int, got: $REVIEW_CYCLES"
+
+# Validate JSON payloads parse
+for var in GATES_JSON PHASE_DURATIONS_JSON SPECIALIST_ITERATIONS_JSON SR_MISCALIBRATED_JSON; do
+  echo "${!var}" | jq -e . >/dev/null 2>&1 || die "$var is not valid JSON: ${!var}"
+done
+
+# --- Build canonical entry via jq -n ---
+JSON_ENTRY=$(jq -cn \
+  --arg     ref             "$REF" \
+  --arg     title           "$TITLE" \
+  --arg     started_at      "$STARTED_AT" \
+  --arg     ended_at        "$ENDED_AT" \
+  --arg     complexity      "$COMPLEXITY" \
+  --arg     scope           "$SCOPE" \
+  --arg     implementer     "$IMPLEMENTER" \
+  --argjson files_changed   "$FILES_CHANGED" \
+  --argjson lines_added     "$LINES_ADDED" \
+  --argjson lines_deleted   "$LINES_DELETED" \
+  --argjson phase_durations "$PHASE_DURATIONS_JSON" \
+  --argjson review_cycles   "$REVIEW_CYCLES" \
+  --argjson gates           "$GATES_JSON" \
+  --argjson sr_performed    "$SR_PERFORMED" \
+  --arg     sr_claimed      "$SR_CLAIMED" \
+  --arg     sr_calibration  "$SR_CALIBRATION" \
+  --argjson sr_misc         "$SR_MISCALIBRATED_JSON" \
+  --argjson specialist_iters "$SPECIALIST_ITERATIONS_JSON" \
+  --arg     ci_status       "$CI_STATUS" \
+  --argjson auto_merge      "$AUTO_MERGE" \
+  --arg     outcome         "$OUTCOME" \
+  --arg     blocked_reason  "$BLOCKED_REASON" \
+  --arg     notes           "$NOTES" \
+  '{
+     ref:$ref, title:$title,
+     started_at:$started_at, ended_at:$ended_at,
+     complexity:$complexity, scope:$scope, implementer:$implementer,
+     files_changed:$files_changed, lines_added:$lines_added, lines_deleted:$lines_deleted,
+     phase_durations_seconds:$phase_durations,
+     review_cycles:$review_cycles,
+     gates:$gates,
+     self_review:{
+       performed:$sr_performed,
+       claimed_status:$sr_claimed,
+       calibration:$sr_calibration,
+       miscalibrated:$sr_misc
+     },
+     specialist_iterations:$specialist_iters,
+     ci_status:$ci_status,
+     auto_merge:$auto_merge,
+     outcome:$outcome,
+     blocked_reason:(if $blocked_reason=="" then null else $blocked_reason end)
+   }
+   + (if $notes == "" then {} else {notes:$notes} end)') \
+  || die "jq build failed (likely malformed --gates-json or --phase-durations-json)"
+
+# --- Schema gate (defense in depth: in case caller passed valid-JSON-but-wrong-shape via the json flags) ---
+echo "$JSON_ENTRY" | jq -e '
+  (.ref            | type=="string" and length>0) and
+  (.complexity     | test("^[TLMH]$"))            and
+  (.implementer    | test("^(haiku|sonnet|opus)$")) and
+  (.outcome        | type=="string" and length>0) and
+  (.files_changed  | type=="number")              and
+  (.self_review.performed     | type=="boolean") and
+  (.self_review.claimed_status| test("^(ready|deferred|uncertain|n/a)$")) and
+  (.self_review.calibration   | test("^(accurate|false_positive|false_negative|skipped)$"))
+' >/dev/null || die "schema gate failed (internal — please report)"
+
+# --- Append + verify ---
+mkdir -p "$(dirname "$LOG_PATH")" || iofail "cannot mkdir $(dirname "$LOG_PATH")"
+
+if [ -f "$LOG_PATH" ]; then
+  PRE_COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
+else
+  PRE_COUNT=0
+fi
+
+if ! echo "$JSON_ENTRY" >> "$LOG_PATH"; then
+  iofail "write to $LOG_PATH failed (exit $?)"
+fi
+
+POST_COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
+DELTA=$((POST_COUNT - PRE_COUNT))
+
+if [ "$DELTA" -ne 1 ]; then
+  iofail "append silent-fail: pre=$PRE_COUNT post=$POST_COUNT delta=$DELTA expected=1"
+fi
+
+echo "OK pre=$PRE_COUNT post=$POST_COUNT path=$LOG_PATH"

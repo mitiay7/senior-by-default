@@ -40,7 +40,13 @@ Grouped into 4 categories, ~20 distinct rules. Hot ones are bolded — those are
 
     Applies whether you are the spawned agent doing everything yourself, or a parent orchestrator. If you're reading this, you are the executor. There is no "the other one" to defer to.
 
-    Phase 4.0.5 pre-count + delta verify catches silent corruption: `wc -l` before append, verify grew by exactly 1 after. Fail-loud `Metrics: APPEND FAILED — pre=X post=Y delta=Z expected=1`.
+    Pre/post line-count delta verify lives inside the `metrics-append` wrapper (called from the §4.13 bash flow), so silent `>>` corruption (disk full, lock) is caught and surfaced as `Metrics: APPEND FAILED — IOFAIL …`.
+
+19a. **Writing to `$LOG_PATH` directly instead of calling `metrics-append`** — `echo "$JSON" >> "$LOG_PATH"`, `Write` tool against the log path, `python3 -c '...' >> "$LOG_PATH"`, manually `jq`-built JSON appended via `>>` — ALL forbidden. The only supported emission path is `~/.claude/skills/do/scripts/metrics-append` invoked by the §4.13 bash block. The wrapper enforces named-args, enum validation, JSON-payload validity, and atomic append.
+
+    Why: in-doc bash templates with `:?`-guards and `jq -e` schema gates were proven (v0.6 audit) to be skipped systematically — sub-agents composed their own JSON shapes via Write/echo/python, producing 5 of 9 entries with no `self_review` block despite Phase 4.11 explicitly requiring it. The wrapper is the structural enforcement that the in-doc template couldn't be.
+
+    Tripwire: the local `daily-report.sh` script (separate from the skill) scans for entries that don't match the canonical shape and surfaces them in tomorrow's report under a "Schema bypass" section. Bypasses are visible. Don't bypass.
 
 20. **Bypassing CODEOWNERS** — never `--reviewer @other` past auto-request; never disable CODEOWNERS-driven specialist routing without explicit `--no-codeowners`.
 21. **Producing a 2000-line PR** — Phase 3.0 blocks. If you hit the threshold, the plan was wrong, not the implementation. Re-plan into smaller issues.
