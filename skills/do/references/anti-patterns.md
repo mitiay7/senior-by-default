@@ -56,6 +56,8 @@ Grouped into 4 categories, ~20 distinct rules. Hot ones are bolded — those are
 
     Composing `Config: AUTO-GENERATED → …` by hand without actually invoking the wrapper falls under this — you'd be lying about file state.
 
+    **Post-edit + announce-annotation is also a §19c violation.** Production-confirmed pattern: orchestrator runs wrapper with default `--issue-locale en`, notices repo is non-English (Cyrillic / CJK in `$ARGUMENTS`, README in another language), edits the freshly-written config to flip `issue_locale`, and appends `" (patched issue_locale=ru)"` (or similar) to `$CONFIG_LINE` in the announce. The patch itself is sensible adaptation — the channel is wrong. `$CONFIG_LINE` is what the wrapper emitted; if you augment it with a free-form suffix, downstream parsers can't tell wrapper-output from post-edit-narration, and the structural coupling breaks. Two correct paths instead: (a) pass the right `--issue-locale` to the wrapper at invocation (Step 4 auto-init bash now detects Cyrillic/CJK in `$ARGUMENTS` for this exact reason — extend it if your case isn't covered); (b) edit the file as a separate, clearly-separate step AFTER Phase 0 completes, and do NOT touch `$CONFIG_LINE`.
+
 20. **Bypassing CODEOWNERS** — never `--reviewer @other` past auto-request; never disable CODEOWNERS-driven specialist routing without explicit `--no-codeowners`.
 21. **Producing a 2000-line PR** — Phase 3.0 blocks. If you hit the threshold, the plan was wrong, not the implementation. Re-plan into smaller issues.
 22. **Skipping Sonnet self-review** — Phase 2.5 catches what Phase 3 would catch but cheaper. `--no-self-review` is emergencies only.

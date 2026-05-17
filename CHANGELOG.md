@@ -4,6 +4,32 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 0.4 — auto-init: locale detection + tighter `$CONFIG_LINE` contract
+
+Production observation from the v0.3 auto-init: orchestrator ran the wrapper with default `--issue-locale en`, noticed the repo was Russian-speaking (Cyrillic in `$ARGUMENTS` + assumptions), post-edited the generated config to flip `issue_locale: en → ru`, and appended `" (patched issue_locale=ru)"` to `$CONFIG_LINE` in the announce. The patch itself was correct adaptation; the channel was wrong — `$CONFIG_LINE` is meant to be exactly what the wrapper emitted, augmenting it with free-form suffixes breaks structural coupling and sets precedent for arbitrary post-edits.
+
+#### Changed
+
+- **`phase-0-setup.md` Step 4 auto-init bash** — now detects `$ISSUE_LOCALE` from `$ARGUMENTS` before calling the wrapper: explicit `--issue-locale=<code>` wins; otherwise Cyrillic → `ru`, Hiragana/Katakana/CJK Unified Ideographs → `ja`, Hangul → `ko`, else default `en`. Passes the resolved value via `--issue-locale "$ISSUE_LOCALE"` in both `tracker=none` and `tracker={github,gitlab}` branches. Wrapper writes the right value in one atomic call; `$CONFIG_LINE` stays canonical.
+- **`anti-patterns.md` §19c** — added explicit prohibition of the "post-edit + announce-annotation" pattern (production diagnostic + the two correct paths: pass `--issue-locale` at invocation, or edit the file as a separate clearly-separate step that does NOT touch `$CONFIG_LINE`).
+- **`phase-0-setup.md` Step 4 trailing note** — explains why locale detection lives at invocation, not post-edit: keeps wrapper as single source of truth for `$CONFIG_LINE`.
+
+#### Why detection lives in spec bash, not wrapper
+
+Wrapper already accepts `--issue-locale`; the gap was just that nobody was passing it. Detection naturally belongs in the orchestrator's context (it has `$ARGUMENTS`, repo paths, README, etc.), not in the wrapper (which is single-purpose: write a valid config given args). Moving detection into wrapper would also force the wrapper to take a stance on auto-detection rules — better to keep wrapper deterministic and let the spec bash evolve detection heuristics.
+
+#### Detection coverage (current)
+
+| Script | Locale |
+|---|---|
+| Cyrillic (Russian, Ukrainian, Belarusian, etc.) | `ru` |
+| CJK Unified Ideographs (Chinese, Japanese kanji) | `ja` (conservative default — extend per project) |
+| Hiragana / Katakana (Japanese-specific kana) | `ja` |
+| Hangul (Korean) | `ko` |
+| Default | `en` |
+
+Coarse on purpose. If your project needs `zh` vs `ja`, `uk` vs `ru`, or any other locale, pass `--issue-locale=<code>` explicitly in `$ARGUMENTS`. The detection block is small, easy to extend.
+
 ### Phase 0 — caveman detect v2 + auto-init of `.claude/do/config.json`
 
 Two issues from production observation of the prior `[Unreleased]` v1 caveman fix:

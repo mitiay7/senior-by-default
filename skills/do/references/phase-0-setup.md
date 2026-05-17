@@ -97,21 +97,39 @@ case "$REMOTE_URL" in
   *)            TRACKER="none"; TRACKER_REPO="" ;;
 esac
 
+# Detect issue_locale from $ARGUMENTS — pass to wrapper so it writes the right
+# value in one shot. Without this, sub-agents who notice non-en context
+# (Cyrillic / CJK in $ARGUMENTS, repo README, etc.) tend to post-edit the
+# generated config to switch locale, then append " (patched issue_locale=ru)"
+# to $CONFIG_LINE — that's a §19c violation. Pass at invocation instead.
+# Override: explicit "--issue-locale=<code>" in $ARGUMENTS wins.
+ISSUE_LOCALE="en"
+case "$ARGUMENTS" in
+  *--issue-locale=*) ISSUE_LOCALE="${ARGUMENTS##*--issue-locale=}"; ISSUE_LOCALE="${ISSUE_LOCALE%% *}" ;;
+  *) if LC_ALL=C printf '%s' "$ARGUMENTS" | grep -q '[А-Яа-яЁё]'; then ISSUE_LOCALE="ru"
+     elif LC_ALL=C printf '%s' "$ARGUMENTS" | grep -q '[一-龥぀-ゟ゠-ヿ]'; then ISSUE_LOCALE="ja"
+     elif LC_ALL=C printf '%s' "$ARGUMENTS" | grep -q '[가-힣]'; then ISSUE_LOCALE="ko"
+     fi ;;
+esac
+
 # Call the wrapper. Captures full stdout/stderr into CONFIG_LINE — the wrapper
 # itself emits the canonical line on success ("Config: AUTO-GENERATED → …"),
 # and "REJECT …" / "IOFAIL …" on the skip paths (already exists, refused
-# context, missing tooling). Either way, $CONFIG_LINE is the announce token.
+# context, missing tooling). Either way, $CONFIG_LINE is the announce token —
+# do NOT append annotations like "(patched ...)" to it (see §19c).
 if [ "$TRACKER" = "none" ]; then
   CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
-    --repo-root "$REPO" --tracker none --stack "$STACK" 2>&1)" \
+    --repo-root "$REPO" --tracker none --stack "$STACK" --issue-locale "$ISSUE_LOCALE" 2>&1)" \
     || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
 else
   CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
-    --repo-root "$REPO" --tracker "$TRACKER" --tracker-repo "$TRACKER_REPO" --stack "$STACK" 2>&1)" \
+    --repo-root "$REPO" --tracker "$TRACKER" --tracker-repo "$TRACKER_REPO" --stack "$STACK" --issue-locale "$ISSUE_LOCALE" 2>&1)" \
     || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
 fi
 echo "$CONFIG_LINE"
 ```
+
+Locale detection rationale: keeps the wrapper as the single source of truth for `$CONFIG_LINE`. If you notice locale-relevant context AFTER the wrapper ran (e.g. README turns out to be in another language than `$ARGUMENTS`), do NOT post-edit + annotate — instead, either edit the file directly in a separate observable step (and don't touch `$CONFIG_LINE`), or rerun with `--issue-locale=<code>` after deleting the auto-generated file. The Phase 0 announce must reflect what the wrapper actually wrote in one atomic call.
 
 **Refuse paths (script-side, all produce `AUTO-INIT SKIPPED`, not errors)**:
 - Repo root is `$HOME` or `/` — script refuses (looks like a stray `/do` invocation, not a project).
