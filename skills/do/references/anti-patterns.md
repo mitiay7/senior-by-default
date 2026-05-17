@@ -48,6 +48,14 @@ Grouped into 4 categories, ~20 distinct rules. Hot ones are bolded — those are
 
     Tripwire: the local `daily-report.sh` script (separate from the skill) scans for entries that don't match the canonical shape and surfaces them in tomorrow's report under a "Schema bypass" section. Bypasses are visible. Don't bypass.
 
+19b. **Composing the `Caveman:` announce line by hand instead of running Step 2 bash** — production-confirmed failure mode: orchestrator read the spec, saw "NOT INSTALLED" string in the prose, copy-pasted it into the announce without running the bash, while caveman was actually installed at path #1. The bash in [`phase-0-setup.md`](phase-0-setup.md) Step 2 builds the FULL announce line (including install-hint for NOT INSTALLED) and assigns to `$CAVEMAN_LINE`. The Phase 0 announce template references `$CAVEMAN_LINE` literally. The spec deliberately contains no copyable template of either form. If your announce contains a `Caveman:` line that doesn't match one of the two bash-emitted shapes verbatim — `Caveman: ACTIVE (path: …)` or `Caveman: NOT INSTALLED — install: curl …` — you composed it without running the bash. Re-run Step 2, paste actual output.
+
+    Why: same lesson as 19/19a. Prose detection instructions ("check at one of these paths") get bypassed in favor of a plausible-looking guess. Only structural coupling — line literally comes out of bash — prevents this.
+
+19c. **Writing `.claude/do/config.json` directly instead of calling `config-init`** — `Write` tool on the path, `echo > config.json`, `jq -n ... > config.json`, `cat <<EOF > config.json` — all forbidden. The only supported init path is `~/.claude/skills/do/scripts/config-init` invoked from the Phase 0 Step 4 auto-init bash. The wrapper enforces: refuse-on-exists, refuse-bootstrapping-self (won't write into senior-by-default repo), refuse-`$HOME`-root, required-arg validation, owner/repo regex on `--tracker-repo`, schema validation against [`config.schema.json`](config.schema.json) before write, atomic tmp+rename. Same `$CONFIG_LINE` structural-coupling pattern as `$METRICS_LINE` and `$CAVEMAN_LINE`.
+
+    Composing `Config: AUTO-GENERATED → …` by hand without actually invoking the wrapper falls under this — you'd be lying about file state.
+
 20. **Bypassing CODEOWNERS** — never `--reviewer @other` past auto-request; never disable CODEOWNERS-driven specialist routing without explicit `--no-codeowners`.
 21. **Producing a 2000-line PR** — Phase 3.0 blocks. If you hit the threshold, the plan was wrong, not the implementation. Re-plan into smaller issues.
 22. **Skipping Sonnet self-review** — Phase 2.5 catches what Phase 3 would catch but cheaper. `--no-self-review` is emergencies only.

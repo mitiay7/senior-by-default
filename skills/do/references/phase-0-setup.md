@@ -17,9 +17,14 @@ Phase 0 is **6 logical steps**, not 12 sub-phases. Conditional bullets are inlin
 
 ### 1. Load + validate config
 
-Walk CWD upward for `.claude/do/config.json`. First match wins. None → use defaults (single-repo, no issue tracker, no UI/i18n gates, no specialists, no context doc). Defaults defined in [`config-schema.md`](config-schema.md).
+Walk CWD upward for `.claude/do/config.json`. First match wins. Defaults defined in [`config-schema.md`](config-schema.md) (single-repo, no issue tracker, no UI/i18n gates, no specialists, no context doc).
 
-If config found → validate per [`config-validation.md`](config-validation.md). Hard error → STOP. Warnings → print and proceed.
+- **Found** → validate per [`config-validation.md`](config-validation.md). Hard error → STOP. Warnings → print and proceed. Set:
+  ```bash
+  CONFIG_FOUND=1
+  CONFIG_LINE="Config: LOADED $CONFIG_PATH"
+  ```
+- **None** → set `CONFIG_FOUND=0`. Use in-memory defaults for now. **Auto-init is DEFERRED to the end of Step 4** (needs stack-detect output to populate `_meta.auto_generated_for_stack`). `CONFIG_LINE` will be set there.
 
 **Conditional, inline**:
 - `config.wip_limit` set → count `git worktree list` + open issues assigned to user; warn if sum > limit. Opt-in only; default disabled. (Kanban WIP limits derive from human team context-switching cost; in AI-orchestrated workflows with isolated agent contexts, parallel sessions are usually a strength — leave unset unless you specifically want a soft ceiling.)
@@ -27,10 +32,11 @@ If config found → validate per [`config-validation.md`](config-validation.md).
 
 ### 2. Companion-skill detect — caveman
 
-Skip if `--no-caveman` in `$ARGUMENTS`. Otherwise — **run this bash verbatim** (do not paraphrase, do not "check mentally"):
+Skip if `--no-caveman` in `$ARGUMENTS` (set `CAVEMAN_LINE=""` in that case — announce will omit the line). Otherwise — **run this bash verbatim** (do not paraphrase, do not "check mentally", do not compose the announce line yourself — see [anti-patterns §19b](anti-patterns.md)):
 
 ```bash
 CAVEMAN_STATUS="NOT INSTALLED"
+unset CAVEMAN_PATH
 for p in \
   "$HOME/.claude/skills/caveman" \
   "$HOME/.claude/plugins/cache/caveman" \
@@ -38,17 +44,19 @@ for p in \
   "$HOME/.agents/skills/caveman"; do
   if [ -f "$p/SKILL.md" ]; then CAVEMAN_STATUS="ACTIVE"; CAVEMAN_PATH="$p"; break; fi
 done
-echo "Caveman: $CAVEMAN_STATUS${CAVEMAN_PATH:+ (path: $CAVEMAN_PATH)}"
+if [ "$CAVEMAN_STATUS" = "ACTIVE" ]; then
+  CAVEMAN_LINE="Caveman: ACTIVE (path: $CAVEMAN_PATH)"
+else
+  CAVEMAN_LINE="Caveman: NOT INSTALLED — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash"
+fi
+echo "$CAVEMAN_LINE"
 ```
 
-Path-list rationale: positions 1–3 are the canonical Claude Code install locations (`curl … install.sh` script, plugin cache by short name, plugin cache by owner/repo). Position 4 covers the [agent-skill](https://github.com/your-org/agent-skill) manager which installs to `~/.agents/skills/` and may or may not also symlink into `~/.claude/skills/` depending on the user's setup — checking it directly avoids relying on a symlink that may not exist. `[ -f "$p/SKILL.md" ]` (not `[ -d "$p" ]`) — guards against empty directories left behind by failed installs and resolves symlinks correctly.
+**The bash builds the FULL announce line, including the install hint.** The spec deliberately contains no other copyable template of either form — if you "know what the line looks like" without running the bash, you're guessing, and Phase 0 will emit a fabricated value (production-confirmed failure mode, same as `metrics-append` bypass). The Phase 0 announce template at the bottom references `$CAVEMAN_LINE` literally; no `$CAVEMAN_LINE` = no announce line = visible bug.
 
-The `Caveman:` line is **mandatory in the Phase 0 announce** — same enforcement as `Models:`. Absent line = step skipped = bug. The bash above guarantees the line exists by construction (it always echoes one of two values).
+Path-list rationale: positions 1–3 are the canonical Claude Code install locations (`curl … install.sh` script, plugin cache by short name, plugin cache by owner/repo). Position 4 covers the agent-skill manager which installs to `~/.agents/skills/` and may or may not also symlink into `~/.claude/skills/` depending on the user's setup. `[ -f "$p/SKILL.md" ]` (not `[ -d "$p" ]`) — resolves symlinks correctly and rejects empty directories from failed installs.
 
-- **ACTIVE** → Sub-Agent prompts get caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section).
-- **NOT INSTALLED** → append install hint: `install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash`. Continue without; caveman is recommended, not required.
-
-Caveman is **passive** (SessionStart hook). Once active, all assistant output flows through compression. No runtime wrapping needed — only the prompt directive.
+When `CAVEMAN_STATUS=ACTIVE`, Sub-Agent prompts get the caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section). Caveman is **passive** (SessionStart hook); once active, all assistant output flows through compression. No runtime wrapping needed — only the prompt directive.
 
 ### 3. Resolve target repo(s)
 
@@ -76,6 +84,44 @@ For each target repo, compute cache slug from absolute path. Slug rule: replace 
 - Write result to cache. Always include canonical `repo_path`.
 
 Cache fields used throughout phases 1–4: `stack`, `package_manager`, `build_cmds`, `lint_cmds`, `test_cmd`, `ui_files`, `ui_extensions`, `migration_dir`, `migration_pattern`, `affected_graph_tool`. Never re-derive mid-task.
+
+**Auto-init config (only if Step 1 set `CONFIG_FOUND=0` AND `--no-config-init` not in `$ARGUMENTS`)** — **run this bash verbatim** (do not Write a `config.json` by hand, do not compose `$CONFIG_LINE` yourself — see [anti-patterns §19c](anti-patterns.md)):
+
+```bash
+# Detect tracker from git remote (origin). Bash parameter expansion only —
+# avoids sed regex with `](...)` that confuses markdown link parsers.
+REMOTE_URL="$(git -C "$REPO" remote get-url origin 2>/dev/null || true)"
+case "$REMOTE_URL" in
+  *github.com*) TRACKER="github"; TR_PATH="${REMOTE_URL##*github.com[:/]}"; TRACKER_REPO="${TR_PATH%.git}" ;;
+  *gitlab.com*) TRACKER="gitlab"; TR_PATH="${REMOTE_URL##*gitlab.com[:/]}"; TRACKER_REPO="${TR_PATH%.git}" ;;
+  *)            TRACKER="none"; TRACKER_REPO="" ;;
+esac
+
+# Call the wrapper. Captures full stdout/stderr into CONFIG_LINE — the wrapper
+# itself emits the canonical line on success ("Config: AUTO-GENERATED → …"),
+# and "REJECT …" / "IOFAIL …" on the skip paths (already exists, refused
+# context, missing tooling). Either way, $CONFIG_LINE is the announce token.
+if [ "$TRACKER" = "none" ]; then
+  CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
+    --repo-root "$REPO" --tracker none --stack "$STACK" 2>&1)" \
+    || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
+else
+  CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
+    --repo-root "$REPO" --tracker "$TRACKER" --tracker-repo "$TRACKER_REPO" --stack "$STACK" 2>&1)" \
+    || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
+fi
+echo "$CONFIG_LINE"
+```
+
+**Refuse paths (script-side, all produce `AUTO-INIT SKIPPED`, not errors)**:
+- Repo root is `$HOME` or `/` — script refuses (looks like a stray `/do` invocation, not a project).
+- Repo IS senior-by-default (has `skills/do/SKILL.md` at root) — script refuses to bootstrap its own config.
+- `config.json` already exists — refuses to overwrite (Step 1 already loaded it; this branch shouldn't execute, but defense in depth).
+- `jq` not installed — refuses with reason.
+
+The generated file is **minimum-viable**: `version + _meta + issue_tracker + issue_locale`. Specialists, `context_doc`, `workspace.repos`, `ui_gate`, `acceptance_extensions`, `naming` overrides — all left for the user to add by extending the file (the `_setup_notes` field in `_meta` points at `examples/` for templates). The file is left unstaged — user reviews and commits when ready. Subsequent `/do` runs re-read it on each Phase 0, so no reload needed after extension.
+
+If `--no-config-init` was passed → skip this block entirely, set `CONFIG_LINE="Config: NONE — using defaults (--no-config-init)"`.
 
 ### 5. Sanity checks
 
@@ -141,7 +187,8 @@ After all 6 steps pass:
 [Phase 0] Repo: {repo} | Stack: {stack} (cached: {y/n}) | Scope: {B/F/FS} | Complexity: {T/L/M/H}
   Files: ~{N} | Tests: {YES/NO} | Migration: {YES NNN/NO} | Context doc: {required/none}
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
-  Caveman: {ACTIVE (path: $CAVEMAN_PATH) | NOT INSTALLED — install: curl ...}
+  {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
+  {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose}
   WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
   [+ if assumptions recorded → "Assumptions: {short list}"]
   [+ if simpler path chosen → "Tradeoff: {short explanation of narrower implementation}"]
@@ -149,4 +196,10 @@ After all 6 steps pass:
   [+ if postmortem context → "ℹ Postmortem section will be added to issue"]
 ```
 
-The `Models:` and `Caveman:` lines are mandatory — makes model usage and companion-skill state explicit so users see (and metrics record) which model handles which role and whether output is being compressed. The only way to suppress `Caveman:` is `--no-caveman` in `$ARGUMENTS` (which skips the detect step entirely).
+`Models:`, `$CAVEMAN_LINE`, and `$CONFIG_LINE` are **mandatory** — they make model usage, companion-skill state, and config state explicit so users see (and metrics record) what the orchestrator decided.
+
+The two structural-coupling lines (`$CAVEMAN_LINE`, `$CONFIG_LINE`) come **only** from the bash blocks in Step 2 / Step 4 auto-init respectively. The spec deliberately contains no copyable templates of their full form — if you "know what the line looks like" without running the bash, you're guessing. This is the same structural-enforcement pattern as `$METRICS_LINE` in Phase 4.13 (see [`phase-4-finalize.md`](phase-4-finalize.md) and [anti-patterns §19, §19a, §19b, §19c](anti-patterns.md)).
+
+Suppression paths:
+- `--no-caveman` → Step 2 skipped, `$CAVEMAN_LINE=""`, line omitted from announce.
+- `--no-config-init` → Step 4 auto-init skipped, `$CONFIG_LINE="Config: NONE — using defaults (--no-config-init)"`, line still printed.

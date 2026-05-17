@@ -1,0 +1,152 @@
+#!/bin/bash
+# config-init — the ONLY supported way to materialize `.claude/do/config.json`
+# when Phase 0 Step 1 doesn't find one.
+#
+# Why a wrapper (not in-doc bash): same lesson as metrics-append. Sub-agents
+# proven to bypass in-doc JSON templates — they compose JSON freely via
+# Write/echo/python and skip validation. Centralizing emission behind a
+# named-args CLI removes that freedom: the only path that writes a
+# schema-valid config is calling this with the required flags, and the
+# script refuses to overwrite, refuses to bootstrap senior-by-default
+# itself, refuses to write at $HOME root, and validates output against
+# config.schema.json before commit.
+#
+# Direct Write/echo to .claude/do/config.json from Phase 0 is an
+# anti-pattern (see anti-patterns.md §19c).
+#
+# Usage:
+#   config-init \
+#     --repo-root /path/to/repo \
+#     --tracker github \
+#     --tracker-repo owner/repo \
+#     [--stack "Python (FastAPI)"] \
+#     [--issue-locale en]
+#
+# Exit codes:
+#   0  written successfully; stdout: "Config: AUTO-GENERATED → <path>"
+#   1  rejected (missing/invalid arg, file exists, refused context, schema fail); stderr: "REJECT <reason>"
+#   2  I/O failure (could not write); stderr: "IOFAIL <reason>"
+
+set -euo pipefail
+
+die() { echo "REJECT $*" >&2; exit 1; }
+iofail() { echo "IOFAIL $*" >&2; exit 2; }
+
+REPO_ROOT=""
+TRACKER=""
+TRACKER_REPO=""
+STACK=""
+ISSUE_LOCALE="en"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo-root)     REPO_ROOT="$2";     shift 2 ;;
+    --tracker)       TRACKER="$2";       shift 2 ;;
+    --tracker-repo)  TRACKER_REPO="$2";  shift 2 ;;
+    --stack)         STACK="$2";         shift 2 ;;
+    --issue-locale)  ISSUE_LOCALE="$2";  shift 2 ;;
+    *) die "unknown flag: $1" ;;
+  esac
+done
+
+# --- arg validation ---------------------------------------------------------
+
+[ -n "$REPO_ROOT" ] || die "--repo-root required"
+[ -d "$REPO_ROOT" ] || die "--repo-root not a directory: $REPO_ROOT"
+[ -n "$TRACKER" ]   || die "--tracker required (github|gitlab|none)"
+case "$TRACKER" in
+  github|gitlab|none) ;;
+  *) die "--tracker must be github|gitlab|none (got: $TRACKER)" ;;
+esac
+if [ "$TRACKER" != "none" ] && [ -z "$TRACKER_REPO" ]; then
+  die "--tracker-repo required when --tracker=$TRACKER (expected owner/repo)"
+fi
+if [ -n "$TRACKER_REPO" ] && ! [[ "$TRACKER_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+  die "--tracker-repo must match owner/repo (got: $TRACKER_REPO)"
+fi
+
+# --- context refusals -------------------------------------------------------
+# Prevent bootstrapping ourselves / writing into $HOME root by mistake.
+
+REPO_ROOT_ABS="$(cd "$REPO_ROOT" && pwd -P)"
+HOME_ABS="$(cd "$HOME" && pwd -P)"
+
+if [ "$REPO_ROOT_ABS" = "$HOME_ABS" ] || [ "$REPO_ROOT_ABS" = "/" ]; then
+  die "refuse to init at $REPO_ROOT_ABS (looks like home/root, not a project)"
+fi
+if [ -f "$REPO_ROOT_ABS/skills/do/SKILL.md" ]; then
+  die "refuse to init in senior-by-default itself (this repo IS the skill source)"
+fi
+
+OUT_DIR="$REPO_ROOT_ABS/.claude/do"
+OUT_PATH="$OUT_DIR/config.json"
+
+if [ -e "$OUT_PATH" ]; then
+  die "already exists: $OUT_PATH (auto-init never overwrites)"
+fi
+
+# --- compose config (jq guarantees structural validity) ---------------------
+
+command -v jq >/dev/null 2>&1 || die "jq not installed (required for config compose)"
+
+NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if [ "$TRACKER" = "none" ]; then
+  TRACKER_BLOCK="$(jq -n --arg t "$TRACKER" '{type: $t}')"
+else
+  TRACKER_BLOCK="$(jq -n --arg t "$TRACKER" --arg r "$TRACKER_REPO" \
+    '{type: $t, repo: $r, required_labels: ["task"], domain_labels: []}')"
+fi
+
+CONFIG_JSON="$(jq -n \
+  --arg now "$NOW" \
+  --arg stack "$STACK" \
+  --arg locale "$ISSUE_LOCALE" \
+  --argjson tracker "$TRACKER_BLOCK" \
+  '{
+     version: 1,
+     _meta: {
+       auto_generated_by: "senior-by-default Phase 0 auto-init",
+       auto_generated_at: $now,
+       auto_generated_for_stack: ($stack | if . == "" then null else . end),
+       _setup_notes: "Auto-init writes only the minimum to unblock /do (version + issue_tracker + issue_locale). For specialists, context_doc, workspace.repos, ui_gate, acceptance_extensions, naming overrides — see examples/ in senior-by-default repo and extend this file. /do re-reads on every run; no reload needed."
+     },
+     issue_tracker: $tracker,
+     issue_locale: $locale
+   }')" || iofail "jq compose failed"
+
+# --- schema validation (best-effort: skip if tooling missing) ---------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCHEMA_PATH="$SCRIPT_DIR/../references/config.schema.json"
+
+if [ -f "$SCHEMA_PATH" ] && command -v python3 >/dev/null 2>&1 \
+   && python3 -c "import jsonschema" 2>/dev/null; then
+  if ! printf '%s' "$CONFIG_JSON" | SCHEMA_PATH="$SCHEMA_PATH" python3 -c '
+import sys, os, json, jsonschema
+schema = json.load(open(os.environ["SCHEMA_PATH"]))
+data = json.loads(sys.stdin.read())
+try:
+    jsonschema.validate(data, schema)
+except jsonschema.ValidationError as e:
+    print(f"schema validation failed: {e.message} at {list(e.absolute_path)}", file=sys.stderr)
+    sys.exit(1)
+' 2>/tmp/config-init-schema-err.$$; then
+    err="$(cat /tmp/config-init-schema-err.$$ 2>/dev/null || echo "unknown")"
+    rm -f /tmp/config-init-schema-err.$$
+    die "synthesized config failed schema gate: $err"
+  fi
+  rm -f /tmp/config-init-schema-err.$$
+fi
+
+# --- atomic write -----------------------------------------------------------
+
+mkdir -p "$OUT_DIR" || iofail "could not create $OUT_DIR"
+
+TMP="${OUT_PATH}.tmp.$$"
+trap 'rm -f "$TMP"' EXIT
+printf '%s\n' "$CONFIG_JSON" > "$TMP" || iofail "could not write $TMP"
+mv -- "$TMP" "$OUT_PATH" || iofail "could not rename $TMP → $OUT_PATH"
+trap - EXIT
+
+echo "Config: AUTO-GENERATED → $OUT_PATH"

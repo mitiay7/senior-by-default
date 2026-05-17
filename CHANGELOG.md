@@ -4,6 +4,36 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 0 — caveman detect v2 + auto-init of `.claude/do/config.json`
+
+Two issues from production observation of the prior `[Unreleased]` v1 caveman fix:
+
+1. **Caveman v1 didn't stick.** With the verbatim bash and mandatory-line patch, orchestrator still emitted `Caveman: NOT INSTALLED — install: curl -fsSL ...` on a machine where caveman was actually installed at the first path. Diagnosis: orchestrator read the spec, saw the `NOT INSTALLED` example bullet describing the not-found case, copy-pasted the full string (including install-hint suffix that the v1 bash did NOT echo). Confirmation = the install-hint suffix `— install: curl ...` was in the announce but the v1 bash's echo template only produced `Caveman: NOT INSTALLED` without that suffix. So the bash didn't run.
+
+2. **`No .claude/do/config.json — using defaults` is a noisy status with no path forward.** Real projects benefit from a config (tracker integration, specialists, workspace routing), but writing one by hand from the schema is friction nobody pays. Result: every `/do` run in a fresh repo reports "no config" and that's the end of it.
+
+#### Added
+
+- **`skills/do/scripts/config-init`** — bash wrapper, named-args CLI. Required flags: `--repo-root`, `--tracker {github|gitlab|none}`. Conditional: `--tracker-repo owner/repo` (required when tracker ≠ none, regex-validated). Optional: `--stack`, `--issue-locale`. Refuses overwrite, refuses `$HOME` or `/` root, refuses to bootstrap senior-by-default itself (detects `skills/do/SKILL.md` at root). Composes minimal valid config (`version`, `_meta`, `issue_tracker`, `issue_locale`) via `jq -n`. Validates against `config.schema.json` if `python3 -m jsonschema` available. Atomic tmp+rename write. Exit codes: 0 OK / 1 REJECT / 2 IOFAIL — same shape as `metrics-append`.
+
+#### Changed
+
+- **`phase-0-setup.md` Step 2 (caveman v2)** — bash now builds the FULL announce line (including install-hint suffix for NOT INSTALLED) and assigns to `$CAVEMAN_LINE`. Removed the post-bash bullets that described the two output forms in prose — those were the copy-paste bait. Announce template references `$CAVEMAN_LINE` literally (same coupling as `$METRICS_LINE`). Spec contains no other example of either form's full text.
+- **`phase-0-setup.md` Step 1** — restructured to set `CONFIG_FOUND` flag and `$CONFIG_LINE`. Found-case sets `CONFIG_LINE="Config: LOADED $CONFIG_PATH"`. Missing-case defers `$CONFIG_LINE` to Step 4 auto-init.
+- **`phase-0-setup.md` Step 4** — added "Auto-init config" block at the end. Detects tracker from `git remote get-url origin` (github/gitlab/none with owner/repo extraction). Calls `config-init` with detected values, captures stdout/stderr into `$CONFIG_LINE`. Refuse paths produce `Config: AUTO-INIT SKIPPED — <reason>` — not errors, just visible notes.
+- **`phase-0-setup.md` Announce template** — `Caveman:` and `Config:` lines replaced with literal `$CAVEMAN_LINE` / `$CONFIG_LINE` placeholders and "DO NOT compose" markers. Suppression: `--no-caveman` empties `$CAVEMAN_LINE` (line omitted); `--no-config-init` sets `$CONFIG_LINE="Config: NONE — using defaults (--no-config-init)"`.
+- **`SKILL.md` advanced flags** — added `--no-config-init`.
+- **`anti-patterns.md` §19b (new)** — "Composing the `Caveman:` announce line by hand instead of running Step 2 bash". Documents the exact production failure mode (install-hint suffix in announce while bash didn't emit it) as the diagnostic.
+- **`anti-patterns.md` §19c (new)** — "Writing `.claude/do/config.json` directly instead of calling `config-init`". Bans `Write`, `echo >`, `jq > config.json`, `cat <<EOF >` paths. Notes that hand-composing `Config: AUTO-GENERATED →` without invoking the wrapper falls under this — lying about file state.
+
+#### Why this round (not the v1 fix)
+
+v1 added the verbatim bash but kept descriptive bullets immediately below it (`- ACTIVE → ...` / `- NOT INSTALLED → ...` with the install-hint string spelled out). Those bullets were the bait — sub-agents pattern-match on plausible-looking copyable strings. The v1 bash echoed only `Caveman: STATUS [path]`; the bullets' install-hint suffix was NOT in any bash variable. Yet the prod announce contained the full `NOT INSTALLED — install: curl ...` form. Only way that happens is hand-composition from prose.
+
+v2 fix: the bash builds the COMPLETE line. The spec contains no other place where either full form appears verbatim. If the announce diverges from one of the two bash-emitted shapes by even a character, that's a fabrication tell.
+
+Same coupling extended to config: there's no in-doc template to copy from; the wrapper's stdout IS the announce line. The five forms (`LOADED`, `AUTO-GENERATED`, `AUTO-INIT SKIPPED — ...`, `NONE — using defaults (--no-config-init)`) only emerge from the bash/wrapper combination, never from hand composition.
+
 ### Phase 0.2 — caveman detect: concrete bash + mandatory announce line
 
 Production report: orchestrator ran `/do` on a machine where caveman was installed at `~/.claude/skills/caveman` (the FIRST path in the spec's detect list), yet the Phase 0 announce omitted the `Caveman:` line — same failure mode as the pre-v0.3.1 `metrics-append` bypass: prose-only spec → sub-agent reads, decides, skips, composes announce without the line. No way to tell from the announce whether detection ran-and-found-nothing or wasn't attempted.

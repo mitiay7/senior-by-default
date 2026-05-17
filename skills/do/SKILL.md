@@ -101,6 +101,7 @@ Recognize free-form (accept natural-language equivalents too):
 | `--no-notify` | Skip notifications for this task |
 | `--no-affected-graph` | Run full build/test even when monorepo affected-graph detected |
 | `--no-caveman` | Skip companion-skill detection for this task |
+| `--no-config-init` | Skip Phase 0 auto-init of `.claude/do/config.json` when missing (use defaults, write nothing) |
 
 ### Implementer override semantics
 
