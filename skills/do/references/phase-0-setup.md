@@ -27,15 +27,26 @@ If config found → validate per [`config-validation.md`](config-validation.md).
 
 ### 2. Companion-skill detect — caveman
 
-Skip if `--no-caveman` in `$ARGUMENTS`.
+Skip if `--no-caveman` in `$ARGUMENTS`. Otherwise — **run this bash verbatim** (do not paraphrase, do not "check mentally"):
 
-Detect [caveman](https://github.com/JuliusBrussee/caveman) at one of:
-- `$HOME/.claude/skills/caveman`
-- `$HOME/.claude/plugins/cache/caveman`
-- `$HOME/.claude/plugins/cache/JuliusBrussee/caveman`
+```bash
+CAVEMAN_STATUS="NOT INSTALLED"
+for p in \
+  "$HOME/.claude/skills/caveman" \
+  "$HOME/.claude/plugins/cache/caveman" \
+  "$HOME/.claude/plugins/cache/JuliusBrussee/caveman" \
+  "$HOME/.agents/skills/caveman"; do
+  if [ -f "$p/SKILL.md" ]; then CAVEMAN_STATUS="ACTIVE"; CAVEMAN_PATH="$p"; break; fi
+done
+echo "Caveman: $CAVEMAN_STATUS${CAVEMAN_PATH:+ (path: $CAVEMAN_PATH)}"
+```
 
-- **Found** → `Caveman: ACTIVE (output compressed)`. Sub-Agent prompts get caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section).
-- **Not found** → `Caveman: NOT INSTALLED — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash`. Continue without; caveman is recommended, not required.
+Path-list rationale: positions 1–3 are the canonical Claude Code install locations (`curl … install.sh` script, plugin cache by short name, plugin cache by owner/repo). Position 4 covers the [agent-skill](https://github.com/your-org/agent-skill) manager which installs to `~/.agents/skills/` and may or may not also symlink into `~/.claude/skills/` depending on the user's setup — checking it directly avoids relying on a symlink that may not exist. `[ -f "$p/SKILL.md" ]` (not `[ -d "$p" ]`) — guards against empty directories left behind by failed installs and resolves symlinks correctly.
+
+The `Caveman:` line is **mandatory in the Phase 0 announce** — same enforcement as `Models:`. Absent line = step skipped = bug. The bash above guarantees the line exists by construction (it always echoes one of two values).
+
+- **ACTIVE** → Sub-Agent prompts get caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section).
+- **NOT INSTALLED** → append install hint: `install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash`. Continue without; caveman is recommended, not required.
 
 Caveman is **passive** (SessionStart hook). Once active, all assistant output flows through compression. No runtime wrapping needed — only the prompt directive.
 
@@ -130,12 +141,12 @@ After all 6 steps pass:
 [Phase 0] Repo: {repo} | Stack: {stack} (cached: {y/n}) | Scope: {B/F/FS} | Complexity: {T/L/M/H}
   Files: ~{N} | Tests: {YES/NO} | Migration: {YES NNN/NO} | Context doc: {required/none}
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
+  Caveman: {ACTIVE (path: $CAVEMAN_PATH) | NOT INSTALLED — install: curl ...}
   WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
   [+ if assumptions recorded → "Assumptions: {short list}"]
   [+ if simpler path chosen → "Tradeoff: {short explanation of narrower implementation}"]
   [+ if concurrent edits → "⚠ Concurrent edits on planned files in last {N} days"]
   [+ if postmortem context → "ℹ Postmortem section will be added to issue"]
-  [+ if caveman active/missing → "Caveman: ACTIVE|NOT INSTALLED ..."]
 ```
 
-The `Models:` line is mandatory — makes model usage explicit so users see (and metrics record) which model handles which role for this task.
+The `Models:` and `Caveman:` lines are mandatory — makes model usage and companion-skill state explicit so users see (and metrics record) which model handles which role and whether output is being compressed. The only way to suppress `Caveman:` is `--no-caveman` in `$ARGUMENTS` (which skips the detect step entirely).

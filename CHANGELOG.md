@@ -4,6 +4,20 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 0.2 — caveman detect: concrete bash + mandatory announce line
+
+Production report: orchestrator ran `/do` on a machine where caveman was installed at `~/.claude/skills/caveman` (the FIRST path in the spec's detect list), yet the Phase 0 announce omitted the `Caveman:` line — same failure mode as the pre-v0.3.1 `metrics-append` bypass: prose-only spec → sub-agent reads, decides, skips, composes announce without the line. No way to tell from the announce whether detection ran-and-found-nothing or wasn't attempted.
+
+#### Changed
+
+- **`phase-0-setup.md` Step 2** — replaced "detect at one of: …" prose with a verbatim bash block (`for p in …; do [ -f "$p/SKILL.md" ] && { CAVEMAN_STATUS=ACTIVE; break; }; done; echo "Caveman: …"`). Same structural-coupling pattern as `metrics-append`: the announce line literally comes out of the bash, so it cannot be silently skipped.
+- **`phase-0-setup.md` Step 2 — path list extended** to 4 entries. Added `~/.agents/skills/caveman` for users who installed via the agent-skill manager without a `~/.claude/skills/` symlink. Pinned the test to `[ -f "$p/SKILL.md" ]` (not `[ -d "$p" ]`) to resolve symlinks correctly and reject empty directories left by failed installs.
+- **`phase-0-setup.md` Announce block** — promoted `Caveman:` from a conditional `[+ if …]` bracket to a mandatory line in the fixed template, alongside `Models:`. The only suppression path is `--no-caveman` (which skips Step 2 entirely). Absent line in announce now = visible bug.
+
+#### Why this matters
+
+Detection skipped silently → Phase 2 Sub-Agent prompts don't get the caveman-style directive even when caveman is active → output isn't compressed for the spawned agent → tokens wasted, register inconsistent across orchestrator vs sub-agent. The audit pattern (instruction-only spec → non-deterministic execution) is the same one that bit Phase 4.11 twice; the fix shape is the same too (move from "you should …" prose to "run this bash" + mandatory output token).
+
 ### Phase 4.11 — external `metrics-append` wrapper (real enforcement, take 2)
 
 Audit of 9 production entries written after the prior `[Unreleased]` change showed the in-doc `jq -n` template + `:?`-guards approach **did not actually enforce anything**: 5 of 9 sub-agents bypassed the documented bash flow entirely (composed JSON via Write / echo / python with whatever shape they wanted, 100+ distinct field names across runs, `self_review` block missing in 5 of 9). The prior fix would have rejected these entries IF the sub-agent ran the documented bash block, but sub-agents don't reliably run documented bash — they read it, decide on a different approach, and write whatever JSON they want directly to the log path.
