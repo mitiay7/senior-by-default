@@ -112,42 +112,57 @@ SKILL_NAME=do TRIGGER=+++ INSTALL_DIR=~/.local/share/senior-by-default \
 
 ## Configure your project
 
-Drop `.claude/do/config.json` at your project (or workspace) root. The path the example lives at depends on how you installed:
+**Zero-touch by default — Phase 0 auto-generates `.claude/do/config.json` on first run.** When you run `/do` in a project that doesn't have one, the orchestrator detects context and writes a minimum-viable config without prompting:
 
-### Option A: install-agnostic (works for any install method)
+- `issue_tracker.{type,repo}` from `git remote get-url origin` (github/gitlab/none, owner/repo auto-extracted)
+- `issue_locale` from `$ARGUMENTS` script (Cyrillic → `ru`, Hiragana/Katakana/CJK → `ja`, Hangul → `ko`, else `en`; explicit `--issue-locale=<code>` wins)
+- recommended `specialists` preset wiring the 6 Phase-3-audit plugins listed below
+- documented tier-1 `metrics` preset (`~/.claude/do/metrics/{repo_slug}.jsonl` — cross-project, scannable by a single daily report)
+- `_meta._setup_notes` listing exact `/plugin install` commands so the file is self-contained
 
-Pull the example straight from GitHub:
-```bash
-mkdir -p .claude/do
-curl -fsSL https://raw.githubusercontent.com/mitiay7/senior-by-default/main/examples/minimal-config.json \
-  -o .claude/do/config.json
-$EDITOR .claude/do/config.json    # set issue_tracker.repo to your owner/repo
+The Phase 0 announce shows what was written verbatim — no parsing needed:
+```
+Config: AUTO-GENERATED → /path/to/repo/.claude/do/config.json
+Metrics config: INCLUDED in auto-init
 ```
 
-Available examples (substitute the filename in the URL):
-- `minimal-config.json` — single-repo + GitHub
+The file is left **unstaged** — you review and commit when ready. Subsequent `/do` runs re-read it on every Phase 0; no reload after extension.
+
+### If your project already has a config
+
+Phase 0 Step 1 loads it via the same path. If the file exists but **doesn't have a `metrics` block**, the orchestrator patches the documented tier-1 preset in idempotently — `_meta` is stamped with `last_patched_by` / `last_patched_at` / `last_patch_added` for observability. Existing `metrics: {...}` is left alone; explicit `metrics: null` (opt-out) is respected. Announce:
+```
+Config: LOADED /path/to/repo/.claude/do/config.json
+Metrics config: AUTO-ADDED to /path/.../config.json    # or ALREADY CONFIGURED / EXPLICIT OPT-OUT
+```
+
+### Opt-outs (advanced)
+
+| Flag in `$ARGUMENTS` | Effect |
+|---|---|
+| `--no-config-init` | Use in-session defaults; write nothing |
+| `--no-specialists` | Auto-init config without the `specialists` preset (Opus inline review fallback) |
+| `--no-metrics` | Skip metrics auto-config in both the Step 4 auto-init AND Step 1 patch paths |
+
+### Customizing the auto-generated config
+
+The auto-init writes the universally-useful minimum. For the rest — `context_doc`, `workspace.repos`, `ui_gate`, `acceptance_extensions`, `naming` overrides, `ci.required`, `auto_merge.enabled`, `notifications.slack_webhook` — extend the file by hand or copy from a fuller example.
+
+**Get a starter example** (any install method):
+
+```bash
+mkdir -p .claude/do
+curl -fsSL https://raw.githubusercontent.com/mitiay7/senior-by-default/main/examples/python-fastapi-config.json \
+  -o .claude/do/config.json
+```
+
+Available examples:
+- `minimal-config.json` — single-repo + GitHub (close to what auto-init produces, minus presets)
 - `multi-repo-go-react-config.json` — workspace with Go API + React web + docs
-- `python-fastapi-config.json` — Python + Alembic + GitHub
+- `python-fastapi-config.json` — Python + Alembic + GitHub + specialists + context-doc
 - `rust-workspace-config.json` — Rust workspace + GitLab
 
-### Option B: copy from a local clone
-
-If you have a local clone of this repo (manual install, or you cloned separately for hacking):
-
-| Install method | Examples directory |
-|---|---|
-| Manual symlink (default install dir) | `~/.local/share/senior-by-default/examples/` |
-| Manual clone elsewhere | `<your-clone>/examples/` |
-
-> **Note for plugin install users:** Claude Code stores plugins under `~/.claude/plugins/cache/...` with versioned subdirectories that change across updates — this path is **not stable** to copy from. Use Option A (curl) instead, or clone the repo separately just for the examples.
-
-```bash
-mkdir -p .claude/do
-cp <examples-dir>/minimal-config.json .claude/do/config.json    # ← pick row above
-$EDITOR .claude/do/config.json
-```
-
-For multi-repo workspaces, monorepo, Python, or Rust projects, see [`examples/`](examples/) on GitHub for full configs.
+If you have a local clone (manual install dir at `~/.local/share/senior-by-default/examples/`), copy from there. Plugin-install users — Claude Code stores plugins under `~/.claude/plugins/cache/...` with versioned subdirs that change across updates; that path is **not stable** to copy from. Use the curl above or clone the repo separately.
 
 Full schema: [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md).
 JSON Schema for programmatic validation: [`skills/do/references/config.schema.json`](skills/do/references/config.schema.json).
@@ -215,9 +230,10 @@ See [`skills/do/references/config-schema.md`](skills/do/references/config-schema
 curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
 ```
 
-Phase 0.0.3 detects whether caveman is installed:
-- **Active** → prints `Caveman: ACTIVE (output compressed)`. Sub-Agent prompts include a directive to respond in caveman style for natural-language framing (code, paths, JSON, diffs, completion-report formats are NEVER compressed).
-- **Not installed** → warns once, proceeds without compression. The skill works without caveman; you just spend more output tokens.
+Phase 0 Step 2 detects whether caveman is installed and emits one of two **structurally-coupled** announce lines (the line comes from `[ -f SKILL.md ]` over 4 candidate paths — `~/.claude/skills/caveman`, `~/.claude/plugins/cache/caveman`, `~/.claude/plugins/cache/JuliusBrussee/caveman`, `~/.agents/skills/caveman` — no in-doc copyable template, so any divergence in the announce signals fabrication):
+
+- **Active** → `Caveman: ACTIVE (path: <resolved-path>)`. Sub-Agent prompts include a directive to respond in caveman style for natural-language framing (code, paths, JSON, diffs, completion-report formats are NEVER compressed — those are LITERAL strings parsed by downstream tooling).
+- **Not installed** → `Caveman: NOT INSTALLED — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash`. The skill works without caveman; you just spend more output tokens.
 
 Per-task opt-out: `--no-caveman` in `$ARGUMENTS`.
 
@@ -261,7 +277,9 @@ For non-GitHub trackers: `glab` (GitLab), or custom command templates per [`skil
 
 ## Override flags
 
-Pass these in the task argument:
+Pass these in the task argument.
+
+**Main** (commonly used per-task):
 
 | Flag | Effect |
 |---|---|
@@ -269,11 +287,24 @@ Pass these in the task argument:
 | `--implementer=opus\|sonnet\|haiku` | Override implementer (rare; see SKILL.md) |
 | `--repo=NAME` | Force target repo (multi-repo workspace) |
 | `--redetect` | Force stack re-detection (skip cache) |
-| `--auto-merge` / `--no-auto-merge` | Per-task override |
+| `--auto-merge` / `--no-auto-merge` | Per-task auto-merge override |
+
+**Advanced** (config-level toggles, mostly opt-outs):
+
+| Flag | Effect |
+|---|---|
 | `--skip-ci-wait` | Don't wait for CI before final announce |
-| `--no-self-review` | Skip Phase 2.5 self-review (emergencies) |
+| `--no-self-review` | Skip Phase 2.5 self-review (emergencies only) |
 | `--no-codeowners` | Skip CODEOWNERS-routed review |
 | `--no-notify` | Skip notifications for this task |
+| `--no-affected-graph` | Run full build/test even when monorepo affected-graph detected |
+| `--no-caveman` | Skip companion-skill detection (Phase 0 Step 2) |
+| `--no-config-init` | Skip auto-generation of `.claude/do/config.json` when missing |
+| `--no-specialists` | Auto-init config WITHOUT the default specialists preset |
+| `--no-metrics` | Skip telemetry auto-config (both new + existing config paths) |
+| `--issue-locale=<code>` | Override locale detection (e.g. `--issue-locale=fr`) |
+
+Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 ## Documentation map
 
@@ -298,11 +329,13 @@ Pass these in the task argument:
 
 **`gh` not authenticated** → `gh auth login` (web flow). Required scopes: `repo`, `workflow`.
 
-**Skill says "specialist not found"** → That `subagent_type` plugin isn't installed. Either install it (see Recommended plugins above) or remove it from `config.specialists.*` — Opus inline review takes over.
+**Phase 0 announce says "Specialists not available — falling back to Sonnet"** → That string isn't actually emitted by the skill; sub-agents say it when `Agent(subagent_type=<plugin>:<agent>)` fails because the plugin isn't installed. Check `config.specialists.*` against installed plugins (`claude plugin list`). Either install the missing plugin (see [Recommended Claude Code plugins](#recommended-claude-code-plugins-for-phase-3-specialist-review)) or remove the reference from your config — Opus inline review takes over per group.
 
-**Branch is `claude/funny-leakey-...` instead of `feat/i42-...`** → Phase 4.0 detects and renames automatically before PR creation; metrics record this as a Phase 2 spec violation. If it keeps happening, your Opus instance is using `Agent(isolation: "worktree")` — see anti-pattern 31b in [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md).
+**Branch is `claude/funny-leakey-...` instead of `feat/i42-...`** → Phase 4.0 detects and renames automatically before PR creation; metrics record this as a Phase 2 spec violation. If it keeps happening, your Opus instance is using `Agent(isolation: "worktree")` — see anti-pattern 13 in [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md).
 
-**Metrics not appearing in `~/.claude/do/metrics/*.jsonl`** → Skill is skipping Phase 4.11. Check the final announce — it MUST include `Metrics: <count> entries in <path>`. If it doesn't, that's a bug; file an issue with the announce text.
+**Metrics not appearing in `~/.claude/do/metrics/*.jsonl`** → Two cases. (a) `config.metrics.log_path` is unset — Phase 0 should now auto-add the block on first run; if it didn't, check the announce for `Metrics config: AUTO-ADDED` or `Metrics config: PATCH SKIPPED — <reason>`. (b) Block is set but Phase 4.11 silently skipped emission — the final announce MUST include `Metrics: <count> entries in <path>`. If it doesn't, that's a bug; file an issue with the announce text.
+
+**Phase 0 announce missing `Caveman:` / `Config:` / `Metrics config:` lines** → Structural-coupling violation (the lines come exclusively from wrapper bash output, never composed). If any is absent in the announce, the orchestrator skipped Phase 0 Step 2 or Step 4 auto-init / Step 1 patch. See anti-patterns §19b (caveman) and §19c (config / metrics) in [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md).
 
 **`gh pr checks` times out** → You probably set `ci.required: true` but your repo doesn't have actual CI workflows running. Either set `ci.required: false` or wire up `.github/workflows/`.
 
@@ -314,7 +347,9 @@ Pass these in the task argument:
 
 ## Status
 
-`v0.1.0` — early release. The architecture is stable; metrics-driven skill iteration is in progress. Expect Tier 1 metrics schema to evolve.
+`v0.5.0` released + active `[Unreleased]` cycle — see [`CHANGELOG.md`](CHANGELOG.md). Architecture is stable. Recent work has hardened Phase 0 around three **structurally-coupled** wrappers (`metrics-append` / `config-init` / `config-ensure-metrics`) — every side-effect announce token (`Caveman:`, `Config:`, `Metrics config:`, `Metrics:`) comes from a bash variable that the announce literally interpolates, so skipping the side-effect physically prevents emitting a fake announce line. Production runs surface the divergence as visible bugs rather than silent skips.
+
+Tier-1 metrics schema settled in v0.5.0; expect minor field additions but no breaking changes. Plugin substrate continues to evolve (the recommended plugin list above was rebuilt in May 2026 after a phantom `frontend-excellence` reference was identified and replaced with real `ui-design` + `javascript-typescript` from the wshobson marketplace).
 
 ## Uninstall
 
