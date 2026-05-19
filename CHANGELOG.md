@@ -4,6 +4,30 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Docs — replace phantom `frontend-excellence` plugin with real `ui-design` + `javascript-typescript`
+
+Production-confirmed: orchestrator on a real Next.js project hit "Specialists not available — falling back to Sonnet" because `config.specialists.frontend_*` referenced `frontend-excellence:react-specialist|component-architect|frontend-optimizer`, but **no public marketplace ships a `frontend-excellence` plugin** — it was an aspirational placeholder that propagated from this README + the multi-repo example config to user configs. Verified by searching `anthropics/claude-plugins-official` (35 plugins, no match) and `wshobson/agents` (81 plugins, no match), and by github code-search across the public ecosystem.
+
+#### Changed
+
+- **README.md** — Recommended-plugins section restructured: separated marketplaces (`anthropics/claude-plugins-official` + `wshobson/agents`) from plugins, added install commands (`/plugin marketplace add` + `/plugin install <name>@<marketplace>`), replaced `frontend-excellence` line with `ui-design` (3 agents — `ui-designer`, `design-system-architect`, `accessibility-expert`) and `javascript-typescript` (2 agents — `typescript-pro`, `javascript-pro`). Historical note explains the replacement.
+- **`examples/multi-repo-go-react-config.json`** — `specialists.frontend_plan` and `frontend_audit` updated to use the real substitutes. Audit roster grew to 4 (was 3) by adding `ui-design:accessibility-expert` — a11y is a strong Phase 3 audit angle for FE-heavy diffs.
+- **`skills/do/references/codeowners.md`** — example agent_map updated.
+- **`skills/do/references/config-schema.md`** — example agent_map updated.
+
+#### Substitution rationale
+
+| Original (phantom) | Replacement (real) | Closest semantic match |
+|---|---|---|
+| `frontend-excellence:react-specialist` | `ui-design:ui-designer` | UI/UX review |
+| `frontend-excellence:component-architect` | `ui-design:design-system-architect` | Design-system / component-architecture review |
+| `frontend-excellence:frontend-optimizer` | `javascript-typescript:typescript-pro` | TS-pro for type-safety + modern JS; the closest "quality optimizer" on a Next.js stack |
+| n/a (new in audit roster) | `ui-design:accessibility-expert` | a11y audit — strong Phase 3 signal for FE |
+
+#### Why this didn't bite earlier
+
+The skill's fallback ("Opus inline review when specialist not available") is silent and works correctly. Users would just see slightly less parallelism and assume that was the design. Production observation surfaced the issue when the orchestrator narrated "Specialists not available" — that string isn't even in the spec; it's what sub-agents say when `Agent(subagent_type=<missing>)` fails. The bug wasn't broken behavior, it was misleading docs.
+
 ### Phase 0.4 — auto-init: locale detection + tighter `$CONFIG_LINE` contract
 
 Production observation from the v0.3 auto-init: orchestrator ran the wrapper with default `--issue-locale en`, noticed the repo was Russian-speaking (Cyrillic in `$ARGUMENTS` + assumptions), post-edited the generated config to flip `issue_locale: en → ru`, and appended `" (patched issue_locale=ru)"` to `$CONFIG_LINE` in the announce. The patch itself was correct adaptation; the channel was wrong — `$CONFIG_LINE` is meant to be exactly what the wrapper emitted, augmenting it with free-form suffixes breaks structural coupling and sets precedent for arbitrary post-edits.

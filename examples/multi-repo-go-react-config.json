@@ -65,9 +65,9 @@
       "database-design:database-architect"
     ],
     "frontend_plan": [
-      "frontend-excellence:react-specialist",
-      "frontend-excellence:component-architect",
-      "frontend-excellence:frontend-optimizer"
+      "ui-design:design-system-architect",
+      "ui-design:ui-designer",
+      "javascript-typescript:typescript-pro"
     ],
     "backend_audit": [
       "code-refactoring:code-reviewer",
@@ -76,8 +76,9 @@
     ],
     "frontend_audit": [
       "code-refactoring:code-reviewer",
-      "frontend-excellence:react-specialist",
-      "pr-review-toolkit:silent-failure-hunter"
+      "ui-design:ui-designer",
+      "pr-review-toolkit:silent-failure-hunter",
+      "ui-design:accessibility-expert"
     ],
     "migration_audit": [
       "database-design:database-architect"

@@ -134,7 +134,7 @@ All other fields are optional; missing fields fall back to defaults documented b
   "codeowners": {
     "enabled": true,
     "paths": [".github/CODEOWNERS", ".gitlab/CODEOWNERS", "docs/CODEOWNERS"],
-    "agent_map": { "@team-frontend": "frontend-excellence:react-specialist", "@team-platform": "backend-development:backend-architect" }
+    "agent_map": { "@team-frontend": "ui-design:ui-designer", "@team-platform": "backend-development:backend-architect" }
   },
 
   "wip_limit": null,

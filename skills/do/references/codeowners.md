@@ -56,14 +56,14 @@ CODEOWNERS resolves to: @backend-team, @frontend-team, @data-team
 
 config.codeowners.agent_map:
   @backend-team  → backend-development:backend-architect
-  @frontend-team → frontend-excellence:react-specialist
+  @frontend-team → ui-design:ui-designer
   @data-team     → database-design:database-architect
 
 Specialist auditor set =
   config.specialists.backend_audit (e.g. code-reviewer)
   + backend-development:backend-architect (from CODEOWNERS @backend-team)
   + config.specialists.frontend_audit (e.g. code-reviewer)
-  + frontend-excellence:react-specialist (from CODEOWNERS @frontend-team)
+  + ui-design:ui-designer (from CODEOWNERS @frontend-team)
   + database-design:database-architect (from migration_audit AND @data-team — dedup)
   → run all in parallel
 ```

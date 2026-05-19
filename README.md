@@ -225,15 +225,29 @@ Why install caveman first: SessionStart hooks fire at session boot; if you insta
 
 ## Recommended Claude Code plugins for Phase 3 specialist review
 
-The skill uses `subagent_type` strings from these plugins for parallel specialist review (Phase 2 plan review, Phase 3.6 audit). All optional — without them, Opus does inline review:
+The skill uses `subagent_type` strings from these plugins for parallel specialist review (Phase 2 plan review, Phase 3.6 audit). All optional — without them, Opus does inline review.
 
-- `backend-development` — backend-architect, security-auditor
-- `frontend-excellence` — react-specialist, component-architect, frontend-optimizer
-- `database-design` — database-architect (zero-downtime migration audit)
-- `code-refactoring` — code-reviewer
-- `pr-review-toolkit` — silent-failure-hunter
+**Marketplaces** (add once via `/plugin marketplace add <repo>`):
 
-If a referenced agent isn't installed, the skill falls back gracefully (no error, just no parallel specialist for that scope).
+| Marketplace | Source |
+|---|---|
+| `claude-plugins-official` | [`anthropics/claude-plugins-official`](https://github.com/anthropics/claude-plugins-official) |
+| `claude-code-workflows` | [`wshobson/agents`](https://github.com/wshobson/agents) |
+
+**Plugins** (install via `/plugin install <name>@<marketplace>`):
+
+| Plugin | Marketplace | Agents used by /do |
+|---|---|---|
+| `backend-development` | wshobson | `backend-architect`, `security-auditor` |
+| `code-refactoring` | wshobson | `code-reviewer` |
+| `database-design` | wshobson | `database-architect` (zero-downtime migration audit) |
+| `ui-design` | wshobson | `ui-designer`, `design-system-architect`, `accessibility-expert` |
+| `javascript-typescript` | wshobson | `typescript-pro`, `javascript-pro` |
+| `pr-review-toolkit` | anthropic-official | `silent-failure-hunter` |
+
+If a referenced plugin isn't installed, the skill falls back gracefully (no error, just no parallel specialist for that scope — Opus does inline review).
+
+> **Historical note:** earlier versions of this README listed `frontend-excellence:react-specialist|component-architect|frontend-optimizer`, but no public marketplace actually ships that plugin (it was an aspirational placeholder). The closest functional substitute is `ui-design` (wshobson) for design-system/UX/a11y review + `javascript-typescript` for TS-pro coverage on Next.js/React stacks. Example configs and CHANGELOG were updated accordingly.
 
 ## Required tooling
 
