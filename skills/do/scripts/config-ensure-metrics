@@ -1,0 +1,133 @@
+#!/bin/bash
+# config-ensure-metrics — the ONLY supported way to add a `metrics` block to
+# an EXISTING `.claude/do/config.json` when Phase 0 Step 1 loaded a config
+# that's missing telemetry settings.
+#
+# Why a wrapper (not in-doc bash + Edit tool): same lesson as metrics-append
+# and config-init. Mutating a config file from sub-agent context is exactly
+# the place where free-form JSON manipulation produces inconsistent shapes,
+# corrupts the file, or skips schema validation. This wrapper:
+#   - reads the existing config
+#   - idempotency: if `metrics` block already present, exits 0 without writing
+#   - if missing: deep-merges the documented default tier-1 preset
+#   - re-validates the patched config against config.schema.json
+#   - atomic write (tmp + rename)
+#   - emits the canonical announce line on stdout
+#
+# Direct Edit/Write against config.json from Phase 0 to add metrics is an
+# anti-pattern (same §19c rule as initial creation).
+#
+# Usage:
+#   config-ensure-metrics --config /path/to/.claude/do/config.json
+#
+# Exit codes:
+#   0  success; stdout: "Metrics config: ALREADY CONFIGURED" | "Metrics config: AUTO-ADDED to <path>"
+#   1  rejected (missing arg, invalid JSON, refused context, schema fail); stderr: "REJECT <reason>"
+#   2  I/O failure (could not read/write); stderr: "IOFAIL <reason>"
+
+set -euo pipefail
+
+die() { echo "REJECT $*" >&2; exit 1; }
+iofail() { echo "IOFAIL $*" >&2; exit 2; }
+
+CONFIG_PATH=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config) CONFIG_PATH="$2"; shift 2 ;;
+    *) die "unknown flag: $1" ;;
+  esac
+done
+
+[ -n "$CONFIG_PATH" ] || die "--config required"
+[ -f "$CONFIG_PATH" ] || die "--config not a file: $CONFIG_PATH"
+
+# Refuse to mutate the senior-by-default repo's own config (defense in depth —
+# this script shouldn't be called for the skill source repo, but if invoked
+# accidentally from a misconfigured worktree, refuse rather than corrupt).
+CONFIG_DIR="$(cd "$(dirname "$CONFIG_PATH")" && pwd -P)"
+# .claude/do/config.json → repo root is CONFIG_DIR/../..
+REPO_ROOT="$(cd "$CONFIG_DIR/../.." && pwd -P)"
+if [ -f "$REPO_ROOT/skills/do/SKILL.md" ]; then
+  die "refuse to patch config inside senior-by-default itself"
+fi
+
+command -v jq >/dev/null 2>&1 || die "jq not installed (required for config patch)"
+
+# Validate existing JSON parses
+jq -e . "$CONFIG_PATH" >/dev/null 2>&1 || die "existing config is not valid JSON: $CONFIG_PATH"
+
+# Idempotency check: the `metrics` KEY is present (even if explicitly null).
+# - `metrics: {...}` → user has metrics configured, leave alone
+# - `metrics: null` → user EXPLICITLY opted out, leave alone (respect intent)
+# - key absent → patch in default preset
+HAS_METRICS_KEY="$(jq -r 'has("metrics")' "$CONFIG_PATH")"
+if [ "$HAS_METRICS_KEY" = "true" ]; then
+  METRICS_TYPE="$(jq -r '.metrics | type' "$CONFIG_PATH")"
+  if [ "$METRICS_TYPE" = "null" ]; then
+    echo "Metrics config: EXPLICIT OPT-OUT in $CONFIG_PATH (metrics: null)"
+  else
+    echo "Metrics config: ALREADY CONFIGURED in $CONFIG_PATH"
+  fi
+  exit 0
+fi
+
+# --- patch: add documented default metrics block ----------------------------
+
+METRICS_BLOCK="$(jq -n '{
+  log_path: "~/.claude/do/metrics/{repo_slug}.jsonl",
+  include_phase_durations: true,
+  tier: 1,
+  capture_failure_details: true,
+  capture_self_review_calibration: true,
+  capture_specialist_iterations: true,
+  max_string_length: 500
+}')" || iofail "jq compose failed"
+
+# Merge: add `metrics` key. Preserve original key order as much as possible
+# (jq's + operator puts new keys at the end, which is fine — JSON doesn't
+# guarantee key order anyway, but visually appending is what users expect).
+# Also stamp _meta with patch provenance.
+NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+PATCHED_JSON="$(jq \
+  --arg now "$NOW" \
+  --argjson metrics "$METRICS_BLOCK" \
+  '. + {metrics: $metrics}
+   | ._meta = ((._meta // {}) + {
+       last_patched_by: "senior-by-default config-ensure-metrics",
+       last_patched_at: $now,
+       last_patch_added: "metrics block (tier-1 default)"
+     })' "$CONFIG_PATH")" || iofail "jq patch failed"
+
+# Schema validate the patched config before writing
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCHEMA_PATH="$SCRIPT_DIR/../references/config.schema.json"
+
+if [ -f "$SCHEMA_PATH" ] && command -v python3 >/dev/null 2>&1 \
+   && python3 -c "import jsonschema" 2>/dev/null; then
+  if ! printf '%s' "$PATCHED_JSON" | SCHEMA_PATH="$SCHEMA_PATH" python3 -c '
+import sys, os, json, jsonschema
+schema = json.load(open(os.environ["SCHEMA_PATH"]))
+data = json.loads(sys.stdin.read())
+try:
+    jsonschema.validate(data, schema)
+except jsonschema.ValidationError as e:
+    print(f"schema validation failed: {e.message} at {list(e.absolute_path)}", file=sys.stderr)
+    sys.exit(1)
+' 2>/tmp/config-ensure-metrics-err.$$; then
+    err="$(cat /tmp/config-ensure-metrics-err.$$ 2>/dev/null || echo "unknown")"
+    rm -f /tmp/config-ensure-metrics-err.$$
+    die "patched config failed schema gate: $err"
+  fi
+  rm -f /tmp/config-ensure-metrics-err.$$
+fi
+
+# Atomic write (tmp + rename in same dir to avoid cross-fs rename failure)
+TMP="${CONFIG_PATH}.tmp.$$"
+trap 'rm -f "$TMP"' EXIT
+printf '%s\n' "$PATCHED_JSON" > "$TMP" || iofail "could not write $TMP"
+mv -- "$TMP" "$CONFIG_PATH" || iofail "could not rename $TMP → $CONFIG_PATH"
+trap - EXIT
+
+echo "Metrics config: AUTO-ADDED to $CONFIG_PATH"

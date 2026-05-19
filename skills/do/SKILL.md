@@ -103,6 +103,7 @@ Recognize free-form (accept natural-language equivalents too):
 | `--no-caveman` | Skip companion-skill detection for this task |
 | `--no-config-init` | Skip Phase 0 auto-init of `.claude/do/config.json` when missing (use defaults, write nothing) |
 | `--no-specialists` | Auto-init config WITHOUT the default specialists preset (Opus inline review fallback for all groups) |
+| `--no-metrics` | Skip telemetry auto-config — Step 1 won't patch existing configs missing `metrics`, Step 4 auto-init won't include the preset |
 
 ### Implementer override semantics
 

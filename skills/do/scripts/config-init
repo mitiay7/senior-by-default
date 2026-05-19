@@ -22,6 +22,7 @@
 #     [--stack "Python (FastAPI)"] \
 #     [--issue-locale en] \
 #     [--specialists default|none]   (default: default — emits recommended preset)
+#     [--metrics default|none]       (default: default — emits tier-1 metrics preset)
 #
 # Exit codes:
 #   0  written successfully; stdout: "Config: AUTO-GENERATED → <path>"
@@ -39,6 +40,7 @@ TRACKER_REPO=""
 STACK=""
 ISSUE_LOCALE="en"
 SPECIALISTS="default"   # default | none
+METRICS="default"       # default | none
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -48,6 +50,7 @@ while [ $# -gt 0 ]; do
     --stack)         STACK="$2";         shift 2 ;;
     --issue-locale)  ISSUE_LOCALE="$2";  shift 2 ;;
     --specialists)   SPECIALISTS="$2";   shift 2 ;;
+    --metrics)       METRICS="$2";       shift 2 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
@@ -64,6 +67,10 @@ esac
 case "$SPECIALISTS" in
   default|none) ;;
   *) die "--specialists must be default|none (got: $SPECIALISTS)" ;;
+esac
+case "$METRICS" in
+  default|none) ;;
+  *) die "--metrics must be default|none (got: $METRICS)" ;;
 esac
 if [ "$TRACKER" != "none" ] && [ -z "$TRACKER_REPO" ]; then
   die "--tracker-repo required when --tracker=$TRACKER (expected owner/repo)"
@@ -142,24 +149,48 @@ else
   SPECIALISTS_NOTE=" The specialists block references plugins from two marketplaces — install once via Claude Code: \`/plugin marketplace add anthropics/claude-plugins-official\` + \`/plugin marketplace add wshobson/agents\`, then \`/plugin install backend-development@claude-code-workflows\` (also: code-refactoring, database-design, ui-design, javascript-typescript — all @claude-code-workflows; plus pr-review-toolkit@claude-plugins-official). If any plugin isn't installed, /do falls back to Opus inline review for that specialist group (no error)."
 fi
 
+# Default metrics preset — matches config-schema.md documented defaults.
+# `log_path` uses {repo_slug} placeholder resolved by Phase 4.11 at write time.
+# Writes to ~/.claude/do/metrics/ (cross-project home location) so a single
+# daily-report scanner sees all repos' telemetry.
+if [ "$METRICS" = "none" ]; then
+  METRICS_BLOCK="null"
+  METRICS_NOTE=""
+else
+  METRICS_BLOCK="$(jq -n '{
+    log_path: "~/.claude/do/metrics/{repo_slug}.jsonl",
+    include_phase_durations: true,
+    tier: 1,
+    capture_failure_details: true,
+    capture_self_review_calibration: true,
+    capture_specialist_iterations: true,
+    max_string_length: 500
+  }')"
+  METRICS_NOTE=" Metrics tier-1 preset: JSONL log at ~/.claude/do/metrics/<repo-slug>.jsonl (cross-project, scannable by a daily report). Captures phase durations, failure details, self-review calibration, specialist iterations. Opt out per-task via --no-metrics or set metrics.log_path=null to disable entirely."
+fi
+
 CONFIG_JSON="$(jq -n \
   --arg now "$NOW" \
   --arg stack "$STACK" \
   --arg locale "$ISSUE_LOCALE" \
   --arg specialists_note "$SPECIALISTS_NOTE" \
+  --arg metrics_note "$METRICS_NOTE" \
   --argjson tracker "$TRACKER_BLOCK" \
   --argjson specialists "$SPECIALISTS_BLOCK" \
+  --argjson metrics "$METRICS_BLOCK" \
   '{
      version: 1,
      _meta: {
        auto_generated_by: "senior-by-default Phase 0 auto-init",
        auto_generated_at: $now,
        auto_generated_for_stack: ($stack | if . == "" then null else . end),
-       _setup_notes: ("Auto-init writes version + issue_tracker + issue_locale + specialists preset." + $specialists_note + " For context_doc, workspace.repos, ui_gate, acceptance_extensions, naming overrides — see examples/ in senior-by-default repo and extend this file. /do re-reads on every run; no reload needed.")
+       _setup_notes: ("Auto-init writes version + issue_tracker + issue_locale + specialists preset + metrics preset." + $specialists_note + $metrics_note + " For context_doc, workspace.repos, ui_gate, acceptance_extensions, naming overrides — see examples/ in senior-by-default repo and extend this file. /do re-reads on every run; no reload needed.")
      },
      issue_tracker: $tracker,
      issue_locale: $locale
-   } + (if $specialists == null then {} else {specialists: $specialists} end)')" || iofail "jq compose failed"
+   }
+   + (if $specialists == null then {} else {specialists: $specialists} end)
+   + (if $metrics == null then {} else {metrics: $metrics} end)')" || iofail "jq compose failed"
 
 # --- schema validation (best-effort: skip if tooling missing) ---------------
 

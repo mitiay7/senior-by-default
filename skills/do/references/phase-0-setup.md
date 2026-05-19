@@ -24,7 +24,20 @@ Walk CWD upward for `.claude/do/config.json`. First match wins. Defaults defined
   CONFIG_FOUND=1
   CONFIG_LINE="Config: LOADED $CONFIG_PATH"
   ```
-- **None** → set `CONFIG_FOUND=0`. Use in-memory defaults for now. **Auto-init is DEFERRED to the end of Step 4** (needs stack-detect output to populate `_meta.auto_generated_for_stack`). `CONFIG_LINE` will be set there.
+
+  Then — **ensure telemetry settings**. If `--no-metrics` not in `$ARGUMENTS`, **run this bash verbatim** (do not Edit the file by hand, do not compose `$METRICS_CONFIG_LINE` yourself — see [anti-patterns §19c](anti-patterns.md)):
+  ```bash
+  METRICS_CONFIG_LINE="$(~/.claude/skills/do/scripts/config-ensure-metrics --config "$CONFIG_PATH" 2>&1)" \
+    || METRICS_CONFIG_LINE="Metrics config: PATCH SKIPPED — $METRICS_CONFIG_LINE"
+  echo "$METRICS_CONFIG_LINE"
+  ```
+  Wrapper is idempotent — 3 outcomes, all via wrapper stdout, never composed:
+  - `Metrics config: ALREADY CONFIGURED in <path>` — `metrics` block exists, no change
+  - `Metrics config: EXPLICIT OPT-OUT in <path> (metrics: null)` — user set null explicitly, respected
+  - `Metrics config: AUTO-ADDED to <path>` — key was absent, default tier-1 preset patched in, `_meta` stamped with `last_patched_by`/`last_patched_at`/`last_patch_added`
+
+  If `--no-metrics` was passed → skip this block, set `METRICS_CONFIG_LINE="Metrics config: SKIPPED (--no-metrics)"`.
+- **None** → set `CONFIG_FOUND=0`. Use in-memory defaults for now. **Auto-init is DEFERRED to the end of Step 4** (needs stack-detect output to populate `_meta.auto_generated_for_stack`). `CONFIG_LINE` and `METRICS_CONFIG_LINE` will be set there.
 
 **Conditional, inline**:
 - `config.wip_limit` set → count `git worktree list` + open issues assigned to user; warn if sum > limit. Opt-in only; default disabled. (Kanban WIP limits derive from human team context-switching cost; in AI-orchestrated workflows with isolated agent contexts, parallel sessions are usually a strength — leave unset unless you specifically want a soft ceiling.)
@@ -120,6 +133,14 @@ case "$ARGUMENTS" in
   *)                  SPECIALISTS="default" ;;
 esac
 
+# Metrics preset: by default emit the documented tier-1 telemetry block
+# (~/.claude/do/metrics/<repo-slug>.jsonl + phase durations + failure
+# details + self-review calibration). Opt-out: --no-metrics in $ARGUMENTS.
+case "$ARGUMENTS" in
+  *--no-metrics*) METRICS="none" ;;
+  *)              METRICS="default" ;;
+esac
+
 # Call the wrapper. Captures full stdout/stderr into CONFIG_LINE — the wrapper
 # itself emits the canonical line on success ("Config: AUTO-GENERATED → …"),
 # and "REJECT …" / "IOFAIL …" on the skip paths (already exists, refused
@@ -127,14 +148,29 @@ esac
 # do NOT append annotations like "(patched ...)" to it (see §19c).
 if [ "$TRACKER" = "none" ]; then
   CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
-    --repo-root "$REPO" --tracker none --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" 2>&1)" \
+    --repo-root "$REPO" --tracker none --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" --metrics "$METRICS" 2>&1)" \
     || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
 else
   CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
-    --repo-root "$REPO" --tracker "$TRACKER" --tracker-repo "$TRACKER_REPO" --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" 2>&1)" \
+    --repo-root "$REPO" --tracker "$TRACKER" --tracker-repo "$TRACKER_REPO" --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" --metrics "$METRICS" 2>&1)" \
     || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
 fi
 echo "$CONFIG_LINE"
+
+# Auto-init wrote metrics inline (per --metrics flag above). Mirror that
+# fact into $METRICS_CONFIG_LINE so the announce has a uniform tell for
+# the metrics state regardless of which Step set it (Step 1 found-case
+# patches via config-ensure-metrics; Step 4 auto-init bakes it in).
+case "$CONFIG_LINE" in
+  "Config: AUTO-GENERATED"*)
+    if [ "$METRICS" = "default" ]; then
+      METRICS_CONFIG_LINE="Metrics config: INCLUDED in auto-init"
+    else
+      METRICS_CONFIG_LINE="Metrics config: SKIPPED (--no-metrics)"
+    fi ;;
+  *) METRICS_CONFIG_LINE="Metrics config: N/A (auto-init skipped)" ;;
+esac
+echo "$METRICS_CONFIG_LINE"
 ```
 
 Locale detection rationale: keeps the wrapper as the single source of truth for `$CONFIG_LINE`. If you notice locale-relevant context AFTER the wrapper ran (e.g. README turns out to be in another language than `$ARGUMENTS`), do NOT post-edit + annotate — instead, either edit the file directly in a separate observable step (and don't touch `$CONFIG_LINE`), or rerun with `--issue-locale=<code>` after deleting the auto-generated file. The Phase 0 announce must reflect what the wrapper actually wrote in one atomic call.
@@ -217,6 +253,7 @@ After all 6 steps pass:
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
   {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
   {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose}
+  {$METRICS_CONFIG_LINE — output of Step 1 config-ensure-metrics or Step 4 mirror (ALREADY CONFIGURED | EXPLICIT OPT-OUT | AUTO-ADDED | INCLUDED in auto-init | SKIPPED | PATCH SKIPPED | N/A), verbatim — DO NOT compose}
   WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
   [+ if assumptions recorded → "Assumptions: {short list}"]
   [+ if simpler path chosen → "Tradeoff: {short explanation of narrower implementation}"]
@@ -224,10 +261,12 @@ After all 6 steps pass:
   [+ if postmortem context → "ℹ Postmortem section will be added to issue"]
 ```
 
-`Models:`, `$CAVEMAN_LINE`, and `$CONFIG_LINE` are **mandatory** — they make model usage, companion-skill state, and config state explicit so users see (and metrics record) what the orchestrator decided.
+`Models:`, `$CAVEMAN_LINE`, `$CONFIG_LINE`, and `$METRICS_CONFIG_LINE` are **mandatory** — they make model usage, companion-skill state, config state, and telemetry state explicit so users see (and metrics record) what the orchestrator decided.
 
-The two structural-coupling lines (`$CAVEMAN_LINE`, `$CONFIG_LINE`) come **only** from the bash blocks in Step 2 / Step 4 auto-init respectively. The spec deliberately contains no copyable templates of their full form — if you "know what the line looks like" without running the bash, you're guessing. This is the same structural-enforcement pattern as `$METRICS_LINE` in Phase 4.13 (see [`phase-4-finalize.md`](phase-4-finalize.md) and [anti-patterns §19, §19a, §19b, §19c](anti-patterns.md)).
+The three structural-coupling lines (`$CAVEMAN_LINE`, `$CONFIG_LINE`, `$METRICS_CONFIG_LINE`) come **only** from the bash blocks in Step 2 / Step 4 / Step 1 wrapper respectively. The spec deliberately contains no copyable templates of their full form — if you "know what the line looks like" without running the bash, you're guessing. This is the same structural-enforcement pattern as `$METRICS_LINE` in Phase 4.13 (see [`phase-4-finalize.md`](phase-4-finalize.md) and [anti-patterns §19, §19a, §19b, §19c](anti-patterns.md)).
 
 Suppression paths:
 - `--no-caveman` → Step 2 skipped, `$CAVEMAN_LINE=""`, line omitted from announce.
 - `--no-config-init` → Step 4 auto-init skipped, `$CONFIG_LINE="Config: NONE — using defaults (--no-config-init)"`, line still printed.
+- `--no-specialists` → Step 4 auto-init writes config WITHOUT `specialists` block; doesn't affect $CONFIG_LINE.
+- `--no-metrics` → Step 1 patch + Step 4 auto-init both skip metrics. `$METRICS_CONFIG_LINE="Metrics config: SKIPPED (--no-metrics)"`.

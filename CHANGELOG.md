@@ -4,6 +4,50 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 0.6 — telemetry auto-config (new + existing paths)
+
+Sibling change to the specialists preset (below). Same friction: every new project gets a config without `metrics` block → Phase 4.11 silently no-ops (per spec line 205: "unset/null log_path → silently skip"), and the user has no telemetry until they remember to add the block by hand. Worse, EXISTING configs that pre-date the metrics rollout (or were copied from minimal example) also lack the block — Phase 0 had no way to surface or remediate this.
+
+Fix covers both paths:
+- **New configs (Step 4 auto-init)**: `config-init` now emits the documented tier-1 `metrics` preset by default (same flag pattern as `--specialists` — opt-out via `--no-metrics`).
+- **Existing configs (Step 1 found-case)**: new `config-ensure-metrics` wrapper runs on every `/do` against a found config. If `metrics` key is absent → patches in the default preset + stamps `_meta` with `last_patched_*` provenance. If `metrics: {...}` → leaves alone. If `metrics: null` (explicit opt-out) → respects.
+
+#### Added
+
+- **`skills/do/scripts/config-ensure-metrics`** — bash wrapper, idempotent, named-arg CLI (`--config <path>`). Three outcomes via stdout (same structural-coupling pattern as `metrics-append` / `config-init`):
+  - `Metrics config: ALREADY CONFIGURED in <path>` — `metrics: {object}` present, no change
+  - `Metrics config: EXPLICIT OPT-OUT in <path> (metrics: null)` — key present with null value, user intent respected
+  - `Metrics config: AUTO-ADDED to <path>` — key was absent, default tier-1 preset patched in via atomic tmp+rename
+  - Refuses: missing `--config`, invalid JSON, senior-by-default repo itself (defense-in-depth — config dir → repo root walk + skill-source check), `jq` not installed. Schema-validates patched config against `config.schema.json` before write if `jsonschema` available.
+- **`config-init` — new `--metrics {default|none}` flag** (default: `default`). When `default`, emits the documented tier-1 preset alongside specialists. `_setup_notes` extended to describe metrics behavior.
+
+#### Changed
+
+- **`phase-0-setup.md` Step 1 (found-case)** — added telemetry-ensure block: `config-ensure-metrics` called on the loaded config unless `--no-metrics` in `$ARGUMENTS`. `$METRICS_CONFIG_LINE` captures wrapper stdout (3 forms above + `SKIPPED (--no-metrics)` + `PATCH SKIPPED — <reason>` for refuse paths).
+- **`phase-0-setup.md` Step 4 auto-init bash** — detects `--no-metrics` in `$ARGUMENTS`, passes `--metrics default|none` to `config-init`. After wrapper call, mirrors metrics state into `$METRICS_CONFIG_LINE` (`INCLUDED in auto-init` / `SKIPPED (--no-metrics)` / `N/A (auto-init skipped)`) so the announce token is uniformly set regardless of which Step set it.
+- **`phase-0-setup.md` Announce template** — added mandatory `$METRICS_CONFIG_LINE` placeholder alongside `$CAVEMAN_LINE` / `$CONFIG_LINE`. Same "DO NOT compose" guard.
+- **`SKILL.md` advanced flags** — added `--no-metrics`.
+
+#### The preset (matches `config-schema.md` documented defaults)
+
+```json
+"metrics": {
+  "log_path": "~/.claude/do/metrics/{repo_slug}.jsonl",
+  "include_phase_durations": true,
+  "tier": 1,
+  "capture_failure_details": true,
+  "capture_self_review_calibration": true,
+  "capture_specialist_iterations": true,
+  "max_string_length": 500
+}
+```
+
+Home-based log location (not in-repo) means a single `daily-report.sh` scanner can see telemetry from every project. `{repo_slug}` placeholder resolved by Phase 4.11 at write time per [`phase-4-finalize.md`](skills/do/references/phase-4-finalize.md).
+
+#### Why a separate wrapper for the patch path (not extend `config-init`)
+
+`config-init` refuses-on-exists by design — that contract is load-bearing (prevents accidental overwrite of user customizations). Adding a `--patch-mode` flag would erode it. Single-purpose `config-ensure-metrics` keeps the two operations cleanly separated: create-or-fail vs ensure-section-or-noop. Each operation is one wrapper, one announce line, one anti-pattern bucket.
+
 ### Phase 0.5 — `config-init` ships specialists preset by default
 
 Companion change to the `frontend-excellence → ui-design` docs swap below. With the README + examples updated, the natural next question is: why does the auto-generated config still omit `specialists` entirely? Every new project gets a minimum-viable config and the user has to copy a snippet from `examples/` to wire up Phase 3 specialist review. The friction is exactly the same one that produced the original "no config" annoyance.
