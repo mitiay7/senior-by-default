@@ -112,6 +112,14 @@ case "$ARGUMENTS" in
      fi ;;
 esac
 
+# Specialists preset: by default emit the recommended `specialists` block
+# (references the 6 plugins from anthropics/claude-plugins-official +
+# wshobson/agents — see README). Opt-out: --no-specialists in $ARGUMENTS.
+case "$ARGUMENTS" in
+  *--no-specialists*) SPECIALISTS="none" ;;
+  *)                  SPECIALISTS="default" ;;
+esac
+
 # Call the wrapper. Captures full stdout/stderr into CONFIG_LINE — the wrapper
 # itself emits the canonical line on success ("Config: AUTO-GENERATED → …"),
 # and "REJECT …" / "IOFAIL …" on the skip paths (already exists, refused
@@ -119,11 +127,11 @@ esac
 # do NOT append annotations like "(patched ...)" to it (see §19c).
 if [ "$TRACKER" = "none" ]; then
   CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
-    --repo-root "$REPO" --tracker none --stack "$STACK" --issue-locale "$ISSUE_LOCALE" 2>&1)" \
+    --repo-root "$REPO" --tracker none --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" 2>&1)" \
     || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
 else
   CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
-    --repo-root "$REPO" --tracker "$TRACKER" --tracker-repo "$TRACKER_REPO" --stack "$STACK" --issue-locale "$ISSUE_LOCALE" 2>&1)" \
+    --repo-root "$REPO" --tracker "$TRACKER" --tracker-repo "$TRACKER_REPO" --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" 2>&1)" \
     || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
 fi
 echo "$CONFIG_LINE"
@@ -137,7 +145,9 @@ Locale detection rationale: keeps the wrapper as the single source of truth for 
 - `config.json` already exists — refuses to overwrite (Step 1 already loaded it; this branch shouldn't execute, but defense in depth).
 - `jq` not installed — refuses with reason.
 
-The generated file is **minimum-viable**: `version + _meta + issue_tracker + issue_locale`. Specialists, `context_doc`, `workspace.repos`, `ui_gate`, `acceptance_extensions`, `naming` overrides — all left for the user to add by extending the file (the `_setup_notes` field in `_meta` points at `examples/` for templates). The file is left unstaged — user reviews and commits when ready. Subsequent `/do` runs re-read it on each Phase 0, so no reload needed after extension.
+The generated file contains: `version + _meta + issue_tracker + issue_locale + specialists` (unless `--no-specialists` passed). The specialists preset references plugins from the two recommended marketplaces (`anthropics/claude-plugins-official` + `wshobson/agents` — see [README](../../../README.md#recommended-claude-code-plugins-for-phase-3-specialist-review)). If user hasn't installed them, /do falls back to Opus inline review for that specialist group — no error. `_meta._setup_notes` in the generated file lists the exact install commands.
+
+Other config sections (`context_doc`, `workspace.repos`, `ui_gate`, `acceptance_extensions`, `naming` overrides) are left for the user to add by extending the file. The file is left unstaged — user reviews and commits when ready. Subsequent `/do` runs re-read it on each Phase 0, so no reload needed after extension.
 
 If `--no-config-init` was passed → skip this block entirely, set `CONFIG_LINE="Config: NONE — using defaults (--no-config-init)"`.
 

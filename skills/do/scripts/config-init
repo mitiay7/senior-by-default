@@ -20,7 +20,8 @@
 #     --tracker github \
 #     --tracker-repo owner/repo \
 #     [--stack "Python (FastAPI)"] \
-#     [--issue-locale en]
+#     [--issue-locale en] \
+#     [--specialists default|none]   (default: default — emits recommended preset)
 #
 # Exit codes:
 #   0  written successfully; stdout: "Config: AUTO-GENERATED → <path>"
@@ -37,6 +38,7 @@ TRACKER=""
 TRACKER_REPO=""
 STACK=""
 ISSUE_LOCALE="en"
+SPECIALISTS="default"   # default | none
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,6 +47,7 @@ while [ $# -gt 0 ]; do
     --tracker-repo)  TRACKER_REPO="$2";  shift 2 ;;
     --stack)         STACK="$2";         shift 2 ;;
     --issue-locale)  ISSUE_LOCALE="$2";  shift 2 ;;
+    --specialists)   SPECIALISTS="$2";   shift 2 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
@@ -57,6 +60,10 @@ done
 case "$TRACKER" in
   github|gitlab|none) ;;
   *) die "--tracker must be github|gitlab|none (got: $TRACKER)" ;;
+esac
+case "$SPECIALISTS" in
+  default|none) ;;
+  *) die "--specialists must be default|none (got: $SPECIALISTS)" ;;
 esac
 if [ "$TRACKER" != "none" ] && [ -z "$TRACKER_REPO" ]; then
   die "--tracker-repo required when --tracker=$TRACKER (expected owner/repo)"
@@ -98,22 +105,61 @@ else
     '{type: $t, repo: $r, required_labels: ["task"], domain_labels: []}')"
 fi
 
+# Default specialists preset — references plugins from the two recommended
+# marketplaces (anthropics/claude-plugins-official + wshobson/agents).
+# If user hasn't installed them, /do falls back to Opus inline review per
+# specialist group (no error). Setup notes below tell user how to install.
+if [ "$SPECIALISTS" = "none" ]; then
+  SPECIALISTS_BLOCK="null"
+  SPECIALISTS_NOTE=""
+else
+  SPECIALISTS_BLOCK="$(jq -n '{
+    backend_plan: [
+      "backend-development:backend-architect",
+      "backend-development:security-auditor",
+      "database-design:database-architect"
+    ],
+    frontend_plan: [
+      "ui-design:design-system-architect",
+      "ui-design:ui-designer",
+      "javascript-typescript:typescript-pro"
+    ],
+    backend_audit: [
+      "code-refactoring:code-reviewer",
+      "backend-development:backend-architect",
+      "backend-development:security-auditor"
+    ],
+    frontend_audit: [
+      "code-refactoring:code-reviewer",
+      "ui-design:ui-designer",
+      "pr-review-toolkit:silent-failure-hunter",
+      "ui-design:accessibility-expert"
+    ],
+    migration_audit: [
+      "database-design:database-architect"
+    ]
+  }')"
+  SPECIALISTS_NOTE=" The specialists block references plugins from two marketplaces — install once via Claude Code: \`/plugin marketplace add anthropics/claude-plugins-official\` + \`/plugin marketplace add wshobson/agents\`, then \`/plugin install backend-development@claude-code-workflows\` (also: code-refactoring, database-design, ui-design, javascript-typescript — all @claude-code-workflows; plus pr-review-toolkit@claude-plugins-official). If any plugin isn't installed, /do falls back to Opus inline review for that specialist group (no error)."
+fi
+
 CONFIG_JSON="$(jq -n \
   --arg now "$NOW" \
   --arg stack "$STACK" \
   --arg locale "$ISSUE_LOCALE" \
+  --arg specialists_note "$SPECIALISTS_NOTE" \
   --argjson tracker "$TRACKER_BLOCK" \
+  --argjson specialists "$SPECIALISTS_BLOCK" \
   '{
      version: 1,
      _meta: {
        auto_generated_by: "senior-by-default Phase 0 auto-init",
        auto_generated_at: $now,
        auto_generated_for_stack: ($stack | if . == "" then null else . end),
-       _setup_notes: "Auto-init writes only the minimum to unblock /do (version + issue_tracker + issue_locale). For specialists, context_doc, workspace.repos, ui_gate, acceptance_extensions, naming overrides — see examples/ in senior-by-default repo and extend this file. /do re-reads on every run; no reload needed."
+       _setup_notes: ("Auto-init writes version + issue_tracker + issue_locale + specialists preset." + $specialists_note + " For context_doc, workspace.repos, ui_gate, acceptance_extensions, naming overrides — see examples/ in senior-by-default repo and extend this file. /do re-reads on every run; no reload needed.")
      },
      issue_tracker: $tracker,
      issue_locale: $locale
-   }')" || iofail "jq compose failed"
+   } + (if $specialists == null then {} else {specialists: $specialists} end)')" || iofail "jq compose failed"
 
 # --- schema validation (best-effort: skip if tooling missing) ---------------
 

@@ -4,6 +4,34 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 0.5 — `config-init` ships specialists preset by default
+
+Companion change to the `frontend-excellence → ui-design` docs swap below. With the README + examples updated, the natural next question is: why does the auto-generated config still omit `specialists` entirely? Every new project gets a minimum-viable config and the user has to copy a snippet from `examples/` to wire up Phase 3 specialist review. The friction is exactly the same one that produced the original "no config" annoyance.
+
+Fix: auto-init now emits the recommended `specialists` preset by default, referencing the 6 real plugins from the two recommended marketplaces. The wrapper's `_setup_notes` lists the exact `/plugin install` commands so users have a self-contained install path inside the generated file. If a plugin isn't installed, /do falls back to Opus inline review for that group — same graceful-degradation behavior as before.
+
+#### Changed
+
+- **`scripts/config-init`** — new `--specialists {default|none}` flag (default: `default`). `default` emits the preset; `none` omits the block. `_setup_notes` text dynamically extended with install hint when preset enabled.
+- **`phase-0-setup.md` Step 4 auto-init bash** — detects `--no-specialists` in `$ARGUMENTS`, passes `--specialists default|none` to wrapper. Updated trailing paragraph to describe the new shape (`version + _meta + issue_tracker + issue_locale + specialists`).
+- **`SKILL.md` advanced flags** — added `--no-specialists` opt-out (alongside `--no-config-init`).
+
+#### The preset
+
+| Group | Agents |
+|---|---|
+| `backend_plan` | `backend-development:backend-architect`, `backend-development:security-auditor`, `database-design:database-architect` |
+| `frontend_plan` | `ui-design:design-system-architect`, `ui-design:ui-designer`, `javascript-typescript:typescript-pro` |
+| `backend_audit` | `code-refactoring:code-reviewer`, `backend-development:backend-architect`, `backend-development:security-auditor` |
+| `frontend_audit` | `code-refactoring:code-reviewer`, `ui-design:ui-designer`, `pr-review-toolkit:silent-failure-hunter`, `ui-design:accessibility-expert` |
+| `migration_audit` | `database-design:database-architect` |
+
+Universal across stacks — Phase 3 routing already gates by diff content (frontend_audit fires on FE diff, backend on BE diff, migration_audit on migration presence). Users on pure-FE or pure-BE projects pay nothing for the unused groups.
+
+#### Why bake it into the wrapper
+
+Same reason as the original `config-init` design (see CHANGELOG below): keep the wrapper as the single source of truth for what auto-init writes. If users hand-edit the generated file to add specialists, that's expected; if downstream tooling has to guess "did /do write specialists or did the user add them later?", it can't tell. Wrapper-emitted preset solves both — discoverable defaults + observable provenance via `_meta.auto_generated_by`.
+
 ### Docs — replace phantom `frontend-excellence` plugin with real `ui-design` + `javascript-typescript`
 
 Production-confirmed: orchestrator on a real Next.js project hit "Specialists not available — falling back to Sonnet" because `config.specialists.frontend_*` referenced `frontend-excellence:react-specialist|component-architect|frontend-optimizer`, but **no public marketplace ships a `frontend-excellence` plugin** — it was an aspirational placeholder that propagated from this README + the multi-repo example config to user configs. Verified by searching `anthropics/claude-plugins-official` (35 plugins, no match) and `wshobson/agents` (81 plugins, no match), and by github code-search across the public ecosystem.

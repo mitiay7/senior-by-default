@@ -102,6 +102,7 @@ Recognize free-form (accept natural-language equivalents too):
 | `--no-affected-graph` | Run full build/test even when monorepo affected-graph detected |
 | `--no-caveman` | Skip companion-skill detection for this task |
 | `--no-config-init` | Skip Phase 0 auto-init of `.claude/do/config.json` when missing (use defaults, write nothing) |
+| `--no-specialists` | Auto-init config WITHOUT the default specialists preset (Opus inline review fallback for all groups) |
 
 ### Implementer override semantics
 
