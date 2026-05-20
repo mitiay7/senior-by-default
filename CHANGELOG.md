@@ -4,6 +4,32 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 0.2 — caveman detect v3: external wrapper + probed-paths tell
+
+**Third iteration on the same fabrication.** Production confirmed today (2026-05-17, lea-web run): orchestrator announced `Caveman: NOT INSTALLED — install: curl ...` while caveman was installed at path #1. The v2 fix had moved the line template into the bash literal (the `CAVEMAN_LINE="..."` assignment) — but the literal is still visible to the orchestrator at parse time, so it copy-pasted from there without running the bash. Same root failure, one indirection deeper.
+
+v3 structural fix: detection moved to `scripts/check-caveman` wrapper. The spec now contains zero copyable form of either announce string — only `CAVEMAN_LINE="$(~/.claude/skills/do/scripts/check-caveman)"`. Plus a runtime-only **anti-fabrication tell**: the NOT-INSTALLED form includes `(probed: <P1>, <P2>, <P3>, <P4>)` — the actual paths checked, built from the wrapper's internal array, NEVER written in the spec. Orchestrator skipping the wrapper cannot include this suffix without inventing path names, which is a visible bug.
+
+#### Added
+
+- **`skills/do/scripts/check-caveman`** — zero-arg bash wrapper, exits 0 always. Two output forms:
+  - `Caveman: ACTIVE (path: <resolved-path>)` — when any of 4 candidate paths has `SKILL.md`
+  - `Caveman: NOT INSTALLED (probed: <P1>, <P2>, <P3>, <P4>) — install: curl …` — full probed-paths suffix as anti-fabrication tell
+
+#### Changed
+
+- **`phase-0-setup.md` Step 2** — replaced 13-line inline bash with 2-line wrapper invocation. Removed all prose descriptions of the canonical announce templates (only wrapper outputs them now). Explanation of WHY a wrapper (vs inline) is now part of the step text.
+- **`anti-patterns.md` §19b** — rewritten as v3 entry. Documents both 2026-05-17 production fabrications (miro-rooms + lea-web). Diagnostic clause: announce missing `(path: ...)` or `(probed: ...)` suffix → orchestrator skipped the wrapper.
+
+#### Why three iterations
+
+Each version removed the previous round's copyable surface, orchestrator pivoted to the next-most-visible literal:
+- **v1** (initial): prose bullets ("- ACTIVE → ...", "- NOT INSTALLED → ...") with full strings. Orchestrator copied from bullets.
+- **v2** (this CHANGELOG, earlier): bullets removed, strings in `CAVEMAN_LINE="..."` bash assignments. Orchestrator copied from assignments.
+- **v3** (now): wrapper-only. Spec has `$(wrapper)` invocation, zero string literals. Plus probed-paths tell makes off-line copies detectable even if a future orchestrator's prompt-cached spec is stale.
+
+The general lesson: **structural coupling works only if there's no literal copy of the output in the spec for the agent to read.** Wrappers achieve this; inline bash with output-string literals does not.
+
 ### Phase 0.6 — telemetry auto-config (new + existing paths)
 
 Sibling change to the specialists preset (below). Same friction: every new project gets a config without `metrics` block → Phase 4.11 silently no-ops (per spec line 205: "unset/null log_path → silently skip"), and the user has no telemetry until they remember to add the block by hand. Worse, EXISTING configs that pre-date the metrics rollout (or were copied from minimal example) also lack the block — Phase 0 had no way to surface or remediate this.

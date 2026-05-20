@@ -45,31 +45,22 @@ Walk CWD upward for `.claude/do/config.json`. First match wins. Defaults defined
 
 ### 2. Companion-skill detect — caveman
 
-Skip if `--no-caveman` in `$ARGUMENTS` (set `CAVEMAN_LINE=""` in that case — announce will omit the line). Otherwise — **run this bash verbatim** (do not paraphrase, do not "check mentally", do not compose the announce line yourself — see [anti-patterns §19b](anti-patterns.md)):
+Skip if `--no-caveman` in `$ARGUMENTS` (set `CAVEMAN_LINE=""` — announce will omit the line). Otherwise — **invoke the wrapper verbatim** (do not paraphrase, do not "check mentally", do not compose the announce line yourself — see [anti-patterns §19b](anti-patterns.md)):
 
 ```bash
-CAVEMAN_STATUS="NOT INSTALLED"
-unset CAVEMAN_PATH
-for p in \
-  "$HOME/.claude/skills/caveman" \
-  "$HOME/.claude/plugins/cache/caveman" \
-  "$HOME/.claude/plugins/cache/JuliusBrussee/caveman" \
-  "$HOME/.agents/skills/caveman"; do
-  if [ -f "$p/SKILL.md" ]; then CAVEMAN_STATUS="ACTIVE"; CAVEMAN_PATH="$p"; break; fi
-done
-if [ "$CAVEMAN_STATUS" = "ACTIVE" ]; then
-  CAVEMAN_LINE="Caveman: ACTIVE (path: $CAVEMAN_PATH)"
-else
-  CAVEMAN_LINE="Caveman: NOT INSTALLED — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash"
-fi
+CAVEMAN_LINE="$(~/.claude/skills/do/scripts/check-caveman)"
 echo "$CAVEMAN_LINE"
 ```
 
-**The bash builds the FULL announce line, including the install hint.** The spec deliberately contains no other copyable template of either form — if you "know what the line looks like" without running the bash, you're guessing, and Phase 0 will emit a fabricated value (production-confirmed failure mode, same as `metrics-append` bypass). The Phase 0 announce template at the bottom references `$CAVEMAN_LINE` literally; no `$CAVEMAN_LINE` = no announce line = visible bug.
+**The wrapper is the single source of truth for the line.** Possible outputs (the spec deliberately does NOT spell out the templates — they live only in the wrapper script):
+- **ACTIVE form** — includes the resolved install path. Different per machine; orchestrator cannot guess between `~/.claude/skills/caveman`, `~/.agents/skills/caveman`, etc.
+- **NOT INSTALLED form** — includes a `(probed: <P1>, <P2>, <P3>, <P4>)` suffix listing every path the wrapper actually checked. This suffix is the **anti-fabrication tell**: the path list is built from the wrapper's internal array, never written in the spec, so orchestrator skipping the wrapper cannot include it without inventing path names (which is a detectable visible-bug).
 
-Path-list rationale: positions 1–3 are the canonical Claude Code install locations (`curl … install.sh` script, plugin cache by short name, plugin cache by owner/repo). Position 4 covers the agent-skill manager which installs to `~/.agents/skills/` and may or may not also symlink into `~/.claude/skills/` depending on the user's setup. `[ -f "$p/SKILL.md" ]` (not `[ -d "$p" ]`) — resolves symlinks correctly and rejects empty directories from failed installs.
+Why a wrapper (not inline bash like v1/v2): both prior versions had the announce-line template visible in the bash literal inside the spec. Orchestrators systematically read the template and copy-pasted it into the announce **without running the bash** (production-confirmed 2026-05-17, lea-web run: announced `Caveman: NOT INSTALLED — install: curl ...` while caveman was installed at path #1). Moving the strings into a wrapper script and adding a runtime-only tell (probed-paths list) is the structural fix.
 
-When `CAVEMAN_STATUS=ACTIVE`, Sub-Agent prompts get the caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section). Caveman is **passive** (SessionStart hook); once active, all assistant output flows through compression. No runtime wrapping needed — only the prompt directive.
+If the announce contains a `Caveman:` line that lacks the `(path: ...)` suffix for ACTIVE OR the `(probed: ...)` suffix for NOT INSTALLED — orchestrator skipped the wrapper. Re-run, paste actual wrapper output.
+
+When the wrapper returns the ACTIVE form, Sub-Agent prompts get the caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section). Caveman is **passive** (SessionStart hook); once active, all assistant output flows through compression. No runtime wrapping needed — only the prompt directive.
 
 ### 3. Resolve target repo(s)
 

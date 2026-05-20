@@ -1,0 +1,54 @@
+#!/bin/bash
+# check-caveman — the ONLY supported way to produce the Phase 0 Step 2
+# `Caveman:` announce line. Wrapper script (not inline bash in spec)
+# because the v1/v2 inline-bash approach was systematically bypassed:
+# orchestrator read the spec, saw the announce line template in the
+# bash literal, and copy-pasted it into the announce WITHOUT running
+# the bash (verified case 2026-05-17: lea-web run announced "NOT
+# INSTALLED — install: curl ..." while caveman was at path #1).
+#
+# Structural enforcement: the canonical strings live ONLY here, never
+# in the spec. The spec invokes the wrapper; orchestrator can't
+# fabricate the exact output without running it because:
+#   - ACTIVE form includes the RESOLVED PATH (varies per machine,
+#     orchestrator can't guess /Users/<USER>/.agents/skills/caveman vs
+#     /Users/<USER>/.claude/skills/caveman, etc.)
+#   - NOT-INSTALLED form includes the FULL PROBED-PATHS LIST (suffix
+#     "probed: <P1>, <P2>, <P3>, <P4>"). The list is not in the spec —
+#     spec just invokes the wrapper — so orchestrator skipping the
+#     wrapper cannot include this suffix without inventing path names,
+#     which is a detectable fabrication tell.
+#
+# Usage:
+#   check-caveman                 # zero args — sole output: announce line on stdout
+#
+# Exit code:
+#   0  always (informational tool — both outcomes are valid)
+#
+# Output (one of):
+#   Caveman: ACTIVE (path: <resolved-path>)
+#   Caveman: NOT INSTALLED (probed: <P1>, <P2>, <P3>, <P4>) — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
+
+set -euo pipefail
+
+PATHS=(
+  "$HOME/.claude/skills/caveman"
+  "$HOME/.claude/plugins/cache/caveman"
+  "$HOME/.claude/plugins/cache/JuliusBrussee/caveman"
+  "$HOME/.agents/skills/caveman"
+)
+
+for p in "${PATHS[@]}"; do
+  if [ -f "$p/SKILL.md" ]; then
+    echo "Caveman: ACTIVE (path: $p)"
+    exit 0
+  fi
+done
+
+# Build probed-list suffix from the actual PATHS array — this is the
+# anti-fabrication tell. Spec contains zero copyable form of this list.
+PROBED=""
+for p in "${PATHS[@]}"; do
+  PROBED="${PROBED:+$PROBED, }$p"
+done
+echo "Caveman: NOT INSTALLED (probed: $PROBED) — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash"
