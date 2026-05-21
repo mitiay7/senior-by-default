@@ -68,7 +68,42 @@ For High complexity with specialist plan-review (Step 2 below), also announce ea
   - {subagent_type_3}
 ```
 
-## 2.0 Stale-main check (before each Sonnet launch)
+## 2.0 Plan-size sanity check (BEFORE Sonnet launch)
+
+Before constructing the Sonnet prompt, re-verify the Phase 0 routing against the now-concrete plan (the approved plan has actual file list + behaviour scope, more precise than Phase 0's pre-exploration estimate).
+
+```bash
+# From the approved plan
+PLANNED_FILES=<count of files in the plan>
+PLANNED_LINES_EST=<sum of per-file estimated line deltas in the plan>
+
+case "$COMPLEXITY" in
+  T) MAX_FILES=2; MAX_LINES=50 ;;
+  L) MAX_FILES=3; MAX_LINES=200 ;;
+  M) MAX_FILES=8; MAX_LINES=600 ;;
+  H) MAX_FILES=999; MAX_LINES=99999 ;;
+esac
+
+if [ "$PLANNED_FILES" -gt "$MAX_FILES" ] || [ "$PLANNED_LINES_EST" -gt "$MAX_LINES" ]; then
+  if [ "$COMPLEXITY" != "H" ]; then
+    # Re-route to the higher bucket. Don't proceed silently.
+    NEW_COMPLEXITY="H"   # or the next-higher tier if you've added intermediate ones
+    echo "[Phase 2.0] Plan-size sanity check: planned $PLANNED_FILES files / $PLANNED_LINES_EST lines exceeds $COMPLEXITY bucket (caps: $MAX_FILES / $MAX_LINES). Re-routing to $NEW_COMPLEXITY. Re-run Phase 1 (issue update with new complexity) + Phase 2 (specialist plan review if H)."
+    COMPLEXITY="$NEW_COMPLEXITY"
+    # Replay Phase 1.5 / Phase 2 specialist plan-review with the higher tier.
+  else
+    # Already H — task is too big for a single PR even at H tier. Must split.
+    echo "[Phase 2.0] Plan-size sanity check: H bucket would also be exceeded (planned $PLANNED_FILES files / $PLANNED_LINES_EST lines). Aborting single-task path; ask user to split into <N> sub-issues before re-running."
+    # STOP here, ask user.
+  fi
+fi
+```
+
+**Why this exists** (production audit 2026-05-21): 6 of 13 false-positive cases were tasks routed Medium that shipped 942–1859 lines. Phase 0 file-count estimate was 4–8 (correct M bucket bound) but actual files came out 9–31 and lines 942–1859 — both H-bucket territory. Without this check the orchestrator runs Sonnet for an hour, Phase 3 catches `pr_size=warn` after the fact, and ~$/task is wasted on review-cycles instead of being prevented at plan time. The check is cheap (numeric comparison) and runs once per spawn.
+
+**Don't skip when "close enough"** — `9 files / 700 lines` on M is the exact boundary where audits showed FP rates climb. Bump even on the boundary; H workflow (specialist plan review + ADR) is the right tooling for that scale.
+
+## 2.0.5 Stale-main check (before each Sonnet launch)
 
 Before launching Sonnet (or relaunching after a fix cycle), check how far behind `main` the worktree is:
 ```

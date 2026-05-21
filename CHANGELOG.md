@@ -4,6 +4,44 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 0/2 — line-aware complexity routing + Phase 2 plan-size sanity check
+
+Postmortem of 13 false-positive cases on 2026-05-21 (10 of 13 in `miro-rooms-rentals`, all bursting in a 5-hour window) showed a consistent pattern: tasks routed Medium that actually produced 942–1859 lines / 9–31 files. The existing complexity matrix only cared about file count; line count was never considered. Phase 0 estimated `Files: ~7` correctly but ended up at 16+. `pr_size=warn` fired at Phase 3 (correctly!) but the wrapper didn't block because warn ≠ block, and `block_lines` defaults are tuned for H-bucket sizes (1500–2000 lines), making them no-ops on M tasks that wrote 1000+ lines.
+
+Two complementary fixes — catch at routing time (cheap) and catch at plan time (when routing missed).
+
+#### Changed
+
+- **`phase-0-setup.md` complexity matrix** — added explicit "Lines added (est)" column with per-tier caps (T ≤50, L ≤200, M ≤600, H >600). New rule: "estimate BOTH files AND lines, pick the higher bucket." Includes references to the May 21 audit so the rule's origin is traceable.
+- **`phase-0-setup.md` — refactor-keyword bumper** — new section. If `$ARGUMENTS` contains `refactor` / `rename` / `restructure` / `unify` / `consolidate` / `migrate <X> to <Y>` / `rewrite` / `extract <module>` / `split <module>` — prefer one tier higher. Refactors compound across the codebase even when "only N files" are touched directly.
+- **`phase-0-setup.md` announce template** — adds `EstLines: ~{L}` next to `Files: ~{N}` so the estimate is visible to the user at routing time (and metrics-logged for future audit accuracy).
+
+#### Added
+
+- **`phase-2-implementation.md` §2.0 — Plan-size sanity check (NEW)** — runs once per Sonnet spawn, immediately after the approved plan is in and BEFORE the prompt is constructed. Compares planned files + estimated lines against the routed bucket's caps; if exceeded:
+  - **Bumps to H** (re-runs Phase 1 issue update + Phase 2 specialist plan-review with new tier) when current is T/L/M
+  - **Aborts and asks user to split** when current is already H (single PR is the wrong shape for the task)
+  
+  The old §2.0 (Stale-main check) is renumbered to §2.0.5. Check is cheap (numeric comparison) and runs ONCE per spawn — no per-iteration cost.
+
+#### Why both at Phase 0 AND Phase 2
+
+Phase 0 estimates are pre-exploration — the orchestrator hasn't seen the actual file list yet, just the user's task description. The estimate can be off by 2-4× for refactor-class tasks. Phase 2 re-checks against the now-concrete approved plan (file list is fixed by that point). Plan-size check at Phase 2 catches what Phase 0 estimate missed.
+
+#### Expected impact
+
+The May 21 postmortem 6 FP cases:
+| ref | files (actual) | lines added | At Phase 0 (file-count rule alone) | At Phase 0 (NEW line-est rule) | At Phase 2.0 (plan-size check) |
+|---|---|---|---|---|---|
+| i968 | 16 | 1859 | H (>9 files) | H | (already H) |
+| i970 | 9 | 1345 | H | H | (already H) |
+| i963 | 13 | 1248 | H | H | (already H) |
+| i961 | 28 | 1169 | H | H | (already H) |
+| i969 | 21 | 1014 | H | H | (already H) |
+| i959 | 31 | 942 | H | H | (already H) |
+
+All 6 should have been routed H from Phase 0 by **the existing file-count rule** (>9 files = H). The Phase 0 announce showed `Files: ~N` < 9 for all of them — meaning the orchestrator's estimate was wrong, AND the line-estimate column would NOW be the secondary check that catches it (942–1859 >> 600 cap). Phase 2 plan-size check is the third layer: even if both Phase 0 estimates miss, by Phase 2 the plan has the real file list and the check fires.
+
 ### Phase 4.12 — `metrics-append` hardening: outcome enum, timestamp ordering, orchestrator capture
 
 Audit of 121 canonical entries (May 14–21) surfaced three concrete data-quality issues that escaped the existing v0.6 wrapper:

@@ -214,12 +214,16 @@ If `$ARGUMENTS` has `--complexity=T|L|M|H` → use it.
 
 Else estimate:
 
-| Complexity | Indicators | Workflow |
-|---|---|---|
-| **Trivial** | 1-2 files, mechanical (typo/rename/comment/lint/dep bump/single constant), zero logic decisions | Haiku solo → Sonnet diff scan → commit |
-| **Low** | ≤3 files, single module, simple logic | Sonnet solo → Opus diff scan → commit |
-| **Medium** | 4-8 files, new module/API | Issue → Sonnet → Opus review |
-| **High** | 9+ files, new architecture, breaking changes | Full pipeline + specialists + ADR |
+| Complexity | Files (est) | Lines added (est) | Other indicators | Workflow |
+|---|---|---|---|---|
+| **Trivial** | 1-2 | ≤50 | mechanical (typo/rename/comment/lint/dep bump/single constant), zero logic decisions | Haiku solo → Sonnet diff scan → commit |
+| **Low** | ≤3 | ≤200 | single module, simple logic | Sonnet solo → Opus diff scan → commit |
+| **Medium** | 4-8 | ≤600 | new module/API | Issue → Sonnet → Opus review |
+| **High** | 9+ | >600 OR open-ended | new architecture, breaking changes, refactor across subsystems | Full pipeline + specialists + ADR |
+
+**Estimate BOTH files AND lines, pick the higher bucket.** A task that touches only 5 files but plans ~1200 line changes is High, not Medium. Production audit (May 14–21): 6 of 13 false-positive cases on 2026-05-21 were Medium-routed tasks that actually shipped 942–1859 lines — Phase 0 underestimated lines, Sonnet self-claimed `ready`, Phase 3 caught with `pr_size=warn`. Catching at routing time avoids the wasted cycle.
+
+**Refactor-keyword bumper.** If `$ARGUMENTS` contains any of: `refactor`, `rename`, `restructure`, `unify`, `consolidate`, `migrate <X> to <Y>`, `rewrite`, `extract <module>`, `split <module>` — prefer one tier higher than the file-count alone would suggest. Refactors compound across the codebase even when "only N files" are touched directly (every caller of a renamed symbol becomes a touched file).
 
 Boundaries: 4 trivial files in one module → prefer Low. 3 files spanning new API surface → prefer Medium. **Any judgment call about behaviour → bump to Low** (Haiku must not pick between alternatives). If task touches migrations, security-sensitive code, public API, or i18n — never Trivial.
 
@@ -240,7 +244,7 @@ After all 6 steps pass:
 
 ```
 [Phase 0] Repo: {repo} | Stack: {stack} (cached: {y/n}) | Scope: {B/F/FS} | Complexity: {T/L/M/H}
-  Files: ~{N} | Tests: {YES/NO} | Migration: {YES NNN/NO} | Context doc: {required/none}
+  Files: ~{N} | EstLines: ~{L} | Tests: {YES/NO} | Migration: {YES NNN/NO} | Context doc: {required/none}
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
   {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
   {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose}
