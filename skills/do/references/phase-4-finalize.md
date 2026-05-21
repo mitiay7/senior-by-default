@@ -356,6 +356,7 @@ if [ -n "$LOG_PATH" ]; then
         --log              "$LOG_PATH" \
         --ref              "$REF" \
         --complexity       "$COMPLEXITY" \
+        ${COMPLEXITY_REBUMPED_FROM:+--complexity-rebumped-from "$COMPLEXITY_REBUMPED_FROM"} \
         ${ORCHESTRATOR:+--orchestrator "$ORCHESTRATOR"} \
         --implementer      "$IMPLEMENTER" \
         --outcome          "$OUTCOME" \

@@ -4,6 +4,30 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 2.0 plan-size check — observability via `complexity_rebumped_from`
+
+The v0.6.0 Phase 2.0 plan-size sanity check re-routes tasks to H when Sonnet's plan exceeds the bucket's caps, but the re-route fired silently — no field in the metrics entry captured that it happened. Result: we can't measure how often the check fires, on which transitions, or whether it correlates with lower FP rates. Adding observability now (cheap, +20 LOC) so the v0.6→v0.7 audit has the data.
+
+#### Added
+
+- **`metrics-append` — new `--complexity-rebumped-from {T|L|M}` flag** (optional, omit when no re-bump). Validates: enum is T|L|M (not H — H means already at top), and `--complexity-rebumped-from` cannot equal `--complexity` (re-bump means routed > original). Recorded in entry as top-level `complexity_rebumped_from` key, **omitted entirely** when no re-bump (keeps entries lean — only the rare cases get the field).
+
+#### Changed
+
+- **`phase-2-implementation.md` §2.0 plan-size check bash** — sets `COMPLEXITY_REBUMPED_FROM="$COMPLEXITY"` before bumping `COMPLEXITY` to H. New "Observability" paragraph explains the downstream metric.
+- **`phase-4-finalize.md` §4.13 invocation** — passes `${COMPLEXITY_REBUMPED_FROM:+--complexity-rebumped-from "$COMPLEXITY_REBUMPED_FROM"}` (optional flag, no-op when var unset — the common case).
+- **`config-schema.md` JSONL example** — adds `complexity_rebumped_from` to the documented Tier-1 entry shape with usage notes.
+
+#### What this unlocks
+
+Downstream analysis can now answer:
+- "How often does Phase 2.0 fire?" — count of entries with the field present
+- "Which Phase 0 bucket is most often wrong?" — distribution of T/L/M values in the field
+- "Do re-bumped tasks have lower FP rate than tasks that stayed in their original bucket?" — comparison metric
+- "Is Phase 0 routing improving over time?" — rate of re-bumps declining = Phase 0 estimates getting better
+
+If after 100+ post-v0.6.0 entries the re-bump rate is <5%, line-aware Phase 0 routing is working as designed. If 15-25%, plan-size check is doing the heavy lifting. If >25%, Phase 0 estimate heuristics need revisiting.
+
 ## [0.6.0] — 2026-05-21
 
 Phase 0 hardening cycle. 10 commits over 7 days (May 14–21) added 4 structurally-coupled wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, plus the existing `metrics-append` got v2), zero-touch project setup (auto-init of `.claude/do/config.json` with specialists + metrics presets), and line-aware complexity routing. Every change in this release traces to a documented production failure — see per-entry "Origin" / "Production-confirmed" / "Postmortem" sections below.

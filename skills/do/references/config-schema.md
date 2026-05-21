@@ -409,7 +409,14 @@ JSONL entry schema (Tier 1):
   "ci_status": "green|red|skipped",
   "auto_merge": false,
   "outcome": "merged|ready_for_review|blocked",
-  "blocked_reason": null
+  "blocked_reason": null,
+  "complexity_rebumped_from": "M"   // OPTIONAL — present only when Phase 2.0 plan-size sanity check
+                                    // re-routed the task to a higher tier. Value = original tier
+                                    // before bump (T|L|M). Absent in entries where no re-bump
+                                    // happened (the common case). Use this to measure plan-size-
+                                    // check effectiveness — count of T→H / L→H / M→H entries
+                                    // over time tells whether Phase 0 routing accuracy is
+                                    // improving or plan-size is the load-bearing layer.
 }
 ```
 

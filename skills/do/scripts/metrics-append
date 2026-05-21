@@ -19,6 +19,15 @@
 #     --files-changed 3 --lines-added 42 --lines-deleted 7 \
 #     --sr-performed true --sr-claimed ready --sr-calibration accurate \
 #     [--orchestrator opus-4.7]   # default: "opus"; pass model version for tracking
+#     [--complexity-rebumped-from M]  # optional: set if Phase 2.0 plan-size check
+#                                     # re-routed the task. Value = ORIGINAL complexity
+#                                     # before the bump (T|L|M, not H — H means already
+#                                     # at top tier so no further bump possible).
+#                                     # Omitted/empty = no rebump happened (common case).
+#                                     # Recorded in entry as `complexity_rebumped_from`
+#                                     # for downstream tracking of plan-size check
+#                                     # effectiveness (how often does it fire? on which
+#                                     # bucket transitions?).
 #     [--gates-json '{...}' --phase-durations-json '{...}' --review-cycles 1 \
 #      --ci-status skipped --auto-merge false --blocked-reason '' \
 #      --title '...' --scope Backend --notes '...' \
@@ -57,6 +66,7 @@ PHASE_DURATIONS_JSON='{}'
 SPECIALIST_ITERATIONS_JSON='[]'
 SR_MISCALIBRATED_JSON='[]'
 ORCHESTRATOR="opus"   # spec mandates orchestrator=opus; caller can pass model version e.g. "opus-4.7"
+COMPLEXITY_REBUMPED_FROM=""   # optional: T|L|M if Phase 2.0 plan-size check re-routed; "" if no rebump
 
 # --- Required (no defaults; verified after parse) ---
 LOG_PATH=""
@@ -101,6 +111,7 @@ while [ $# -gt 0 ]; do
     --notes)                     NOTES="$2";                     shift 2 ;;
     --specialist-iterations-json) SPECIALIST_ITERATIONS_JSON="$2"; shift 2 ;;
     --orchestrator)              ORCHESTRATOR="$2";              shift 2 ;;
+    --complexity-rebumped-from)  COMPLEXITY_REBUMPED_FROM="$2";  shift 2 ;;
     -h|--help)
       sed -n '3,30p' "$0"
       exit 0
@@ -137,6 +148,13 @@ done
 [[ "$LINES_DELETED"  =~ ^[0-9]+$ ]]                                              || die "--lines-deleted must be int, got: $LINES_DELETED"
 [[ "$REVIEW_CYCLES"  =~ ^[0-9]+$ ]]                                              || die "--review-cycles must be int, got: $REVIEW_CYCLES"
 [[ "$ORCHESTRATOR"   =~ ^(opus|opus-[0-9.]+|haiku|sonnet|unknown)$ ]]            || die "--orchestrator must be opus[-N.M] (or haiku/sonnet for testing), got: $ORCHESTRATOR"
+# Optional — empty means no Phase 2.0 plan-size re-route happened (the common case)
+if [ -n "$COMPLEXITY_REBUMPED_FROM" ]; then
+  [[ "$COMPLEXITY_REBUMPED_FROM" =~ ^[TLM]$ ]] \
+    || die "--complexity-rebumped-from must be T|L|M (or omit entirely), got: $COMPLEXITY_REBUMPED_FROM"
+  [ "$COMPLEXITY_REBUMPED_FROM" = "$COMPLEXITY" ] \
+    && die "--complexity-rebumped-from cannot equal --complexity ($COMPLEXITY) — re-bump means routed tier > original tier"
+fi
 
 # Timestamp sanity: ended_at >= started_at. Catches the production pattern
 # where sub-agents fill --ended-at with the moment of writing the entry but
@@ -163,6 +181,7 @@ JSON_ENTRY=$(jq -cn \
   --arg     complexity      "$COMPLEXITY" \
   --arg     scope           "$SCOPE" \
   --arg     orchestrator    "$ORCHESTRATOR" \
+  --arg     rebumped_from   "$COMPLEXITY_REBUMPED_FROM" \
   --arg     implementer     "$IMPLEMENTER" \
   --argjson files_changed   "$FILES_CHANGED" \
   --argjson lines_added     "$LINES_ADDED" \
@@ -183,7 +202,10 @@ JSON_ENTRY=$(jq -cn \
   '{
      ref:$ref, title:$title,
      started_at:$started_at, ended_at:$ended_at,
-     complexity:$complexity, scope:$scope, orchestrator:$orchestrator, implementer:$implementer,
+     complexity:$complexity,
+   scope:$scope,
+   orchestrator:$orchestrator,
+   implementer:$implementer,
      files_changed:$files_changed, lines_added:$lines_added, lines_deleted:$lines_deleted,
      phase_durations_seconds:$phase_durations,
      review_cycles:$review_cycles,
@@ -200,7 +222,8 @@ JSON_ENTRY=$(jq -cn \
      outcome:$outcome,
      blocked_reason:(if $blocked_reason=="" then null else $blocked_reason end)
    }
-   + (if $notes == "" then {} else {notes:$notes} end)') \
+   + (if $notes == "" then {} else {notes:$notes} end)
+   + (if $rebumped_from == "" then {} else {complexity_rebumped_from:$rebumped_from} end)') \
   || die "jq build failed (likely malformed --gates-json or --phase-durations-json)"
 
 # --- Schema gate (defense in depth: in case caller passed valid-JSON-but-wrong-shape via the json flags) ---

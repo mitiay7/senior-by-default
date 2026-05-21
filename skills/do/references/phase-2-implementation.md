@@ -87,6 +87,7 @@ esac
 if [ "$PLANNED_FILES" -gt "$MAX_FILES" ] || [ "$PLANNED_LINES_EST" -gt "$MAX_LINES" ]; then
   if [ "$COMPLEXITY" != "H" ]; then
     # Re-route to the higher bucket. Don't proceed silently.
+    COMPLEXITY_REBUMPED_FROM="$COMPLEXITY"   # remember the original tier for Phase 4.13 metrics
     NEW_COMPLEXITY="H"   # or the next-higher tier if you've added intermediate ones
     echo "[Phase 2.0] Plan-size sanity check: planned $PLANNED_FILES files / $PLANNED_LINES_EST lines exceeds $COMPLEXITY bucket (caps: $MAX_FILES / $MAX_LINES). Re-routing to $NEW_COMPLEXITY. Re-run Phase 1 (issue update with new complexity) + Phase 2 (specialist plan review if H)."
     COMPLEXITY="$NEW_COMPLEXITY"
@@ -98,6 +99,8 @@ if [ "$PLANNED_FILES" -gt "$MAX_FILES" ] || [ "$PLANNED_LINES_EST" -gt "$MAX_LIN
   fi
 fi
 ```
+
+**Observability**: when this block re-bumps complexity, set `$COMPLEXITY_REBUMPED_FROM` (shown above) so the Phase 4.13 metrics-append invocation can pass `--complexity-rebumped-from "$COMPLEXITY_REBUMPED_FROM"`. Recorded in the JSONL entry as `complexity_rebumped_from` (omitted in entries where no re-bump happened, which is the common case). This makes the check's effectiveness measurable downstream — count of M→H re-bumps over time tells whether Phase 0 routing accuracy is improving or whether plan-size is the load-bearing layer.
 
 **Why this exists** (production audit 2026-05-21): 6 of 13 false-positive cases were tasks routed Medium that shipped 942–1859 lines. Phase 0 file-count estimate was 4–8 (correct M bucket bound) but actual files came out 9–31 and lines 942–1859 — both H-bucket territory. Without this check the orchestrator runs Sonnet for an hour, Phase 3 catches `pr_size=warn` after the fact, and ~$/task is wasted on review-cycles instead of being prevented at plan time. The check is cheap (numeric comparison) and runs once per spawn.
 
