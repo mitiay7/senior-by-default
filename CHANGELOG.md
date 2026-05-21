@@ -4,6 +4,28 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Phase 4.12 — `metrics-append` hardening: outcome enum, timestamp ordering, orchestrator capture
+
+Audit of 121 canonical entries (May 14–21) surfaced three concrete data-quality issues that escaped the existing v0.6 wrapper:
+
+1. **`outcome` field — 16 distinct values for what should be 3.** Wrapper accepted any non-empty string. Production drift: `success`/`completed`/`shipped`/`ok`/`pr_opened`/`pr_open`/`ready_for_review` for ~92 entries, plus **9 spelling variants of "merged"** (`merged_pending`, `merged_pr_open`, `merged_or_pr_open`, `merged_ready`, `merged_to_main_or_pr_open`, `merged_or_pushed`, `merged_open`, `merged_via_pr`). Cross-run aggregation (merge rate, blocked-PR analysis) required manual normalization on every dashboard.
+
+2. **36% of entries had `ended_at < started_at`** (median negative delta: -2.5 hours). Sub-agents captured both timestamps at Phase 4.13 using inconsistent timezone handling or back-computing `started_at` incorrectly. Cycle-time analysis on a metric where 36% of values are nonsensical is useless — real median cycle time (23 min) only computable after filtering negatives.
+
+3. **`orchestrator` field never captured.** All 121 canonical entries had it absent or `"?"`. Spec mandates capture per [SKILL.md notation](skills/do/SKILL.md#notation) — the Co-Authored-By footer reads model from session metadata for the same reason, but metrics-append had no flag for it.
+
+#### Changed
+
+- **`scripts/metrics-append` — strict outcome enum.** Regex `^(merged|ready_for_review|blocked)$`. Rejects everything else with a verbose error message explaining the canonical mapping (avoid replaying the audit).
+- **`scripts/metrics-append` — timestamp ordering gate.** Both `--started-at` and `--ended-at` parsed via `date -j -u -f`. Reject if `ended_epoch < started_epoch`. Error message points at the most common cause (capturing both at Phase 4.13 retroactively) and the fix (capture STARTED_AT at Phase 0 entry).
+- **`scripts/metrics-append` — `--orchestrator` flag.** Optional with default `"opus"` (spec mandates orchestrator=opus). Accepts `opus`, `opus-N.M`, plus `haiku`/`sonnet` for testing. Regex-validated. Schema gate (jq) also asserts the field exists.
+- **`phase-4-finalize.md` §4.13 invocation** — adds `--orchestrator` passthrough (`${ORCHESTRATOR:+...}` form so it's optional for callers that don't track model version).
+- **`phase-4-finalize.md` §4.11 (Step 2 area)** — new "Computing `$OUTCOME`" block. Explicit decision tree using `gh pr view --json mergedAt` and `$BLOCKED` flag, NOT free-form guessing. Plus "Computing `$ORCHESTRATOR`" and "Computing `$STARTED_AT`" guidance with anti-patterns called out.
+
+#### Migration
+
+Existing 121 canonical entries remain valid for retrospective analysis if you filter out the 36% with negative cycle times and bucket the 16 outcome variants manually. Fresh entries from this version forward will have uniform enum + positive deltas + non-null orchestrator.
+
 ### Phase 0.2 — caveman detect v3: external wrapper + probed-paths tell
 
 **Third iteration on the same fabrication.** Production confirmed today (2026-05-17, lea-web run): orchestrator announced `Caveman: NOT INSTALLED — install: curl ...` while caveman was installed at path #1. The v2 fix had moved the line template into the bash literal (the `CAVEMAN_LINE="..."` assignment) — but the literal is still visible to the orchestrator at parse time, so it copy-pasted from there without running the bash. Same root failure, one indirection deeper.

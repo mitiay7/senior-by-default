@@ -248,6 +248,29 @@ The wrapper enforces:
 - Exit code 0 on success (stdout: `OK pre=N post=N+1 path=<log>`), 1 on schema reject
   (stderr: `REJECT <reason>`), 2 on I/O failure (stderr: `IOFAIL <reason>`)
 
+**Computing `$OUTCOME` (strict 3-value enum — production audit found 16 distinct values pre-enforcement; the wrapper now hard-rejects anything else)**:
+
+```bash
+# Decide outcome from the actual Phase 4 result, not from a guess.
+# Read state in this exact order (first match wins):
+if [ "$BLOCKED" = "true" ]; then
+  # Phase 3 escalated after 3 failed cycles, draft PR + `blocked` label applied
+  OUTCOME="blocked"
+elif gh pr view "$PR_NUMBER" --repo "$CODE_REPO" --json mergedAt -q .mergedAt 2>/dev/null | grep -qv '^$'; then
+  # PR is merged (either auto-merge completed or manual merge)
+  OUTCOME="merged"
+else
+  # PR opened but not yet merged (manual review pending, or auto-merge waiting for CI)
+  OUTCOME="ready_for_review"
+fi
+```
+
+Do NOT invent values like `pr_opened`, `success`, `shipped`, `merged_pending`, `merged_or_pr_open` — wrapper rejects. The 3-value mapping is exhaustive for /do's exit states.
+
+**Computing `$ORCHESTRATOR`**: pass the running model identifier from session metadata (same source as Co-Authored-By footer per [SKILL.md notation](../SKILL.md#notation)). If unknown, omit the flag — wrapper defaults to `"opus"` (spec mandates orchestrator=opus regardless of model version).
+
+**Computing `$STARTED_AT`**: capture **at Phase 0 entry** (the moment the orchestrator first runs `date -u +%Y-%m-%dT%H:%M:%SZ`), NOT retroactively at Phase 4.13. The wrapper hard-rejects `--ended-at < --started-at` (production audit: 36% of pre-fix entries had negative cycle times from back-computing started_at at the end).
+
 Canonical invocation (executed by the §4.13 announce block; do NOT run it standalone, the
 announce coupling depends on capturing its stdout into `$METRICS_LINE`):
 
@@ -256,6 +279,7 @@ announce coupling depends on capturing its stdout into `$METRICS_LINE`):
   --log              "$LOG_PATH" \
   --ref              "$REF" \
   --complexity       "$COMPLEXITY" \
+  --orchestrator     "$ORCHESTRATOR" \
   --implementer      "$IMPLEMENTER" \
   --outcome          "$OUTCOME" \
   --started-at       "$STARTED_AT" \
@@ -332,6 +356,7 @@ if [ -n "$LOG_PATH" ]; then
         --log              "$LOG_PATH" \
         --ref              "$REF" \
         --complexity       "$COMPLEXITY" \
+        ${ORCHESTRATOR:+--orchestrator "$ORCHESTRATOR"} \
         --implementer      "$IMPLEMENTER" \
         --outcome          "$OUTCOME" \
         --started-at       "$STARTED_AT" \
