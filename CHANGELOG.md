@@ -4,6 +4,17 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-21
+
+Phase 0 hardening cycle. 10 commits over 7 days (May 14–21) added 4 structurally-coupled wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, plus the existing `metrics-append` got v2), zero-touch project setup (auto-init of `.claude/do/config.json` with specialists + metrics presets), and line-aware complexity routing. Every change in this release traces to a documented production failure — see per-entry "Origin" / "Production-confirmed" / "Postmortem" sections below.
+
+**Release-level summary** (detail in entries below):
+- **4 wrappers, 4 structural-coupling tells.** Each announce token (`Caveman:`, `Config:`, `Metrics config:`, `Metrics:`) comes from wrapper stdout. Wrappers include a "tell" the orchestrator can't fabricate without running them (resolved path, probed-paths list, written file path, log line-count delta). Off-line copies become detectable visible bugs.
+- **Zero-touch project setup.** First-run `/do` in a project auto-generates a working config (tracker from git remote, locale from `$ARGUMENTS`, specialists preset, tier-1 metrics preset). Existing configs missing `metrics` get patched idempotently.
+- **Line-aware routing.** Phase 0 estimates files AND lines; refactor-keyword bumper for scope-multiplying changes; Phase 2.0 plan-size sanity check re-routes when Sonnet's plan exceeds bucket caps. Catches the May 21 burst of 6 underestimated Medium-tasks before they ship 1000+ line PRs.
+- **Metrics enum cleanup.** `outcome` strict 3-value enum, timestamp ordering gate, orchestrator capture — addresses 121-entry audit that found 16 outcome variants and 36% negative cycle times.
+- **Phantom plugin removed.** `frontend-excellence` (aspirational placeholder, not on any public marketplace) replaced with real `ui-design` + `javascript-typescript` (wshobson/agents).
+
 ### Phase 0/2 — line-aware complexity routing + Phase 2 plan-size sanity check
 
 Postmortem of 13 false-positive cases on 2026-05-21 (10 of 13 in `miro-rooms-rentals`, all bursting in a 5-hour window) showed a consistent pattern: tasks routed Medium that actually produced 942–1859 lines / 9–31 files. The existing complexity matrix only cared about file count; line count was never considered. Phase 0 estimated `Files: ~7` correctly but ended up at 16+. `pr_size=warn` fired at Phase 3 (correctly!) but the wrapper didn't block because warn ≠ block, and `block_lines` defaults are tuned for H-bucket sizes (1500–2000 lines), making them no-ops on M tasks that wrote 1000+ lines.

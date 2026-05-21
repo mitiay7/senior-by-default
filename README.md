@@ -230,12 +230,16 @@ See [`skills/do/references/config-schema.md`](skills/do/references/config-schema
 curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
 ```
 
-Phase 0 Step 2 detects whether caveman is installed and emits one of two **structurally-coupled** announce lines (the line comes from `[ -f SKILL.md ]` over 4 candidate paths — `~/.claude/skills/caveman`, `~/.claude/plugins/cache/caveman`, `~/.claude/plugins/cache/JuliusBrussee/caveman`, `~/.agents/skills/caveman` — no in-doc copyable template, so any divergence in the announce signals fabrication):
+Phase 0 Step 2 detects whether caveman is installed via the external `scripts/check-caveman` wrapper (v3 of the detection — earlier inline-bash versions were systematically bypassed by orchestrators copy-pasting the announce template from the spec instead of running the check). The wrapper probes 4 candidate paths: `~/.claude/skills/caveman`, `~/.claude/plugins/cache/caveman`, `~/.claude/plugins/cache/JuliusBrussee/caveman`, `~/.agents/skills/caveman`. The canonical announce strings live ONLY in the wrapper:
 
-- **Active** → `Caveman: ACTIVE (path: <resolved-path>)`. Sub-Agent prompts include a directive to respond in caveman style for natural-language framing (code, paths, JSON, diffs, completion-report formats are NEVER compressed — those are LITERAL strings parsed by downstream tooling).
-- **Not installed** → `Caveman: NOT INSTALLED — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash`. The skill works without caveman; you just spend more output tokens.
+- **Active** → `Caveman: ACTIVE (path: <resolved-path>)` — path varies per machine, unguessable from spec
+- **Not installed** → `Caveman: NOT INSTALLED (probed: <P1>, <P2>, <P3>, <P4>) — install: curl …` — the `(probed: …)` suffix lists every path the wrapper actually checked; **this is the anti-fabrication tell**. The list is built from the wrapper's internal array, never appears in the spec, so an orchestrator skipping the wrapper cannot include the suffix without inventing path names (a visible bug).
+
+When active, Sub-Agent prompts get a directive to respond in caveman style for natural-language framing (code, paths, JSON, diffs, completion-report formats are NEVER compressed — those are LITERAL strings parsed by downstream tooling).
 
 Per-task opt-out: `--no-caveman` in `$ARGUMENTS`.
+
+If your Phase 0 announce ever shows a `Caveman:` line WITHOUT a `(path: ...)` or `(probed: ...)` suffix, the orchestrator skipped the wrapper — file an issue with the announce text.
 
 Why install caveman first: SessionStart hooks fire at session boot; if you install caveman after senior-by-default, you'll need to restart your Claude Code session for compression to take effect.
 
@@ -347,9 +351,15 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 ## Status
 
-`v0.5.0` released + active `[Unreleased]` cycle — see [`CHANGELOG.md`](CHANGELOG.md). Architecture is stable. Recent work has hardened Phase 0 around three **structurally-coupled** wrappers (`metrics-append` / `config-init` / `config-ensure-metrics`) — every side-effect announce token (`Caveman:`, `Config:`, `Metrics config:`, `Metrics:`) comes from a bash variable that the announce literally interpolates, so skipping the side-effect physically prevents emitting a fake announce line. Production runs surface the divergence as visible bugs rather than silent skips.
+`v0.6.0` released (2026-05-21). Architecture stable. v0.6 cycle (10 commits, May 14–21) hardened Phase 0 around four **structurally-coupled** wrappers — `metrics-append`, `config-init`, `config-ensure-metrics`, `check-caveman` — every side-effect announce token (`Caveman:`, `Config:`, `Metrics config:`, `Metrics:`) comes from wrapper stdout that the announce literally interpolates. Skipping the side-effect physically prevents emitting a fake announce line; off-line copies are detectable via path / probed-paths / line-count tells the wrappers include. Production runs surface fabrications as visible bugs rather than silent skips.
 
-Tier-1 metrics schema settled in v0.5.0; expect minor field additions but no breaking changes. Plugin substrate continues to evolve (the recommended plugin list above was rebuilt in May 2026 after a phantom `frontend-excellence` reference was identified and replaced with real `ui-design` + `javascript-typescript` from the wshobson marketplace).
+Other v0.6 highlights:
+- **Zero-touch project setup** — `/do` auto-generates `.claude/do/config.json` on first run (issue_tracker from git remote, locale from `$ARGUMENTS` script, specialists preset, tier-1 metrics preset). Existing configs missing the metrics block get patched in idempotently.
+- **Line-aware complexity routing** — Phase 0 estimates both files AND lines; refactor-keyword bumper for scope-multiplying changes. Phase 2.0 plan-size sanity check re-routes if Sonnet's plan exceeds the bucket's caps.
+- **`metrics-append` v2** — strict 3-value outcome enum, timestamp ordering gate, orchestrator capture. Post-audit cleanup of 121 entries that had 16 outcome variants and 36% negative cycle times.
+- **Phantom plugin removed** — `frontend-excellence` (aspirational placeholder, no public marketplace) replaced with real `ui-design` + `javascript-typescript` from wshobson/agents.
+
+Tier-1 metrics schema is stable; new fields added strictly via enum extension. See [`CHANGELOG.md`](CHANGELOG.md) for the per-fix postmortem trail — every wrapper added in this cycle has a documented production-failure origin.
 
 ## Uninstall
 
