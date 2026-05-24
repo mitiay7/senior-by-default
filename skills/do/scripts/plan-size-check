@@ -1,0 +1,81 @@
+#!/bin/bash
+# plan-size-check — the ONLY supported way to produce the Phase 2.0
+# plan-size sanity-check decision. Wrapper script (not inline bash in spec)
+# because the v0.6.0 inline-bash approach was systematically bypassed:
+# 32 post-deploy entries had 0 re-bumps despite 16 of 21 M-tasks shipping
+# >600 lines or >8 files. Same fabrication pattern as caveman v1/v2:
+# orchestrator reads the threshold values + case-statement in the spec,
+# decides "yeah, looks fine to me", composes no output, no signal in
+# metrics that the check was skipped.
+#
+# Structural enforcement: thresholds + case-statement live ONLY in the
+# script. The spec invokes the wrapper; orchestrator cannot decide
+# "plan fits" without the wrapper printing it. And the output includes
+# an anti-fabrication tell: the actual computed cap values for the
+# current bucket are echoed back as part of the announce line, so
+# off-line guesses are detectable (orchestrator doesn't know the
+# wrapper's internal table without running it).
+#
+# Usage:
+#   plan-size-check \
+#     --current-complexity T|L|M|H \
+#     --planned-files N \
+#     --planned-lines N
+#
+# Exit codes:
+#   0  decision made; stdout is one of:
+#        "Phase 2.0: PASS — planned N files / N lines fits <C> bucket (caps: F files / L lines)"
+#        "Phase 2.0: REBUMP <C>→H — planned N files / N lines exceeds <C> caps (F files / L lines)"
+#        "Phase 2.0: SPLIT-REQUIRED — H bucket also exceeded by planned N files / N lines (caps: F / L)"
+#   1  rejected (bad/missing arg, non-numeric values); stderr: "REJECT <reason>"
+
+set -euo pipefail
+
+die() { echo "REJECT $*" >&2; exit 1; }
+
+CURRENT=""
+PLANNED_FILES=""
+PLANNED_LINES=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --current-complexity) CURRENT="$2";        shift 2 ;;
+    --planned-files)      PLANNED_FILES="$2";  shift 2 ;;
+    --planned-lines)      PLANNED_LINES="$2";  shift 2 ;;
+    *) die "unknown flag: $1" ;;
+  esac
+done
+
+[ -n "$CURRENT" ]        || die "--current-complexity required (T|L|M|H)"
+[ -n "$PLANNED_FILES" ]  || die "--planned-files required (integer)"
+[ -n "$PLANNED_LINES" ]  || die "--planned-lines required (integer)"
+
+[[ "$CURRENT" =~ ^[TLMH]$ ]]    || die "--current-complexity must be T|L|M|H, got: $CURRENT"
+[[ "$PLANNED_FILES" =~ ^[0-9]+$ ]] || die "--planned-files must be non-negative integer, got: $PLANNED_FILES"
+[[ "$PLANNED_LINES" =~ ^[0-9]+$ ]] || die "--planned-lines must be non-negative integer, got: $PLANNED_LINES"
+
+# Bucket caps — single source of truth. These match the Phase 0 complexity
+# matrix in phase-0-setup.md but are duplicated here ON PURPOSE so the
+# wrapper is self-contained and the spec doesn't carry copyable threshold
+# values (anti-fabrication: orchestrator skipping the wrapper can't guess
+# the exact numbers).
+case "$CURRENT" in
+  T) MAX_FILES=2;   MAX_LINES=50    ;;
+  L) MAX_FILES=3;   MAX_LINES=200   ;;
+  M) MAX_FILES=8;   MAX_LINES=600   ;;
+  H) MAX_FILES=999; MAX_LINES=99999 ;;
+esac
+
+if [ "$PLANNED_FILES" -le "$MAX_FILES" ] && [ "$PLANNED_LINES" -le "$MAX_LINES" ]; then
+  echo "Phase 2.0: PASS — planned $PLANNED_FILES files / $PLANNED_LINES lines fits $CURRENT bucket (caps: $MAX_FILES files / $MAX_LINES lines)"
+  exit 0
+fi
+
+if [ "$CURRENT" != "H" ]; then
+  echo "Phase 2.0: REBUMP ${CURRENT}→H — planned $PLANNED_FILES files / $PLANNED_LINES lines exceeds ${CURRENT} caps (${MAX_FILES} files / ${MAX_LINES} lines)"
+  exit 0
+fi
+
+# Already H and still exceeded — must split
+echo "Phase 2.0: SPLIT-REQUIRED — H bucket exceeded by planned $PLANNED_FILES files / $PLANNED_LINES lines (caps: $MAX_FILES / $MAX_LINES). Split into <N> sub-issues before re-running."
+exit 0

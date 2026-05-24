@@ -70,37 +70,41 @@ For High complexity with specialist plan-review (Step 2 below), also announce ea
 
 ## 2.0 Plan-size sanity check (BEFORE Sonnet launch)
 
-Before constructing the Sonnet prompt, re-verify the Phase 0 routing against the now-concrete plan (the approved plan has actual file list + behaviour scope, more precise than Phase 0's pre-exploration estimate).
+Before constructing the Sonnet prompt, re-verify the Phase 0 routing against the now-concrete plan (the approved plan has actual file list + behaviour scope, more precise than Phase 0's pre-exploration estimate). **Invoke the wrapper verbatim** (do not paraphrase, do not "decide mentally", do not skip — see [anti-patterns §19d](anti-patterns.md)):
 
 ```bash
-# From the approved plan
-PLANNED_FILES=<count of files in the plan>
-PLANNED_LINES_EST=<sum of per-file estimated line deltas in the plan>
+PLANNED_FILES=<count of files in the approved plan>
+PLANNED_LINES_EST=<sum of per-file estimated line deltas in the approved plan>
 
-case "$COMPLEXITY" in
-  T) MAX_FILES=2; MAX_LINES=50 ;;
-  L) MAX_FILES=3; MAX_LINES=200 ;;
-  M) MAX_FILES=8; MAX_LINES=600 ;;
-  H) MAX_FILES=999; MAX_LINES=99999 ;;
+PLAN_SIZE_LINE="$(~/.claude/skills/do/scripts/plan-size-check \
+  --current-complexity "$COMPLEXITY" \
+  --planned-files "$PLANNED_FILES" \
+  --planned-lines "$PLANNED_LINES_EST")"
+echo "$PLAN_SIZE_LINE"
+
+case "$PLAN_SIZE_LINE" in
+  "Phase 2.0: PASS"*)
+    # Plan fits the current bucket. Proceed to Sonnet spawn unchanged.
+    ;;
+  "Phase 2.0: REBUMP"*)
+    # Plan exceeds. Bump to H, re-run Phase 1 (issue update) + Phase 2
+    # specialist plan-review with new tier.
+    COMPLEXITY_REBUMPED_FROM="$COMPLEXITY"
+    COMPLEXITY="H"
+    # Replay Phase 1.5 / Phase 2 specialist plan-review at the new tier.
+    ;;
+  "Phase 2.0: SPLIT-REQUIRED"*)
+    # Already H and still over. Single PR is the wrong shape for the task.
+    # STOP — ask user to split before re-running.
+    ;;
 esac
-
-if [ "$PLANNED_FILES" -gt "$MAX_FILES" ] || [ "$PLANNED_LINES_EST" -gt "$MAX_LINES" ]; then
-  if [ "$COMPLEXITY" != "H" ]; then
-    # Re-route to the higher bucket. Don't proceed silently.
-    COMPLEXITY_REBUMPED_FROM="$COMPLEXITY"   # remember the original tier for Phase 4.13 metrics
-    NEW_COMPLEXITY="H"   # or the next-higher tier if you've added intermediate ones
-    echo "[Phase 2.0] Plan-size sanity check: planned $PLANNED_FILES files / $PLANNED_LINES_EST lines exceeds $COMPLEXITY bucket (caps: $MAX_FILES / $MAX_LINES). Re-routing to $NEW_COMPLEXITY. Re-run Phase 1 (issue update with new complexity) + Phase 2 (specialist plan review if H)."
-    COMPLEXITY="$NEW_COMPLEXITY"
-    # Replay Phase 1.5 / Phase 2 specialist plan-review with the higher tier.
-  else
-    # Already H — task is too big for a single PR even at H tier. Must split.
-    echo "[Phase 2.0] Plan-size sanity check: H bucket would also be exceeded (planned $PLANNED_FILES files / $PLANNED_LINES_EST lines). Aborting single-task path; ask user to split into <N> sub-issues before re-running."
-    # STOP here, ask user.
-  fi
-fi
 ```
 
-**Observability**: when this block re-bumps complexity, set `$COMPLEXITY_REBUMPED_FROM` (shown above) so the Phase 4.13 metrics-append invocation can pass `--complexity-rebumped-from "$COMPLEXITY_REBUMPED_FROM"`. Recorded in the JSONL entry as `complexity_rebumped_from` (omitted in entries where no re-bump happened, which is the common case). This makes the check's effectiveness measurable downstream — count of M→H re-bumps over time tells whether Phase 0 routing accuracy is improving or whether plan-size is the load-bearing layer.
+**Why a wrapper, not inline bash** (v2 fix): the v1 inline-bash approach was systematically bypassed. Production audit of 32 post-v0.6.0 entries showed **0 re-bumps** despite **16 of 21 M-tasks shipping >600 lines or >8 files**. Same fabrication-skip pattern as caveman v1/v2 — orchestrator reads the threshold values + case-statement in the spec, decides "looks fine to me", produces no output, no signal in metrics that the check was skipped. The wrapper hides the thresholds and prints a structured decision line that the spec's case-statement must parse. If `$PLAN_SIZE_LINE` is empty (wrapper didn't run) the case-statement matches nothing — visible bug.
+
+**Anti-fabrication tell**: the wrapper output includes the actual computed cap values for the bucket (e.g. `caps: 8 files / 600 lines` for M). The spec contains no copy-pasteable form of either the cap values or the full output template — orchestrator skipping the wrapper can't reproduce the exact values without running it.
+
+**Observability**: on the REBUMP branch, set `$COMPLEXITY_REBUMPED_FROM` (shown above) so the Phase 4.13 metrics-append invocation can pass `--complexity-rebumped-from "$COMPLEXITY_REBUMPED_FROM"`. Recorded in JSONL as `complexity_rebumped_from` (omitted when no re-bump). Downstream metric: count of T/L/M re-bumps over time tells whether Phase 0 routing accuracy is improving or whether plan-size is the load-bearing layer.
 
 **Why this exists** (production audit 2026-05-21): 6 of 13 false-positive cases were tasks routed Medium that shipped 942–1859 lines. Phase 0 file-count estimate was 4–8 (correct M bucket bound) but actual files came out 9–31 and lines 942–1859 — both H-bucket territory. Without this check the orchestrator runs Sonnet for an hour, Phase 3 catches `pr_size=warn` after the fact, and ~$/task is wasted on review-cycles instead of being prevented at plan time. The check is cheap (numeric comparison) and runs once per spawn.
 
@@ -211,9 +215,10 @@ After implementation + tests + build pass, run a self-review pass:
 3. Re-read your own diff (`git diff main...HEAD`) and check against the rules above + the issue's "Out of Scope" section.
 4. Confirm simplicity + surgical scope: no speculative abstraction/config/deps/flags, no unrelated formatting/comment churn, every changed line traceable to the task.
 5. Flag anything you skipped or deferred. Don't hide it.
-6. **Declare an overall claimed_status** — one of:
-   - `ready` — all acceptance criteria implemented + verified, no known issues
-   - `deferred` — implemented + tested, but explicitly deferred something (with note)
+6. **Run `git diff main...HEAD --stat`** and check actual diff size against the bucket the task was routed for. If `complexity=M` and diff > 600 lines OR > 8 files (M-bucket caps per Phase 0 matrix), DO NOT claim `ready` — return `claimed_status: deferred` with a note like "diff size {N} lines / {F} files exceeds M-bucket caps; recommend re-route to H for specialist review". Same for L exceeding 200 lines / 3 files. Calibration rationale: production audit of 32 post-v0.6.0 entries showed M-tasks shipping 1000–2000 lines self-claiming `ready`, with Phase 3 catching `pr_size=warn` after the fact — wasted cycles. Phase 2.0 plan-size check (above) should have caught this at plan-time; this is a second-layer check using the ACTUAL diff post-write. If both layers miss, that's a calibration-data-point for skill iteration.
+7. **Declare an overall claimed_status** — one of:
+   - `ready` — all acceptance criteria implemented + verified, no known issues, AND diff fits the routed bucket
+   - `deferred` — implemented + tested, but explicitly deferred something (with note) OR diff exceeds routed bucket caps (re-route hint above)
    - `uncertain` — uncertain about a specific aspect (Phase 3 should pay extra attention here)
 
 Output the self-review as a section in your completion report (this section is parsed by Phase 4.11 for metrics calibration — match the format):

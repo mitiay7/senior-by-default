@@ -4,6 +4,36 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Post-v0.6.0 audit follow-ups — 4 fixes from 32-entry data
+
+After v0.6.0 deployed (May 21, 11:23Z), 32 canonical post-deploy entries accumulated in ~2.5 days. Audit (see [previous CHANGELOG entry](#phase-20-plan-size-check--observability-via-complexity_rebumped_from)) showed:
+
+- Schema fixes worked perfectly (outcome 100% canonical, 0% negative cycle times, 100% orchestrator captured)
+- FP rate REGRESSED from 15% → 33% with **0 Phase 2.0 re-bumps** despite **16 of 21 M-tasks** shipping >600 lines or >8 files
+- 7 bypass entries with fabricated free-form shapes
+- 1 case (i1023) with stub `specialist_iterations` (4 cycles all empty)
+
+Four fixes, all in this [Unreleased] cycle:
+
+#### Added
+
+- **`skills/do/scripts/plan-size-check`** (NEW wrapper) — Phase 2.0 plan-size check moved out of inline spec bash into external wrapper. Same fabrication-avoidance pattern as `check-caveman` v3. Thresholds + bucket caps live ONLY in the wrapper. Outputs one of three structured decision lines: `Phase 2.0: PASS — ...`, `Phase 2.0: REBUMP <C>→H — ...`, `Phase 2.0: SPLIT-REQUIRED — ...`. Spec uses `case "$PLAN_SIZE_LINE" in` to dispatch — empty `$PLAN_SIZE_LINE` (wrapper skipped) matches nothing = visible bug. Anti-fabrication tell: output includes actual computed cap values for the bucket.
+
+#### Changed
+
+- **`metrics-append` — `--specialist-iterations-json` anti-stub validation** — reject if ANY cycle has `auditors=[]` AND `approvers=[]` AND `blockers=[]` (the i1023 fabrication pattern: sub-agent fabricated a 4-cycle structure with all-empty fields to satisfy field-present requirement). Real cycles MUST have at least `auditors` populated. If specialists genuinely didn't run for a cycle — omit the cycle, don't fabricate placeholder shape.
+- **`phase-2-implementation.md` §2.0** — inline plan-size bash replaced with wrapper invocation + `case "$PLAN_SIZE_LINE"` dispatch. Explanation paragraph about WHY (the 0-rebump audit finding).
+- **`phase-2-implementation.md` Self-Review section** — new pre-claim step (#6): `git diff main...HEAD --stat` and check against routed bucket caps. If diff exceeds M-bucket caps (600 lines / 8 files), return `claimed_status: deferred` with re-route hint instead of `ready`. Second-layer check using actual post-write diff, catches what Phase 2.0 plan-time check missed.
+- **`anti-patterns.md` §19a** — added "Observed bypass shapes" subsection documenting 7 post-v0.6.0 bypass cases with specific field-name patterns (`ts`/`timestamp`, `insertions`/`deletions`, `verdict`/`outcomes`/`phase_4_status` invented). Confirms bypass = direct Write/echo, not wrapper misuse.
+- **`anti-patterns.md` §19d (NEW)** — "Composing Phase 2.0 plan-size check decision by hand". Documents the 0/32 production observation. Same diagnostic pattern as §19b (caveman): missing structural tell in announce = wrapper skipped.
+
+#### Expected impact (measure at next audit, ~T+50 fresh entries)
+
+- **Phase 2.0 rebump rate >0%** for M-tasks shipping >600 lines (current: 0/16 expected, target: should fire on all 16)
+- **FP rate** for M complexity should drop below baseline 12% once re-bumped tasks get H-tier specialist plan-review
+- **Specialist iterations** no longer have stub shapes (i1023-style rejected at wrapper)
+- **Bypass rate** still likely 10-20% — wrappers can't force sub-agents who don't call them; mitigation is daily-report tripwire visibility (already restored) and adding §19a observed shapes as the cookbook for code-review
+
 ### Phase 2.0 plan-size check — observability via `complexity_rebumped_from`
 
 The v0.6.0 Phase 2.0 plan-size sanity check re-routes tasks to H when Sonnet's plan exceeds the bucket's caps, but the re-route fired silently — no field in the metrics entry captured that it happened. Result: we can't measure how often the check fires, on which transitions, or whether it correlates with lower FP rates. Adding observability now (cheap, +20 LOC) so the v0.6→v0.7 audit has the data.

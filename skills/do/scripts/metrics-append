@@ -172,6 +172,22 @@ for var in GATES_JSON PHASE_DURATIONS_JSON SPECIALIST_ITERATIONS_JSON SR_MISCALI
   echo "${!var}" | jq -e . >/dev/null 2>&1 || die "$var is not valid JSON: ${!var}"
 done
 
+# Anti-stub validation for specialist_iterations: reject if ANY cycle has
+# auditors=[] AND approvers=[] AND blockers=[] (the i1023 fabrication
+# pattern — sub-agent fabricated a 4-cycle structure with all-empty
+# fields to satisfy the field-present requirement without actually
+# running specialists). A real cycle has at least auditors populated
+# (specialists were invoked), even if approvers/blockers are empty
+# (everybody approved with no comments).
+if [ "$SPECIALIST_ITERATIONS_JSON" != "[]" ]; then
+  STUB_CYCLES=$(echo "$SPECIALIST_ITERATIONS_JSON" | jq '[.[] | select(
+    ((.auditors // [])  | length == 0) and
+    ((.approvers // []) | length == 0) and
+    ((.blockers // [])  | length == 0)
+  )] | length')
+  [ "$STUB_CYCLES" -eq 0 ] || die "--specialist-iterations-json contains $STUB_CYCLES all-empty cycle(s) (auditors=[], approvers=[], blockers=[] — stub pattern observed in i1023 fabrication). Real cycles MUST have at least auditors populated. If specialists genuinely didn't run for a cycle, omit the cycle from the array — don't fabricate placeholder shape."
+fi
+
 # --- Build canonical entry via jq -n ---
 JSON_ENTRY=$(jq -cn \
   --arg     ref             "$REF" \
