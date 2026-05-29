@@ -350,7 +350,7 @@ Phase 4: append per-task JSONL entry to `log_path`. For DORA-ish self-analysis +
 - `include_phase_durations` — track per-phase wall-clock for cycle-time analysis
 - `tier: 1` — selects what to capture. `0` = minimal (just outcome + gate pass/fail), `1` = structured failure details + self-review calibration + specialist iterations (recommended for skill iteration feedback), `2` = reserved for future `/do-review` companion skill that auto-summarizes patterns
 - `capture_failure_details` — when a gate fails, include `details` block: which strings unwrapped (i18n), which fields mismatched (contract), which packages vulnerable (dep_vuln), how many lines/files (pr_size), etc.
-- `capture_self_review_calibration` — Phase 2.5 self-review claims are recorded; Phase 3 outcomes are compared; calibration computed: `accurate` (claim matched reality), `false_positive` (claimed clean, Phase 3 found issues), `false_negative` (claimed issues, Phase 3 found none)
+- `capture_self_review_calibration` — Phase 2.5 self-review claims are recorded; Phase 3 outcomes are compared; calibration computed: `accurate` (claim matched reality), `false_positive` (claimed clean, Phase 3 found issues), `false_negative` (claimed issues, Phase 3 found none). Recorded in **three** dimensions: `calibration` (legacy combined, back-compat), `calibration_defect` (real CODE defect missed — the de-confounded primary signal), and `calibration_size` (diff-size prediction; `n_a` when pr_size gate didn't run). The split exists because ~39% of historical `false_positive` entries fired ONLY `pr_size=warn` — diff-size noise, not code defects. See [`phase-4-finalize.md`](phase-4-finalize.md) §4.11 "Calibration logic".
 - `capture_specialist_iterations` — High-complexity Phase 3.6 records each cycle's auditors / approvers / blockers with file:line citations
 - `max_string_length` — truncate captured strings (error messages, code snippets) at this length to keep JSONL parseable
 
@@ -392,7 +392,10 @@ JSONL entry schema (Tier 1):
   },
   "self_review": {
     "performed": true,
+    "claimed_status": "ready",
     "calibration": "false_positive",
+    "calibration_defect": "false_positive",
+    "calibration_size": "n_a",
     "miscalibrated": ["AC2: claimed implemented; Phase 3.3 found 4 unwrapped strings"]
   },
   "specialist_iterations": [

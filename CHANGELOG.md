@@ -21,6 +21,26 @@ Audit of 225 canonical entries (May 14–24) found the `gates` JSON had **~110 d
 - Gate buckets in the daily report: **60 → 19 canonical + ~8 task-specific one-offs**. `test` consolidated to 1 fail / 106 pass (was scattered across `test`/`tests`/`test_gate`/`go_test`/`go_test_race`/`unit_tests`/…), `specialist_audit` to 2/54, `dep_vuln` to 0/64, `pr_size` to 0/144.
 - Confirms P4's "never-fails" gate candidates with clean data: `opus_review` 0/124, `i18n` 0/76, `contract` 0/39, `migration_audit` 0/19.
 
+### Metrics — split self-review calibration into defect vs size (P2)
+
+The single `self_review.calibration` field conflated two unrelated failures: *Sonnet missed a real code defect* and *Sonnet didn't predict diff size*. Audit of 254 live entries: of **44 `false_positive` entries, 17 (39%) fired ONLY `pr_size=warn`** — the code was fine, the diff was just big. Counting those as "self-review missed something" inflates the FP rate and misleads skill iteration (you'd tighten the self-review prompt when the actual problem is routing/size).
+
+#### Added
+
+- **`metrics-append` — `--sr-calibration-defect` + `--sr-calibration-size` flags** (enum `accurate|false_positive|false_negative|skipped|n_a`, default `n_a`). Recorded under `self_review.calibration_defect` / `self_review.calibration_size`. The legacy `self_review.calibration` is **unchanged** (back-compat) — callers that don't pass the split flags get `n_a` for both, correctly read as "split not computed; use the combined field." Enum-validated + asserted in the defense-in-depth schema gate.
+  - `calibration_defect` — did Phase 3 find a real CODE defect (any non-`pr_size` gate fail/block, or a specialist blocker) that Sonnet claimed `ready` over? This is the **de-confounded primary calibration signal** going forward.
+  - `calibration_size` — did Sonnet predict the diff size? (`pr_size` warn/block vs Sonnet's `size_assessment`/Phase 2.0 rebump). `n_a` when the `pr_size` gate didn't run.
+
+#### Changed
+
+- **`phase-4-finalize.md` §4.11 calibration logic** — rewritten to compute all three values (legacy + the two split dimensions) with explicit, copy-able pseudocode; §4.13 + the §4.11 canonical invocation now pass the two new flags.
+- **`phase-2-implementation.md` Self-Review** — new step #8 instructs distinguishing a CODE deferral from a SIZE deferral; the completion-report format gains a machine-readable `size_assessment: fits|exceeds` line and splits `Deferred:` into `Deferred (code)` / `Deferred (size)` so the orchestrator computes `calibration_size` from a signal, not prose.
+- **`config-schema.md`** — JSONL example shows the three calibration fields (+ the previously-missing `claimed_status`); `capture_self_review_calibration` description documents the split; **specialist-install confounder** documented (FP rates not comparable across the ≈2026-05-17 plugin-install boundary — pre-install cohorts had zero specialist review).
+
+#### Why it matters
+
+`calibration_defect` is now the metric to watch for self-review-prompt tuning (it ignores size noise); `calibration_size` measures whether Phase 0 line-aware routing + Phase 2.0 plan-size check + the P0 PR-size ceiling actually predict diff size. The two move independently — conflating them is why the v0.6→post-v0.6 "FP regression 15%→33%" looked alarming when it was mostly more reviewers + diff-size noise.
+
 ### Post-v0.6.0 audit follow-ups — 4 fixes from 32-entry data
 
 After v0.6.0 deployed (May 21, 11:23Z), 32 canonical post-deploy entries accumulated in ~2.5 days. Audit (see [previous CHANGELOG entry](#phase-20-plan-size-check--observability-via-complexity_rebumped_from)) showed:

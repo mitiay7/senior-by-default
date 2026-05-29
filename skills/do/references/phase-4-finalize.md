@@ -328,6 +328,8 @@ announce coupling depends on capturing its stdout into `$METRICS_LINE`):
   --sr-performed     "$SR_PERFORMED" \
   --sr-claimed       "$SR_CLAIMED_STATUS" \
   --sr-calibration   "$SR_CALIBRATION" \
+  --sr-calibration-defect "$SR_CALIBRATION_DEFECT" \         # split dim (defaults n_a)
+  --sr-calibration-size   "$SR_CALIBRATION_SIZE" \           # split dim (defaults n_a)
   [--gates-json              "$GATES_JSON" \                  # optional, defaults {}
    --phase-durations-json    "$PHASE_DURATIONS_JSON" \         # optional, defaults {}
    --review-cycles           "$REVIEW_CYCLES" \                # optional, defaults 0
@@ -349,12 +351,14 @@ a sub-agent bypasses the wrapper, the bypass shows up in the next morning's repo
 than silently polluting the analysis. Don't rely on this — it's a tripwire, not a fix.
 
 ### Self-review calibration logic
-After Phase 3 completes, before Step 2:
+After Phase 3 completes, before Step 2. Compute the **legacy combined** value (kept for
+back-compat) AND the **two split dimensions** that de-confound it.
 
 ```
 phase3_failed_gates = [g for g in gates if gates[g].status in ("fail", "block")]
 sonnet_claimed = sonnet_self_review.claimed_status        # "ready" | "deferred" | "uncertain"
 
+# --- Legacy combined calibration (--sr-calibration; unchanged) ---
 if not self_review.performed:
     calibration = "skipped"
 elif sonnet_claimed == "ready" and phase3_failed_gates:
@@ -368,7 +372,51 @@ else:
     calibration = "accurate"   # flagged issues, Phase 3 confirmed
 ```
 
-This calibration metric is the **highest-signal data point** for skill iteration. False-positive rate trending up → self-review prompt too lax. False-negative rate up → Sonnet over-flagging.
+**Why split** (production audit, 254 entries): of 44 `false_positive` entries, **17 (39%)
+fired ONLY `pr_size=warn`** — Sonnet's code was fine, it just under-predicted diff size.
+Counting those as "self-review missed something" inflates the FP rate and conflates two
+different failures: *missing a real code defect* vs *not predicting diff size*. The split
+records each separately so future audits read the right signal.
+
+```
+# A "real code defect" = any NON-pr_size gate failing/blocking, OR a specialist blocker.
+specialist_blocked = any(c.blockers for c in specialist_iterations)
+defect_found = [g for g in phase3_failed_gates if g != "pr_size"] or specialist_blocked
+
+# --- calibration_defect (--sr-calibration-defect): code-correctness dimension ---
+if not self_review.performed:                       calibration_defect = "skipped"
+elif sonnet_claimed == "ready" and defect_found:    calibration_defect = "false_positive"
+elif sonnet_claimed == "ready":                     calibration_defect = "accurate"
+elif sonnet_claimed in ("deferred","uncertain") and not defect_found:
+                                                    calibration_defect = "false_negative"
+else:                                               calibration_defect = "accurate"
+
+# --- calibration_size (--sr-calibration-size): diff-size-prediction dimension ---
+pr_size_fired      = gates.get("pr_size", {}).get("status") in ("warn", "block")
+# Sonnet "flagged size" = its self-review emitted `size_assessment: exceeds` (Phase 2.5
+# step #6/#8), OR a Phase 2.0 plan-size rebump happened this task (complexity_rebumped_from
+# is set). The machine-readable `size_assessment` line is the primary signal — don't guess
+# from prose.
+sonnet_flagged_size = (sonnet_self_review.size_assessment == "exceeds") \
+                      or (COMPLEXITY_REBUMPED_FROM != "")
+
+if not self_review.performed:                       calibration_size = "skipped"
+elif "pr_size" not in gates:                        calibration_size = "n_a"   # gate didn't run
+elif sonnet_flagged_size and pr_size_fired:         calibration_size = "accurate"
+elif (not sonnet_flagged_size) and pr_size_fired:   calibration_size = "false_positive"  # under-predicted
+elif sonnet_flagged_size and (not pr_size_fired):   calibration_size = "false_negative"  # over-predicted
+else:                                               calibration_size = "accurate"
+```
+
+Pass all three via `--sr-calibration`, `--sr-calibration-defect`, `--sr-calibration-size`
+in §4.13. The split dimensions default to `n_a` if omitted (back-compat), but you SHOULD
+compute and pass them — `calibration_defect` is now the **highest-signal data point** for
+skill iteration (the de-confounded FP rate: defect-FP trending up → self-review prompt too
+lax; defect-FN up → Sonnet over-flagging), while `calibration_size` tells whether Phase 0/2.0
+routing predicts diff size well (size-FP up → routing under-estimates; the P0 PR-size ceiling
++ plan-size-check should drive it down). **Confounder**: do not compare FP rates across the
+≈2026-05-17 specialist-plugin-install boundary — pre-install cohorts had zero specialist
+review, so mechanically fewer findings. Segment any trend on that date.
 
 ### Schema reference
 See [`config-schema.md`](config-schema.md) under `metrics` for the full Tier 1 entry schema.
@@ -406,6 +454,8 @@ if [ -n "$LOG_PATH" ]; then
         --sr-performed     "$SR_PERFORMED" \
         --sr-claimed       "$SR_CLAIMED_STATUS" \
         --sr-calibration   "$SR_CALIBRATION" \
+        ${SR_CALIBRATION_DEFECT:+--sr-calibration-defect "$SR_CALIBRATION_DEFECT"} \
+        ${SR_CALIBRATION_SIZE:+--sr-calibration-size "$SR_CALIBRATION_SIZE"} \
         ${TITLE:+--title              "$TITLE"} \
         ${SCOPE:+--scope              "$SCOPE"} \
         ${NOTES:+--notes              "$NOTES"} \

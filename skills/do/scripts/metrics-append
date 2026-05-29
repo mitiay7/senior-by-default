@@ -18,6 +18,12 @@
 #     --started-at 2026-05-15T08:00:00Z --ended-at 2026-05-15T08:30:00Z \
 #     --files-changed 3 --lines-added 42 --lines-deleted 7 \
 #     --sr-performed true --sr-claimed ready --sr-calibration accurate \
+#     [--sr-calibration-defect accurate --sr-calibration-size false_positive]
+#                                 # optional SPLIT of calibration into two de-confounded
+#                                 # dimensions (enum: accurate|false_positive|false_negative|
+#                                 # skipped|n_a; default n_a = not computed → use legacy
+#                                 # `calibration`). defect = real code defect missed?;
+#                                 # size = diff-size-only miss? See phase-4-finalize.md §4.11.
 #     [--orchestrator opus-4.7]   # default: "opus"; pass model version for tracking
 #     [--complexity-rebumped-from M]  # optional: set if Phase 2.0 plan-size check
 #                                     # re-routed the task. Value = ORIGINAL complexity
@@ -78,6 +84,12 @@ SPECIALIST_ITERATIONS_JSON='[]'
 SR_MISCALIBRATED_JSON='[]'
 ORCHESTRATOR="opus"   # spec mandates orchestrator=opus; caller can pass model version e.g. "opus-4.7"
 COMPLEXITY_REBUMPED_FROM=""   # optional: T|L|M if Phase 2.0 plan-size check re-routed; "" if no rebump
+# Self-review calibration SPLIT dimensions (optional; default n_a = not computed by
+# this caller — fall back to the legacy combined `calibration` field). The legacy
+# `calibration` conflates "missed a real defect" with "didn't predict diff size";
+# the split de-confounds them. See phase-4-finalize.md §4.11 "Calibration logic".
+SR_CALIBRATION_DEFECT="n_a"   # real code defect Sonnet missed? (non-pr_size gate fail/block or specialist blocker)
+SR_CALIBRATION_SIZE="n_a"     # diff-size-only miss? (pr_size warn/block as the sole concern)
 
 # --- Required (no defaults; verified after parse) ---
 LOG_PATH=""
@@ -110,6 +122,8 @@ while [ $# -gt 0 ]; do
     --sr-performed)              SR_PERFORMED="$2";              shift 2 ;;
     --sr-claimed)                SR_CLAIMED="$2";                shift 2 ;;
     --sr-calibration)            SR_CALIBRATION="$2";            shift 2 ;;
+    --sr-calibration-defect)     SR_CALIBRATION_DEFECT="$2";     shift 2 ;;
+    --sr-calibration-size)       SR_CALIBRATION_SIZE="$2";       shift 2 ;;
     --sr-miscalibrated-json)     SR_MISCALIBRATED_JSON="$2";     shift 2 ;;
     --gates-json)                GATES_JSON="$2";                shift 2 ;;
     --phase-durations-json)      PHASE_DURATIONS_JSON="$2";      shift 2 ;;
@@ -124,7 +138,7 @@ while [ $# -gt 0 ]; do
     --orchestrator)              ORCHESTRATOR="$2";              shift 2 ;;
     --complexity-rebumped-from)  COMPLEXITY_REBUMPED_FROM="$2";  shift 2 ;;
     -h|--help)
-      sed -n '3,30p' "$0"
+      sed -n '4,60p' "$0"
       exit 0
       ;;
     *) die "unknown arg: $1" ;;
@@ -153,6 +167,8 @@ done
 [[ "$SR_PERFORMED"   =~ ^(true|false)$ ]]                                        || die "--sr-performed must be true|false, got: $SR_PERFORMED"
 [[ "$SR_CLAIMED"     =~ ^(ready|deferred|uncertain|n/a)$ ]]                      || die "--sr-claimed invalid, got: $SR_CLAIMED"
 [[ "$SR_CALIBRATION" =~ ^(accurate|false_positive|false_negative|skipped)$ ]]    || die "--sr-calibration invalid, got: $SR_CALIBRATION"
+[[ "$SR_CALIBRATION_DEFECT" =~ ^(accurate|false_positive|false_negative|skipped|n_a)$ ]] || die "--sr-calibration-defect must be accurate|false_positive|false_negative|skipped|n_a, got: $SR_CALIBRATION_DEFECT"
+[[ "$SR_CALIBRATION_SIZE"   =~ ^(accurate|false_positive|false_negative|skipped|n_a)$ ]] || die "--sr-calibration-size must be accurate|false_positive|false_negative|skipped|n_a, got: $SR_CALIBRATION_SIZE"
 [[ "$AUTO_MERGE"     =~ ^(true|false)$ ]]                                        || die "--auto-merge must be true|false, got: $AUTO_MERGE"
 [[ "$FILES_CHANGED"  =~ ^[0-9]+$ ]]                                              || die "--files-changed must be int, got: $FILES_CHANGED"
 [[ "$LINES_ADDED"    =~ ^[0-9]+$ ]]                                              || die "--lines-added must be int, got: $LINES_ADDED"
@@ -332,6 +348,8 @@ JSON_ENTRY=$(jq -cn \
   --argjson sr_performed    "$SR_PERFORMED" \
   --arg     sr_claimed      "$SR_CLAIMED" \
   --arg     sr_calibration  "$SR_CALIBRATION" \
+  --arg     sr_cal_defect   "$SR_CALIBRATION_DEFECT" \
+  --arg     sr_cal_size     "$SR_CALIBRATION_SIZE" \
   --argjson sr_misc         "$SR_MISCALIBRATED_JSON" \
   --argjson specialist_iters "$SPECIALIST_ITERATIONS_JSON" \
   --arg     ci_status       "$CI_STATUS" \
@@ -354,6 +372,8 @@ JSON_ENTRY=$(jq -cn \
        performed:$sr_performed,
        claimed_status:$sr_claimed,
        calibration:$sr_calibration,
+       calibration_defect:$sr_cal_defect,
+       calibration_size:$sr_cal_size,
        miscalibrated:$sr_misc
      },
      specialist_iterations:$specialist_iters,
@@ -376,7 +396,9 @@ echo "$JSON_ENTRY" | jq -e '
   (.files_changed  | type=="number")              and
   (.self_review.performed     | type=="boolean") and
   (.self_review.claimed_status| test("^(ready|deferred|uncertain|n/a)$")) and
-  (.self_review.calibration   | test("^(accurate|false_positive|false_negative|skipped)$"))
+  (.self_review.calibration   | test("^(accurate|false_positive|false_negative|skipped)$")) and
+  (.self_review.calibration_defect | test("^(accurate|false_positive|false_negative|skipped|n_a)$")) and
+  (.self_review.calibration_size   | test("^(accurate|false_positive|false_negative|skipped|n_a)$"))
 ' >/dev/null || die "schema gate failed (internal — please report)"
 
 # --- Append + verify ---

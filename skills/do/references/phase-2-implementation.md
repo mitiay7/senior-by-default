@@ -215,16 +215,18 @@ After implementation + tests + build pass, run a self-review pass:
 3. Re-read your own diff (`git diff main...HEAD`) and check against the rules above + the issue's "Out of Scope" section.
 4. Confirm simplicity + surgical scope: no speculative abstraction/config/deps/flags, no unrelated formatting/comment churn, every changed line traceable to the task.
 5. Flag anything you skipped or deferred. Don't hide it.
-6. **Run `git diff main...HEAD --stat`** and check actual diff size against the bucket the task was routed for. If `complexity=M` and diff > 600 lines OR > 8 files (M-bucket caps per Phase 0 matrix), DO NOT claim `ready` — return `claimed_status: deferred` with a note like "diff size {N} lines / {F} files exceeds M-bucket caps; recommend re-route to H for specialist review". Same for L exceeding 200 lines / 3 files. Calibration rationale: production audit of 32 post-v0.6.0 entries showed M-tasks shipping 1000–2000 lines self-claiming `ready`, with Phase 3 catching `pr_size=warn` after the fact — wasted cycles. Phase 2.0 plan-size check (above) should have caught this at plan-time; this is a second-layer check using the ACTUAL diff post-write. If both layers miss, that's a calibration-data-point for skill iteration.
+6. **Run `git diff main...HEAD --stat`** and check actual diff size against the bucket the task was routed for. If `complexity=M` and diff > 600 lines OR > 8 files (M-bucket caps per Phase 0 matrix), set `size_assessment: exceeds` (below) and DO NOT claim `ready` — return `claimed_status: deferred` with a note like "diff size {N} lines / {F} files exceeds M-bucket caps; recommend re-route to H for specialist review". Same for L exceeding 200 lines / 3 files. Calibration rationale: production audit of 32 post-v0.6.0 entries showed M-tasks shipping 1000–2000 lines self-claiming `ready`, with Phase 3 catching `pr_size=warn` after the fact — wasted cycles. Phase 2.0 plan-size check (above) should have caught this at plan-time; this is a second-layer check using the ACTUAL diff post-write. If both layers miss, that's a calibration-data-point for skill iteration.
 7. **Declare an overall claimed_status** — one of:
    - `ready` — all acceptance criteria implemented + verified, no known issues, AND diff fits the routed bucket
    - `deferred` — implemented + tested, but explicitly deferred something (with note) OR diff exceeds routed bucket caps (re-route hint above)
    - `uncertain` — uncertain about a specific aspect (Phase 3 should pay extra attention here)
+8. **Distinguish a CODE concern from a SIZE concern when you defer.** Phase 4.11 splits self-review calibration into two de-confounded dimensions: `calibration_defect` (did you miss a real code defect?) and `calibration_size` (did you predict diff size?). So when you defer/flag, say WHICH it is — a deferral for "diff size exceeds bucket" is a size signal, not a defect. Emit the explicit `size_assessment:` line so this is machine-readable rather than guessed from prose.
 
 Output the self-review as a section in your completion report (this section is parsed by Phase 4.11 for metrics calibration — match the format):
 ```
 ## Self-Review
 claimed_status: ready
+size_assessment: fits          # fits | exceeds — does the ACTUAL diff fit the routed bucket caps? (drives calibration_size)
 Acceptance Criterion 1: ✓ {file.go:42}
 Acceptance Criterion 2: ✓ {file.go:80}, test {file_test.go: TestX}
 Tests for new fns:
@@ -232,11 +234,12 @@ Tests for new fns:
   - HandleBar: TestHandleBar_OK / TestHandleBar_ErrNotFound
 Simplicity/surgical check: no speculative abstractions or drive-by edits; changed lines trace to task
 Out-of-scope check: no scope creep detected
-Deferred: {nothing | "extracted shared helper, not required by acceptance — added as tech debt note"}
-Uncertain: {none | "concurrency in connection pool — flagged for reviewer"}
+Deferred (code): {nothing | "concurrency in connection pool — flagged for reviewer"}
+Deferred (size): {nothing | "diff 1340 lines exceeds M-bucket 600 cap — recommend re-route to H"}
+Uncertain: {none | "..."}
 ```
 
-The first line `claimed_status: <ready|deferred|uncertain>` is REQUIRED — Phase 4.11 reads it to compute self-review calibration (`accurate` / `false_positive` / `false_negative`) by comparing against actual Phase 3 outcomes. This is the highest-signal data point for skill iteration; do not omit.
+The first line `claimed_status: <ready|deferred|uncertain>` is REQUIRED — Phase 4.11 reads it to compute self-review calibration by comparing against actual Phase 3 outcomes. The `size_assessment: fits|exceeds` line and the split `Deferred (code)` / `Deferred (size)` framing feed the two calibration dimensions (`calibration_defect`, `calibration_size`). This is the highest-signal data point for skill iteration; do not omit.
 
 [+ if --no-self-review in $ARGUMENTS: omit this entire section, metrics will record `self_review.performed: false`]
 ```
