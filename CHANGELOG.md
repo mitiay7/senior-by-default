@@ -4,6 +4,22 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Cleanup — gate investigation, §19 consolidation, wrapper-lib assessment (P4)
+
+#### Dead-gate investigation → keep all five (measurement artifact, not theater)
+
+The audit flagged five gates as never-failing (`opus_review`, `i18n`, `contract`, `test`, `migration_audit` — all `0 fails` across runs). Investigated before pruning: the `0 fails` is a **measurement artifact**, not theater. Phase 3 loops until pass and records the *terminal* (resolved) gate state, so a gate that fired and was fixed within the task shows `status: pass` with `fix_cycle > 0`. Counting `fix_cycle > 0` (the gate actually caught something), all five DO fire: **`opus_review` 16/125, `test` 5/130, `i18n` 5/104, `contract` 2/81, `migration_audit` 1/38**. None is removed — each is a safety gate with demonstrated catches; removing any would lose real defect detection. The spec-level justification to keep them is exactly this `fix_cycle` evidence.
+
+- **`daily-report.sh`** (operator-side) — gate table gains a **`Fired*`** column = terminal fail/block/warn OR `fix_cycle > 0`, sorted by it. This is the honest "is this gate doing anything?" metric; the old fail-only view hid the resolved catches and made live gates look dead. (e.g. `specialist_audit` Fired 39, `pr_size` 36, `dep_vuln` 21, `opus_review` 16 — all previously showed Fail 0.)
+
+#### §19 anti-pattern family consolidated
+
+- **`anti-patterns.md`** — the sprawling §19 / §19a–§19f (7 entries, heavy repetition of the same root cause) collapsed into **one principle** ("the orchestrator skips inline spec-bash and fabricates output; every side-effect must be wrapper-owned with a tell") **+ a compact 6-row instance table** (id · side-effect→wrapper · anti-fabrication tell · bypass diagnostic · tier-3 hook). Legacy ids (19a–19f) are retained as table-row tags so existing `§19c`-style cross-references still resolve. The table adds a **Tier-3 hook** column noting which instances now have a runtime backstop (19a metrics → Stop hook; 19d/19f size → PreToolUse hook). No information lost; ~70 lines → a principle + table.
+
+#### Wrapper boilerplate — assessed, extraction declined (intentional)
+
+Reviewed the 6 wrappers (1036 LOC) for a shared `scripts/_wrapper-lib.sh`. Found the only duplication is trivial or localized: `die`/`iofail` are 1-line definitions (5/3 wrappers), and the lone substantial repeat is an 8-line schema-validate python block in exactly 2 wrappers (`config-init`, `config-ensure-metrics`). **Decision: do not extract.** Rationale — (1) the wrappers' **self-containment is a documented design value** (`plan-size-check`: "duplicated here ON PURPOSE so the wrapper is self-contained"); each is independently inspectable/copyable, which matters for an audit-sensitive tool; (2) a sourced lib adds a "lib not found / not sourced" failure mode to the Phase 0 critical path (`config-init`/`config-ensure-metrics`) to save ~30 lines; (3) the schema-validate is already best-effort (skips when `jsonschema` is absent). Extracting would be cargo-cult DRY against an explicit principle. SKILL.md top-level anti-pattern list + README reviewed for consistency with the consolidation (legacy §-references still resolve; no edits needed beyond the P0–P3 additions).
+
 ### Hook-based enforcement (tier 3, OPT-IN) (P3)
 
 The wrapper tier (tier 2) is strong but model-dependent: if the orchestrator never invokes a wrapper, it can't fire (~18% compliance on the internal-only plan-size check, higher on user-visible ones). For the two checks that MUST happen every task, add **Claude Code hooks** — scripts the runtime executes itself, independent of the model. Opt-in and off by default; the skill degrades cleanly to tiers 1+2 without them.
