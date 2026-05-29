@@ -43,16 +43,42 @@ All strings truncated to `config.metrics.max_string_length` chars. Captured data
 
 All applicable gates must PASS before 3.6 / 3.7.
 
-## 3.0 PR Size Guard
-```
-git -C {worktree} diff main...HEAD --shortstat
-git -C {worktree} diff main...HEAD --name-only | wc -l
+## 3.0 PR Size Guard — **decision comes from the `pr-size-check` wrapper, NOT your judgment**
+
+Measure the actual diff, then run the wrapper. Do NOT eyeball the numbers and decide PASS/WARN/BLOCK yourself — production shipped **8 PRs >2000 lines as `pr_size=warn`** because the orchestrator read "block → STOP" and treated it as advisory (anti-patterns §19f / §21). The wrapper owns the decision; **BLOCK exits 3 (a hard halt)**, so it cannot be narrated past.
+
+```bash
+DIFF_LINES=$(git -C "$WORKTREE_PATH" diff main...HEAD --numstat | awk '{a+=$1; d+=$2} END {print a+d+0}')   # total churn (added+deleted)
+DIFF_FILES=$(git -C "$WORKTREE_PATH" diff main...HEAD --name-only | wc -l | tr -d ' ')
+
+# Pass config.pr_size.* ONLY when the project overrides the defaults; the wrapper
+# bakes in the config-schema.md defaults (warn 800/20, block 2000/50) otherwise.
+PR_SIZE_LINE="$(~/.claude/skills/do/scripts/pr-size-check \
+  --lines "$DIFF_LINES" --files "$DIFF_FILES" \
+  ${CFG_WARN_LINES:+--warn-lines "$CFG_WARN_LINES"} \
+  ${CFG_WARN_FILES:+--warn-files "$CFG_WARN_FILES"} \
+  ${CFG_BLOCK_LINES:+--block-lines "$CFG_BLOCK_LINES"} \
+  ${CFG_BLOCK_FILES:+--block-files "$CFG_BLOCK_FILES"})" && PR_SIZE_RC=0 || PR_SIZE_RC=$?
+echo "$PR_SIZE_LINE"
+
+case "$PR_SIZE_LINE" in
+  "Phase 3.0: PASS"*)  GATE_PR_SIZE_STATUS=pass ;;                         # proceed
+  "Phase 3.0: WARN"*)  GATE_PR_SIZE_STATUS=warn; PR_SIZE_NOTE="$PR_SIZE_LINE" ;;  # note in PR desc (4.2), proceed
+  "Phase 3.0: BLOCK"*)                                                     # PR_SIZE_RC == 3 — HARD HALT
+    GATE_PR_SIZE_STATUS=block
+    # Do NOT proceed to the merge gate. Same escalation path as Phase 3.6 3-cycle exhaustion:
+    #   1. Push current state, create a DRAFT PR (`gh pr create --draft`, title prefixed `WIP:`)
+    #   2. File follow-up split issues (~N sub-issues per the wrapper's suggested count)
+    #   3. Apply the `blocked` label; comment the split proposal on the issue
+    #   4. Phase 4.11 metrics: gates.pr_size.status = "block"; OUTCOME = "blocked"
+    #   5. Tell user: "PR-size BLOCK: {PR_SIZE_LINE}. Draft PR: {url}. Split before merge."
+    ;;
+esac
 ```
 
-Apply `config.pr_size` thresholds:
-- ≤warn → proceed
-- warn < lines/files ≤ block → WARN: `"PR is {lines} lines / {files} files. Consider splitting follow-ups."`. Note in PR description.
-- > block → BLOCK. Tell user: `"PR exceeds block thresholds ({lines}>{block_lines} or {files}>{block_files}). Split into N follow-up issues. Sonnet should not have produced this size — review the plan."` Push current state as draft branch, file follow-up issues with the proposed splits, do NOT proceed to merge gate.
+**Why a wrapper, not inline threshold bash**: identical to the [plan-size-check §2.0](phase-2-implementation.md) lesson — the orchestrator reliably runs `$(wrapper)` + `case`, but reliably *fabricates* a plausible verdict from inline `if [ $lines -gt $block ]` it's told to evaluate itself. The wrapper output's `breached: [..]` list + `+N lines/+N files` overage are the anti-fabrication tell (computed from the real numbers); the non-zero BLOCK exit is the structural halt. Record the result in the metrics `gates.pr_size` entry: `{ "status": pass|warn|block, "details": { "lines": <int>, "files": <int>, "thresholds_breached": [...] } }`.
+
+> **`block` is not advisory.** If `pr-size-check` says BLOCK, the PR does not merge this run — it becomes a draft + `blocked` outcome and the user splits it. The plan was wrong, not the implementation (re-plan into smaller issues; Phase 2.0 plan-size-check should have caught it earlier).
 
 ## 3.0.5 Dep Vulnerability Scan
 Per `cache.package_manager`:

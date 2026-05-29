@@ -59,11 +59,24 @@ done
 # wrapper is self-contained and the spec doesn't carry copyable threshold
 # values (anti-fabrication: orchestrator skipping the wrapper can't guess
 # the exact numbers).
+#
+# H ceiling (25 files / 1500 lines) is a REAL bound, not the old effectively-
+# unbounded 999/99999 — with the old values the SPLIT-REQUIRED branch was dead
+# code (no plan ever exceeded 99999 lines), so genuinely-huge H tasks sailed
+# through to a 4000-line unreviewable PR. Rationale: a single PR beyond ~1500
+# added lines or ~25 files cannot be meaningfully reviewed in one sitting and
+# should be decomposed into sequenced sub-issues. The H cap sits BELOW the
+# Phase 3 pr_size block default (2000 lines / 50 files) on purpose: plan-time
+# (estimate) catches the obviously-too-big before an hour of Sonnet time is
+# spent; the 1500→2000 band is the margin for estimate error that Phase 3
+# pr_size warns on; >2000 actual is the hard block backstop. Audit (254 entries,
+# May 14–24): 8 PRs shipped >2000 lines as pr_size=warn (never blocked); several
+# H tasks hit 3000–4166 lines. SPLIT-REQUIRED firing at plan time prevents that.
 case "$CURRENT" in
   T) MAX_FILES=2;   MAX_LINES=50    ;;
   L) MAX_FILES=3;   MAX_LINES=200   ;;
   M) MAX_FILES=8;   MAX_LINES=600   ;;
-  H) MAX_FILES=999; MAX_LINES=99999 ;;
+  H) MAX_FILES=25;  MAX_LINES=1500  ;;
 esac
 
 if [ "$PLANNED_FILES" -le "$MAX_FILES" ] && [ "$PLANNED_LINES" -le "$MAX_LINES" ]; then
@@ -76,6 +89,13 @@ if [ "$CURRENT" != "H" ]; then
   exit 0
 fi
 
-# Already H and still exceeded — must split
-echo "Phase 2.0: SPLIT-REQUIRED — H bucket exceeded by planned $PLANNED_FILES files / $PLANNED_LINES lines (caps: $MAX_FILES / $MAX_LINES). Split into <N> sub-issues before re-running."
+# Already H and still exceeded — must split. Suggest a concrete sub-issue count:
+# the worse of (lines-overage, files-overage), ceil-divided by the H cap. The
+# computed number is also an anti-fabrication tell — the orchestrator can't echo
+# the right SUGGEST value without running the wrapper on the actual plan numbers.
+SPLIT_BY_LINES=$(( (PLANNED_LINES + MAX_LINES - 1) / MAX_LINES ))
+SPLIT_BY_FILES=$(( (PLANNED_FILES + MAX_FILES - 1) / MAX_FILES ))
+SUGGEST=$SPLIT_BY_LINES; [ "$SPLIT_BY_FILES" -gt "$SUGGEST" ] && SUGGEST=$SPLIT_BY_FILES
+[ "$SUGGEST" -lt 2 ] && SUGGEST=2
+echo "Phase 2.0: SPLIT-REQUIRED — H bucket exceeded by planned $PLANNED_FILES files / $PLANNED_LINES lines (caps: $MAX_FILES files / $MAX_LINES lines). Split into ~$SUGGEST sub-issues before re-running — a single PR this size is unreviewable."
 exit 0

@@ -45,7 +45,7 @@ The skill inherits whatever auth `gh`/`git` already have on your machine — ass
 - **Karpathy-style behavioral guardrails** — assumptions surfaced before side effects, simplest viable implementation, surgical diffs only, and verifiable goals for every non-trivial task.
 - **Quality gates are pass/fail against acceptance criteria** — no "rate this 1-10" subjective review.
 - **Zero-downtime migration audit** baked in: `DROP COLUMN` / `RENAME` / `NOT NULL`-without-default get blocked with expand-contract pattern suggested.
-- **Self-review calibration metric** — Sonnet declares `claimed_status: ready` before Phase 3; Phase 3 outcomes are compared and `false_positive` rate tracked over time. The highest-signal data point for skill iteration.
+- **Self-review calibration metric** — Sonnet declares `claimed_status: ready` before Phase 3; Phase 3 outcomes are compared and the `false_positive` rate tracked over time. Recorded in two de-confounded dimensions — `calibration_defect` (missed a real code defect?) vs `calibration_size` (mis-predicted diff size?) — so size noise doesn't masquerade as a self-review miss. The highest-signal data point for skill iteration.
 - **Stack-aware**: detects Go / TS / Rust / Python / Ruby / PHP / JVM / Dart / .NET / Deno / Elixir, scans monorepo subdirs (`apps/`, `services/`, etc.) for marker files. Caches detection per repo.
 - **Tracker-agnostic**: GitHub (`gh`) by default, GitLab (`glab`), or custom command templates for Linear/Jira/etc.
 
@@ -216,7 +216,8 @@ Three Claude models with hard role boundaries — see [`skills/do/SKILL.md`](ski
 | Specialist parallel review | `specialists.{backend_plan, frontend_audit, ...}` | Phase 2 (High) and Phase 3.6 spawn 2-3 reviewers in parallel |
 | CI wait + auto-merge | `ci.required: true` + `auto_merge.enabled: true` | Phase 4 waits for green CI, then `gh pr merge --auto` |
 | Slack/Teams notifications | `notifications.slack_webhook` | Phase 1/4 broadcast task lifecycle |
-| Metrics for skill iteration | `metrics.log_path` + `tier: 1` | JSONL append per task; self-review calibration tracked |
+| PR-size ceiling | `pr_size.{warn_lines, block_lines, ...}` (on by default: warn 800/20, block 2000/50) | Phase 3.0 `pr-size-check` wrapper: ≤warn PASS, >warn WARN (note in PR), >block **BLOCK** (hard halt → draft PR + `blocked` label, exit 3). Plan-time sibling: Phase 2.0 `plan-size-check` H ceiling 25 files / 1500 lines → SPLIT-REQUIRED |
+| Metrics for skill iteration | `metrics.log_path` + `tier: 1` | JSONL append per task; self-review calibration tracked in 3 dimensions (`calibration` + de-confounded `calibration_defect` / `calibration_size`); gate keys normalized to a controlled vocabulary |
 
 See [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md) for the full schema and [`examples/`](examples/) for ready-to-adapt configs.
 

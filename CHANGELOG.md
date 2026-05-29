@@ -41,6 +41,30 @@ The single `self_review.calibration` field conflated two unrelated failures: *So
 
 `calibration_defect` is now the metric to watch for self-review-prompt tuning (it ignores size noise); `calibration_size` measures whether Phase 0 line-aware routing + Phase 2.0 plan-size check + the P0 PR-size ceiling actually predict diff size. The two move independently — conflating them is why the v0.6→post-v0.6 "FP regression 15%→33%" looked alarming when it was mostly more reviewers + diff-size noise.
 
+### PR-size ceiling that actually blocks + SPLIT-REQUIRED that actually fires (P0)
+
+The single biggest quality gap: tasks were too big and the size ceiling was never enforced. Audit (254 entries): H-complexity diff median 855 lines, p90 3103, max 4166; **8 PRs added >2000 lines and ALL shipped as `pr_size=warn`, never `block`**, despite `block_lines=2000` (i807 3587L, i1167 3669L, i1100 2067L, i1168 2053L). Two root causes — (1) Phase 2.0 `plan-size-check`'s H bucket was effectively unbounded (`MAX_FILES=999 / MAX_LINES=99999`), so the `SPLIT-REQUIRED` branch was dead code; (2) Phase 3.0's PR-size gate described `block → STOP` as inline spec text the orchestrator treated as advisory and degraded to `warn`.
+
+#### Changed
+
+- **`plan-size-check` — real H ceiling**: `MAX_FILES 999→25`, `MAX_LINES 99999→1500`. `SPLIT-REQUIRED` now fires for genuinely-huge H plans (verified: 30 files / 4000 lines → `SPLIT-REQUIRED — … Split into ~3 sub-issues`). The H cap sits BELOW the Phase 3 `pr_size` block default (2000/50) on purpose: plan-time catches obviously-too-big before an hour of Sonnet; the 1500→2000 band is the estimate-error margin Phase 3 warns on; >2000 actual is the hard block. The suggested split count is computed (ceil of the worse overage) and doubles as an anti-fabrication tell.
+- **`phase-2-implementation.md` §2.0 SPLIT-REQUIRED branch** — now actionable (present the suggested count, offer to file N sub-issues, re-run per slice) instead of a vague "ask user to split" that never triggered.
+
+#### Added
+
+- **`skills/do/scripts/pr-size-check`** (NEW wrapper) — the ONLY supported way to produce the Phase 3.0 PASS/WARN/BLOCK decision. Takes the real `git diff` `--lines`/`--files` (+ optional config threshold overrides; defaults baked in: warn 800/20, block 2000/50). Moves the verdict out of orchestrator judgment — it passes numbers, the wrapper decides. **BLOCK exits 3** (a hard halt) so the gate cannot degrade to advisory; PASS/WARN exit 0. Output carries `breached: [..]` + `+N lines/+N files` overage as the anti-fabrication tell. Same structural-coupling pattern as `plan-size-check`/`check-caveman`. (Clean exit codes also make it directly usable as a P3 `PreToolUse` hook on PR creation.)
+- **`phase-3-review.md` §3.0** — rewritten to invoke `pr-size-check` + dispatch on the output/exit-3; BLOCK routes to the draft-PR + `blocked`-label escalation (same path as Phase 3.6 3-cycle exhaustion), `outcome=blocked`. "block is not advisory" called out explicitly.
+- **`anti-patterns.md` §19f (NEW)** — "composing the Phase 3.0 PR-size verdict by hand" documented as the same fabrication-skip class as §19d (plan-size) / §19b (caveman). **§21** rewritten: block is a hard halt, never downgrade BLOCK→WARN to get a merge.
+
+#### Docs
+
+- **README** — new "PR-size ceiling" cheat-sheet row (warn/block thresholds + the plan-time/PR-time split). `examples/*.json` and the `config-init` auto-init preset were checked — neither encodes `pr_size`, so no threshold values needed updating (the wrapper defaults match config-schema.md).
+
+#### Expected impact (measure at next audit)
+
+- H tasks planning >1500 lines / >25 files re-route to SPLIT-REQUIRED at Phase 2.0 instead of producing a 3000–4000-line PR.
+- PRs whose actual diff exceeds block thresholds halt at Phase 3.0 (`outcome=blocked`, draft PR) instead of shipping as `ready_for_review` with `pr_size=warn`. The 8 historical >2000-line `warn` PRs would all have blocked.
+
 ### Post-v0.6.0 audit follow-ups — 4 fixes from 32-entry data
 
 After v0.6.0 deployed (May 21, 11:23Z), 32 canonical post-deploy entries accumulated in ~2.5 days. Audit (see [previous CHANGELOG entry](#phase-20-plan-size-check--observability-via-complexity_rebumped_from)) showed:

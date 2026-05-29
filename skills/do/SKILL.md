@@ -163,6 +163,7 @@ Before announcing completion, scan [`references/anti-patterns.md`](references/an
 - **Final assistant message ends with PR-summary prose and NO `Metrics: ...` line** — Phase 4.13 procedure skipped. Run bash flow verbatim from `phase-4-finalize.md` instead of composing prose.
 - **Auto-named branches without `i{N}` for M/H** — Phase 4.0 renames UNCONDITIONALLY before PR open. "Pre-spawned worktree" is NOT an excuse — `git branch -m` works on pre-spawned worktrees too.
 - **Using `Agent(isolation: "worktree")` for Phase 2** — auto-names branches, breaks `config.naming`. Pre-create worktree explicitly via `git worktree add`.
+- **Downgrading a Phase 3.0 PR-size BLOCK to `warn`** — the `pr-size-check` wrapper owns the verdict and BLOCK exits 3 (hard halt → draft PR + `blocked`). Never eyeball the diff and ship an over-block PR as `warn` (8 production violations). Plan-time sibling: Phase 2.0 `plan-size-check` SPLIT-REQUIRED.
 - **Skipping zero-downtime migration audit** when migration present
 - **Bypassing CODEOWNERS** when file exists in repo
 - **Subjective reviews / scope creep / silent assumptions / speculative abstractions / drive-by refactors**

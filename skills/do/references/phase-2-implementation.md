@@ -94,8 +94,14 @@ case "$PLAN_SIZE_LINE" in
     # Replay Phase 1.5 / Phase 2 specialist plan-review at the new tier.
     ;;
   "Phase 2.0: SPLIT-REQUIRED"*)
-    # Already H and still over. Single PR is the wrong shape for the task.
-    # STOP — ask user to split before re-running.
+    # Already H and the plan STILL exceeds the H ceiling (25 files / 1500 lines).
+    # Single PR is the wrong shape — STOP before spending Sonnet time. The wrapper
+    # line includes a suggested sub-issue count ("Split into ~N sub-issues").
+    # 1. Do NOT spawn Sonnet. 2. Present the wrapper line + suggested split to the
+    # user. 3. Offer to file the N sub-issues (each a scoped slice of the plan).
+    # 4. Re-run /do per sub-issue. This branch now actually fires (v0.7.0 gave H a
+    # real 25/1500 ceiling — it was 999/99999 before, so SPLIT-REQUIRED was dead code
+    # and 3000–4000-line H PRs sailed through to an unreviewable Phase 3).
     ;;
 esac
 ```

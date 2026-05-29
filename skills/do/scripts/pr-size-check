@@ -1,0 +1,95 @@
+#!/bin/bash
+# pr-size-check — the ONLY supported way to produce the Phase 3.0 PR-size gate
+# decision (PASS / WARN / BLOCK). Wrapper script, not inline spec bash, for the
+# same structural-coupling reason as plan-size-check and check-caveman.
+#
+# Why: the inline §3.0 description said "> block → BLOCK … do NOT proceed to
+# merge", but the orchestrator treated block as ADVISORY and shipped oversized
+# PRs as pr_size=warn. Audit (254 entries, May 14–24): 8 PRs added >2000 lines
+# and EVERY one recorded pr_size=warn, never block, despite block_lines=2000
+# (e.g. i807 3587L, i1167 3669L, i1100 2067L, i1168 2053L). A 4000-line PR is
+# unreviewable; shipping it as "warn" defeats the gate.
+#
+# The fix is the same one that took plan-size rebumps 0%→18%: move the
+# PASS/WARN/BLOCK DECISION out of the orchestrator's judgment and into the
+# wrapper. The spec passes the real `git diff --shortstat` numbers; the wrapper
+# computes the verdict — the orchestrator can no longer "decide" warn when the
+# numbers say block. BLOCK exits NON-ZERO (code 3) so it is a hard halt the
+# spec's `case`/exit-code check (and the optional Stop / PreToolUse hooks in
+# references/hooks.md) must handle, not a line that can be narrated past.
+#
+# Usage:
+#   pr-size-check --lines N --files N \
+#     [--warn-lines 800] [--warn-files 20] [--block-lines 2000] [--block-files 50]
+#   Thresholds default to the config-schema.md pr_size defaults. Pass the
+#   project's config.pr_size.* values when it overrides them.
+#
+# Output (stdout, exactly one line — dispatch the spec's `case` on the prefix):
+#   Phase 3.0: PASS — N lines / N files within warn caps (warn WL/WF · block BL/BF)
+#   Phase 3.0: WARN — N lines / N files over warn (WL/WF); breached: [..]; note in PR, proceed
+#   Phase 3.0: BLOCK — N lines / N files over block (BL/BF) by +Lo lines/+Fo files; breached: [..]; STOP, split
+#
+# Exit codes:
+#   0  PASS or WARN — proceed (WARN ⇒ add the PR-size note to the PR description)
+#   3  BLOCK — HARD HALT. Do NOT proceed to the merge gate. Push current state as a
+#      draft PR, file follow-up split issues, apply the `blocked` label (same path
+#      as the Phase 3.6 3-cycle escalation). The plan was wrong, not the impl.
+#   1  rejected (bad/missing arg, non-numeric value); stderr: "REJECT <reason>"
+
+set -euo pipefail
+
+die() { echo "REJECT $*" >&2; exit 1; }
+
+LINES=""
+FILES=""
+# Defaults mirror config-schema.md pr_size defaults.
+WARN_LINES=800
+WARN_FILES=20
+BLOCK_LINES=2000
+BLOCK_FILES=50
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lines)       LINES="$2";       shift 2 ;;
+    --files)       FILES="$2";       shift 2 ;;
+    --warn-lines)  WARN_LINES="$2";  shift 2 ;;
+    --warn-files)  WARN_FILES="$2";  shift 2 ;;
+    --block-lines) BLOCK_LINES="$2"; shift 2 ;;
+    --block-files) BLOCK_FILES="$2"; shift 2 ;;
+    -h|--help)     sed -n '2,46p' "$0"; exit 0 ;;
+    *) die "unknown flag: $1" ;;
+  esac
+done
+
+[ -n "$LINES" ] || die "--lines required (integer; from 'git diff main...HEAD --shortstat')"
+[ -n "$FILES" ] || die "--files required (integer; from 'git diff main...HEAD --name-only | wc -l')"
+
+for pair in "LINES=$LINES" "FILES=$FILES" "WARN_LINES=$WARN_LINES" "WARN_FILES=$WARN_FILES" "BLOCK_LINES=$BLOCK_LINES" "BLOCK_FILES=$BLOCK_FILES"; do
+  val="${pair#*=}"
+  [[ "$val" =~ ^[0-9]+$ ]] || die "${pair%%=*} must be a non-negative integer, got: $val"
+done
+
+# Build the breached-dimension list for a given (lines-cap, files-cap) pair.
+# Echoes a bracketed list like "[lines,files]" or "[lines]" or "[]".
+breached() {
+  local lc="$1" fc="$2" out=""
+  [ "$LINES" -gt "$lc" ] && out="lines"
+  [ "$FILES" -gt "$fc" ] && out="${out:+$out,}files"
+  echo "[$out]"
+}
+
+# BLOCK takes precedence — check it first.
+if [ "$LINES" -gt "$BLOCK_LINES" ] || [ "$FILES" -gt "$BLOCK_FILES" ]; then
+  LINES_OVER=$(( LINES > BLOCK_LINES ? LINES - BLOCK_LINES : 0 ))
+  FILES_OVER=$(( FILES > BLOCK_FILES ? FILES - BLOCK_FILES : 0 ))
+  echo "Phase 3.0: BLOCK — $LINES lines / $FILES files over block ($BLOCK_LINES/$BLOCK_FILES) by +$LINES_OVER lines/+$FILES_OVER files; breached: $(breached "$BLOCK_LINES" "$BLOCK_FILES"); STOP — split into sub-issues, draft PR + 'blocked' label, do NOT merge."
+  exit 3
+fi
+
+if [ "$LINES" -gt "$WARN_LINES" ] || [ "$FILES" -gt "$WARN_FILES" ]; then
+  echo "Phase 3.0: WARN — $LINES lines / $FILES files over warn ($WARN_LINES/$WARN_FILES); breached: $(breached "$WARN_LINES" "$WARN_FILES"); note in PR description, proceed."
+  exit 0
+fi
+
+echo "Phase 3.0: PASS — $LINES lines / $FILES files within warn caps (warn $WARN_LINES/$WARN_FILES · block $BLOCK_LINES/$BLOCK_FILES)"
+exit 0
