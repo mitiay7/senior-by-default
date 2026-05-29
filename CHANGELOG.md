@@ -4,6 +4,23 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Metrics — controlled vocabulary for `gates` keys + statuses (P1)
+
+Audit of 225 canonical entries (May 14–24) found the `gates` JSON had **~110 distinct keys for ~19 real gates** — `test`/`tests`/`test_gate`/`go_test`, `ui`/`ui_gate`/`visual_verify`/`visual_smoke`, `i18n`/`i18n_gate`, `contract`/`contract_gate`, `dep_vuln`/`dep_vuln_go`/`dep_vuln_pnpm`, `type_check`/`type-check`/`lint_typecheck` — plus equally-drifty statuses (`skip`/`n/a`/`n-a`/`na`/`n_a`, scalar `pass`/`true`/`ok`/`clean`). Same data-quality class as the v0.6.0 `outcome`-enum drift: every synonym splits one gate's stats across buckets, so the daily-report gate-failure-rate was noise. `outcome` got a controlled vocabulary in v0.6.0; `gates` had none until now.
+
+#### Changed
+
+- **`metrics-append` — gate-vocabulary normalization** (jq step before the entry is built). Defines a 19-name canonical set (`build`, `lint`, `type_check`, `test`, `dep_vuln`, `pr_size`, `i18n`, `contract`, `ui_gate`, `migration_audit`, `specialist_audit`, `opus_review`, `public_docs`, `secret_scan`, `diff_scan`, `plan_size`, `codeowners`, `stale_main`, `concurrent_edit`) + a ~70-entry alias map. Known aliases are renamed to canonical; scalar gate values (`"pass"`, `true`) are coerced to `{status: …}`; statuses normalize to `pass|warn|fail|block|skipped` (with `skip`/`n/a`/`na` → `skipped`, prefix-matching for `skipped_no_ui`-style suffixed statuses). Key collisions after aliasing (e.g. `test` + `go_test`) merge by max severity (block>fail>warn>pass>skipped).
+- **Policy: warn-normalize, not hard-reject.** Gate keys are an OPEN set (legitimate task-specific checks like `idempotency_cache_correct` exist), unlike the closed `outcome`/`complexity` enums. Unknown keys are **preserved verbatim** (entry NOT rejected — rejecting on the announce-coupled critical path would tempt the orchestrator to drop real gate signal or fabricate) but counted + surfaced. The closed enums stay hard-reject.
+- **Anti-fabrication tell extended.** The OK line now ends `gates=<C> renamed=<R> noncanon=<list|->` — the orchestrator can't reproduce the rename count / non-canonical list without running the wrapper against the actual `--gates-json`. Non-canonical keys + statuses also print a `NOTE gate-normalize:` line to stderr. The `post=` sed-extraction in §4.13 is unaffected (verified).
+- **`phase-4-finalize.md` §4.11** — new "Gate vocabulary (controlled, OPEN set)" subsection with the canonical table (key → phase) + alias/normalization rules. **`config-schema.md`** — JSONL example `ui`→`ui_gate`; controlled-vocabulary note added (+ the specialist-install confounder warning). **`phase-3-review.md`** — metrics-capture intro points to the canonical list. **`anti-patterns.md` §19e (NEW)** — gate-name fabrication documented as the same class as outcome-enum drift.
+- **`daily-report.sh`** (operator-side, not shipped) — gate-failure-rate now buckets by canonical name (mirrors the wrapper alias map), so the 254 historical entries aggregate correctly (60 raw synonym buckets → ~19 canonical + a few task-specific one-offs). Also hardened: input parsing tolerates malformed JSONL lines (`fromjson?` instead of a fragile `jq -s` slurp that crashed on one corrupt line), and the `VALID_JSON`/bypass filters no longer crash when `self_review` is a non-object (2 such entries existed).
+
+#### Measured impact (254 live entries)
+
+- Gate buckets in the daily report: **60 → 19 canonical + ~8 task-specific one-offs**. `test` consolidated to 1 fail / 106 pass (was scattered across `test`/`tests`/`test_gate`/`go_test`/`go_test_race`/`unit_tests`/…), `specialist_audit` to 2/54, `dep_vuln` to 0/64, `pr_size` to 0/144.
+- Confirms P4's "never-fails" gate candidates with clean data: `opus_review` 0/124, `i18n` 0/76, `contract` 0/39, `migration_audit` 0/19.
+
 ### Post-v0.6.0 audit follow-ups — 4 fixes from 32-entry data
 
 After v0.6.0 deployed (May 21, 11:23Z), 32 canonical post-deploy entries accumulated in ~2.5 days. Audit (see [previous CHANGELOG entry](#phase-20-plan-size-check--observability-via-complexity_rebumped_from)) showed:

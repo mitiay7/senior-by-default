@@ -244,9 +244,47 @@ The wrapper enforces:
   `--sr-performed`, `--sr-claimed`, `--sr-calibration`)
 - Enum validation on complexity / implementer / outcome / self-review fields
 - JSON validity of `--gates-json` / `--phase-durations-json` payloads
+- **Gate-vocabulary normalization** of `--gates-json` keys + statuses (see "Gate
+  vocabulary" below) — known aliases renamed to canonical, unknown keys preserved+flagged
 - Atomic append with pre/post line-count delta verification
-- Exit code 0 on success (stdout: `OK pre=N post=N+1 path=<log>`), 1 on schema reject
-  (stderr: `REJECT <reason>`), 2 on I/O failure (stderr: `IOFAIL <reason>`)
+- Exit code 0 on success (stdout:
+  `OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|->`), 1 on schema
+  reject (stderr: `REJECT <reason>`), 2 on I/O failure (stderr: `IOFAIL <reason>`)
+
+#### Gate vocabulary (controlled, OPEN set)
+
+The `gates` object's keys are a **controlled vocabulary** — same data-quality lesson
+as the `outcome` enum (v0.6.0 found 16 outcome variants; the May-24 audit found ~110
+distinct gate keys for ~19 real gates, e.g. `test`/`tests`/`test_gate`/`go_test`,
+`ui`/`ui_gate`/`visual_verify`, `dep_vuln`/`dep_vuln_go`/`dep_vuln_pnpm`). Uncontrolled,
+every synonym splits a gate's stats across buckets and the gate-failure-rate metric is
+noise. The `metrics-append` wrapper normalizes automatically — you do NOT compose the
+final key names, the wrapper does:
+
+**Canonical gate keys** (the names that survive into the JSONL):
+
+| Key | Phase | Key | Phase |
+|---|---|---|---|
+| `pr_size` | 3.0 | `ui_gate` | 3.2 |
+| `dep_vuln` | 3.0.5 | `i18n` | 3.3 |
+| `public_docs` | 3.0.6 | `contract` | 3.4 |
+| `build` / `lint` / `type_check` | 2/3 build checklist | `diff_scan` | 3.5 (Low) |
+| `test` | 3.1 | `specialist_audit` | 3.6 (High) |
+| `secret_scan` | 4.1 pre-push | `opus_review` | 3.7 (M/H) |
+| `migration_audit` | 3.6 migration | `codeowners` | 3.6 routing |
+| `plan_size` | 2.0 | `stale_main` | 2.0.5 |
+| `concurrent_edit` | 0.3 | | |
+
+Each value is `{ "status": "pass"|"warn"|"fail"|"block"|"skipped", ["fix_cycle": N,]
+["details": {...}] }`. The wrapper coerces scalar values (`"pass"`, `true`) into the
+`{status: ...}` shape and normalizes status aliases (`skip`/`n/a`/`n-a`/`na` → `skipped`;
+`ok`/`clean`/`true` → `pass`). Pass whatever name is natural at capture time — common
+aliases (`tests`, `i18n_gate`, `type-check`, `go_vet`, `dep_vuln_pnpm`, …) are renamed
+for you. A **task-specific** check with no canonical home (e.g. `idempotency_cache_correct`)
+is **preserved as-is** (not rejected) but counted in the `noncanon=` field of the OK line
+so it's visible. Do NOT hand-rename your ad-hoc checks to a canonical name they don't
+match — let the wrapper decide; a fabricated `Metrics:` line that claims canonical keys
+the wrapper never emitted is an [anti-pattern](anti-patterns.md).
 
 **Computing `$OUTCOME` (strict 3-value enum — production audit found 16 distinct values pre-enforcement; the wrapper now hard-rejects anything else)**:
 

@@ -43,8 +43,19 @@
 #                         with `blocked` label. NOT for "tests failed but
 #                         resolved" — that's still merged or ready_for_review.
 #
+# Gate vocabulary (--gates-json keys, controlled but OPEN — see normalization
+# block below). Canonical names:
+#   build lint type_check test dep_vuln pr_size i18n contract ui_gate
+#   migration_audit specialist_audit opus_review public_docs secret_scan
+#   diff_scan plan_size codeowners stale_main concurrent_edit
+# Common aliases (tests→test, i18n_gate→i18n, ui/visual_*→ui_gate,
+# dep_vuln_go/pnpm→dep_vuln, type-check→type_check, go_vet/vet→lint, …) are
+# normalized automatically. Unknown keys are PRESERVED (not rejected) but
+# counted in the OK-line tell. Statuses coerce to pass|warn|fail|block|skipped.
+#
 # Exit codes:
-#   0   appended successfully; stdout: "OK pre=N post=N+1 path=<log>"
+#   0   appended successfully; stdout:
+#         "OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|->"
 #   1   rejected (missing/invalid arg or schema-gate failed); stderr: "REJECT <reason>"
 #   2   I/O failure (couldn't write to log, file lock, etc.)
 
@@ -172,6 +183,119 @@ for var in GATES_JSON PHASE_DURATIONS_JSON SPECIALIST_ITERATIONS_JSON SR_MISCALI
   echo "${!var}" | jq -e . >/dev/null 2>&1 || die "$var is not valid JSON: ${!var}"
 done
 
+# --- Gate-name + gate-status normalization (controlled vocabulary) ---
+#
+# Production audit (225 entries, May 14–24) found ~110 DISTINCT gate keys for
+# ~19 real gates: `test`/`tests`/`test_gate`/`go_test`, `i18n`/`i18n_gate`,
+# `contract`/`contract_gate`, `ui`/`ui_gate`/`visual_verify`/`visual_smoke`,
+# `type_check`/`type-check`/`lint_typecheck`, `dep_vuln`/`dep_vuln_go`/`dep_vuln_pnpm`.
+# Same fabrication class as the outcome-enum drift fixed in v0.6.0 — when the
+# vocabulary is uncontrolled, each synonym splits a gate's stats across buckets
+# and the daily-report's "gate failure rate" is meaningless. Gate STATUS was
+# equally drifty (`skip`/`n/a`/`n-a`/`na`/`n_a`, scalar `pass`/`true`/`ok`/`clean`).
+#
+# Policy — gate keys are an OPEN set (legit task-specific checks exist, e.g.
+# `idempotency_cache_correct`), unlike the closed outcome/complexity enums. So:
+#   - known aliases  → silently renamed to the canonical name
+#   - canonical keys → kept as-is
+#   - UNKNOWN keys   → PRESERVED verbatim (not dropped, entry NOT rejected) but
+#                      counted + surfaced in the OK-line tell. Warn-normalize,
+#                      not hard-reject: rejecting on the announce-coupled critical
+#                      path would tempt the orchestrator to drop real gate signal
+#                      or fabricate. The closed enums stay hard-reject above.
+# Statuses are coerced to the {pass|warn|fail|block|skipped} set (scalar gate
+# values get wrapped as {status: <value>}); unknown statuses are preserved+flagged.
+# On key collision after aliasing (e.g. both `test` and `go_test` present) the
+# higher-severity status wins (block>fail>warn>pass>skipped).
+#
+# Anti-fabrication tell: the OK line echoes how many keys were renamed and lists
+# any non-canonical keys. The orchestrator cannot reproduce those counts/lists
+# without running the wrapper against the actual --gates-json payload.
+GATE_NORM=$(jq -cn --argjson g "$GATES_JSON" '
+  def canon: ["build","lint","type_check","test","dep_vuln","pr_size","i18n",
+              "contract","ui_gate","migration_audit","specialist_audit","opus_review",
+              "public_docs","secret_scan","diff_scan","plan_size","codeowners",
+              "stale_main","concurrent_edit"];
+  def kalias: {
+    "tests":"test","test_gate":"test","go_test":"test","go_test_race":"test",
+    "unit_tests":"test","integration_compile":"test","backend_test":"test",
+    "backend_tests":"test","acceptance_tests":"test","api_client_tests":"test",
+    "pdf_render_tests":"test","vitest":"test","3.1_test":"test",
+    "i18n_gate":"i18n","i18n_parity":"i18n",
+    "contract_gate":"contract","openapi_route_coverage":"contract","3.4_contract":"contract",
+    "type-check":"type_check","lint_typecheck":"type_check","pnpm_type_check":"type_check",
+    "tsc":"type_check","turbo_type_check":"type_check","frontend_typecheck":"type_check",
+    "frontend_type_check":"type_check","owner_type_check":"type_check",
+    "ui":"ui_gate","visual_verify":"ui_gate","visual_smoke":"ui_gate",
+    "dep_vuln_go":"dep_vuln","dep_vuln_pnpm":"dep_vuln","dep_vuln_scan":"dep_vuln",
+    "3.0.5_dep_vuln":"dep_vuln",
+    "go_vet":"lint","vet":"lint","gofmt":"lint","pnpm_lint":"lint","owner_lint":"lint",
+    "lint_owner":"lint","lefthook":"lint","lefthook_validate":"lint",
+    "go_build":"build","codegen":"build","codegen_check":"build","schema_regen":"build",
+    "low_diff_scan":"diff_scan","diff_review":"diff_scan","opus_diff_review":"diff_scan",
+    "3.5_diff_scan":"diff_scan",
+    "code_review":"specialist_audit","specialist":"specialist_audit",
+    "specialists":"specialist_audit","specialist_audit_phase2":"specialist_audit",
+    "specialist_audit_phase3":"specialist_audit","specialist_plan_review":"specialist_audit",
+    "specialist_backend":"specialist_audit","specialist_security":"specialist_audit",
+    "specialist_silent_failure":"specialist_audit","specialist_a11y":"specialist_audit",
+    "silent_failure_audit":"specialist_audit","security_audit":"specialist_audit",
+    "migration":"migration_audit","migration_zero_downtime":"migration_audit",
+    "migration_up":"migration_audit","migration_goose_markers":"migration_audit",
+    "migration_duplicate":"migration_audit",
+    "secrets":"secret_scan","secret_check":"secret_scan",
+    "3.0_pr_size":"pr_size","3.7_opus_review":"opus_review"
+  };
+  def salias: {
+    "skip":"skipped","n/a":"skipped","n-a":"skipped","na":"skipped","n_a":"skipped",
+    "not_applicable":"skipped","none":"skipped",
+    "true":"pass","ok":"pass","clean":"pass","approve":"pass","approved":"pass",
+    "changes_requested":"fail","deferred":"warn","partial":"warn"
+  };
+  def sev: {"block":4,"fail":3,"warn":2,"pass":1,"skipped":0};
+  def normstatus:
+    ((. // "pass") | tostring | ascii_downcase) as $s
+    | (salias[$s])
+      // (if   ($s|startswith("pass"))  then "pass"
+          elif ($s|startswith("skip"))  then "skipped"
+          elif ($s|startswith("block")) then "block"
+          elif ($s|startswith("warn"))  then "warn"
+          elif ($s|startswith("fail"))  then "fail"
+          else $s end);
+  def normval: (if type=="object" then . else {status:(.|tostring)} end)
+             | .status = (.status | normstatus);
+  ($g // {})
+  | reduce (to_entries[]) as $e (
+      {out:{}, renamed:{}, noncanon:[], noncanon_status:[]};
+      ($e.key) as $rk
+      | ($e.value | normval) as $nv
+      | (kalias[$rk] // $rk) as $ck
+      | (if (canon | index($ck)) != null
+         then .out[$ck] = (if .out[$ck] == null then $nv
+                           elif (sev[$nv.status] // -1) > (sev[.out[$ck].status] // -1) then $nv
+                           else .out[$ck] end)
+              | (if $ck != $rk then .renamed[$rk] = $ck else . end)
+         else .out[$rk] = $nv | .noncanon += [$rk]
+         end)
+      | (if (sev[$nv.status]) == null
+         then .noncanon_status += ["\($rk):\($nv.status)"] else . end)
+    )
+') || die "gate normalization failed (malformed --gates-json: $GATES_JSON)"
+
+GATES_JSON=$(echo "$GATE_NORM"      | jq -c '.out')
+GATE_RENAMED_COUNT=$(echo "$GATE_NORM" | jq '.renamed | length')
+GATE_CANON_COUNT=$(echo "$GATE_NORM"   | jq '.out | length')
+GATE_NONCANON_LIST=$(echo "$GATE_NORM" | jq -r 'if (.noncanon|length)==0 then "-" else (.noncanon | join(",")) end')
+GATE_NONCANON_STATUS=$(echo "$GATE_NORM" | jq -r 'if (.noncanon_status|length)==0 then "" else (.noncanon_status | join(",")) end')
+# Surface non-canonical gate keys / statuses on stderr too (visible in transcript,
+# does not fail the entry — see policy note above).
+if [ "$GATE_NONCANON_LIST" != "-" ]; then
+  echo "NOTE gate-normalize: non-canonical gate key(s) preserved as-is: $GATE_NONCANON_LIST (not in the controlled vocabulary — see phase-4-finalize.md §4.11 gate list)" >&2
+fi
+if [ -n "$GATE_NONCANON_STATUS" ]; then
+  echo "NOTE gate-normalize: non-canonical gate status(es) preserved: $GATE_NONCANON_STATUS (expected pass|warn|fail|block|skipped)" >&2
+fi
+
 # Anti-stub validation for specialist_iterations: reject if ANY cycle has
 # auditors=[] AND approvers=[] AND blockers=[] (the i1023 fabrication
 # pattern — sub-agent fabricated a 4-cycle structure with all-empty
@@ -275,4 +399,4 @@ if [ "$DELTA" -ne 1 ]; then
   iofail "append silent-fail: pre=$PRE_COUNT post=$POST_COUNT delta=$DELTA expected=1"
 fi
 
-echo "OK pre=$PRE_COUNT post=$POST_COUNT path=$LOG_PATH"
+echo "OK pre=$PRE_COUNT post=$POST_COUNT path=$LOG_PATH gates=$GATE_CANON_COUNT renamed=$GATE_RENAMED_COUNT noncanon=$GATE_NONCANON_LIST"

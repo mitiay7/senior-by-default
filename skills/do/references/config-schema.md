@@ -388,7 +388,7 @@ JSONL entry schema (Tier 1):
     },
     "pr_size": { "status": "warn", "details": { "lines": 950, "files": 12 } },
     "dep_vuln": { "status": "pass" },
-    "ui": { "status": "skipped", "skip_reason": "infra_unavailable" }
+    "ui_gate": { "status": "skipped", "skip_reason": "infra_unavailable" }
   },
   "self_review": {
     "performed": true,
@@ -419,6 +419,24 @@ JSONL entry schema (Tier 1):
                                     // improving or plan-size is the load-bearing layer.
 }
 ```
+
+**Gate keys are a controlled vocabulary.** The `gates` object's keys are normalized by
+the `metrics-append` wrapper to a canonical set (`build`, `lint`, `type_check`, `test`,
+`dep_vuln`, `pr_size`, `i18n`, `contract`, `ui_gate`, `migration_audit`,
+`specialist_audit`, `opus_review`, `public_docs`, `secret_scan`, `diff_scan`,
+`plan_size`, `codeowners`, `stale_main`, `concurrent_edit`). Common aliases
+(`tests`→`test`, `i18n_gate`→`i18n`, `ui`/`visual_verify`/`visual_smoke`→`ui_gate`,
+`dep_vuln_go`/`dep_vuln_pnpm`→`dep_vuln`, `type-check`/`lint_typecheck`→`type_check`,
+`go_vet`/`vet`→`lint`, …) are renamed automatically; gate statuses coerce to
+`pass`|`warn`|`fail`|`block`|`skipped`. Keys with no canonical home (task-specific
+ad-hoc checks) are preserved verbatim but flagged in the wrapper's `noncanon=` output.
+See [`phase-4-finalize.md`](phase-4-finalize.md) §4.11 "Gate vocabulary" for the full
+mapping and rationale. **Confounder warning for cross-cohort analysis:** the specialist
+plugins were installed mid-stream (≈2026-05-17), so `false_positive`/`self_review`
+calibration rates are NOT comparable across that boundary — pre-install cohorts had zero
+specialist review, hence mechanically fewer findings. Segment any FP-rate trend on the
+install date; see the `self_review` calibration split (`calibration_defect` /
+`calibration_size`) for the de-confounded signal.
 
 Set tier=0 to revert to lean metrics (just outcome + per-gate pass/fail/skip booleans).
 

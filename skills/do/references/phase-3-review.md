@@ -4,6 +4,8 @@
 
 If `config.metrics.tier >= 1`, every gate that doesn't PASS must populate a `details` block for the metrics entry (see [`phase-4-finalize.md`](phase-4-finalize.md) §4.11). Capture happens **inline at the moment of detection** — don't try to reconstruct after the fact.
 
+Gate keys land in the metrics entry under a **controlled vocabulary** (canonical names like `pr_size`, `dep_vuln`, `test`, `ui_gate`, `i18n`, `contract`, `diff_scan`, `specialist_audit`, `opus_review`); the `metrics-append` wrapper normalizes synonyms automatically, so capture with whatever name is natural and let the wrapper canonicalize. Full list + alias map: [`phase-4-finalize.md`](phase-4-finalize.md) §4.11 "Gate vocabulary".
+
 Per gate, on failure / warning, capture:
 
 | Gate | `details` shape |
