@@ -364,7 +364,13 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 ## Status
 
-`v0.7.0` released (2026-05-29). Architecture stable. The v0.7 cycle acts on a 225→254-entry telemetry audit (May 14–24) — **measurement integrity + a PR-size ceiling that actually blocks**:
+`v0.8.0` released (2026-05-29). Architecture stable. v0.8 closes the **enforcement loop** with opt-in tier-3 harness hooks and tidies up:
+
+- **Three enforcement tiers, now explicit** — soft instruction → structural-coupling wrapper (default) → **opt-in Claude Code hook** (runtime-enforced, model-independent). A **Stop hook** makes metrics emission non-bypassable (blocks a `/do` finalize lacking a file-backed `Metrics:` line; self-scopes so normal turns are untouched); a **PreToolUse hook** surfaces the plan-size verdict at spawn time. Off by default — see [`skills/do/references/hooks.md`](skills/do/references/hooks.md).
+- **No dead gates** — the five "never-failing" gates were investigated and kept: `0 fails` was a measurement artifact (Phase 3 records the resolved state); all fire via `fix_cycle` (`opus_review` 16/125, `test` 5/130, …). The daily report now shows a `Fired*` column.
+- **Leaner anti-patterns** — the 7-entry §19 fabrication family consolidated to one principle + a table; wrapper boilerplate assessed and intentionally left self-contained.
+
+The v0.7 cycle (folded below) acted on a 225→254-entry telemetry audit (May 14–24) — **measurement integrity + a PR-size ceiling that actually blocks**:
 
 - **Controlled vocabulary for `gates`** — `metrics-append` normalizes gate keys (alias map → 19 canonical names) and statuses (→ `pass|warn|fail|block|skipped`), preserving unknown task-specific keys with a `noncanon=` tell. The audit found ~110 distinct keys for ~19 real gates; the daily report now buckets cleanly (60 → 19 + a few one-offs).
 - **Split self-review calibration** — `calibration_defect` (real code defect missed) vs `calibration_size` (diff-size prediction), de-confounding the FP rate that 39% of historical "false positives" were just `pr_size=warn` noise inflating.

@@ -4,6 +4,19 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-29
+
+**Hook-based enforcement + cleanup.** v0.7.0 fixed the measurement instrument and added a PR-size ceiling; v0.8.0 closes the enforcement loop and tidies what the prior cycles accreted.
+
+**Release-level summary:**
+
+- **Tier-3 harness hooks (P3, opt-in).** The wrapper tier is strong but model-dependent — if the orchestrator never invokes a wrapper, it can't fire. Two opt-in Claude Code hooks add a runtime backstop the model can't skip: a **Stop hook** that blocks a `/do` finalize lacking a valid, file-backed `Metrics:` line (self-scopes to `/do` runs), and a **PreToolUse hook** that surfaces the plan-size verdict at spawn time. Off by default; ship as `skills/do/hooks/` + `references/hooks.md` + opt-in `install.sh` wiring. The skill is unchanged without them.
+- **Gate investigation (P4).** The five "never-failing" gates are NOT theater — `0 fails` was a measurement artifact (Phase 3 loops until pass, records the resolved state). Counting `fix_cycle>0`, all fire (`opus_review` 16/125, `test` 5/130, `i18n` 5/104, …). All kept; the daily report gained a `Fired*` column so live gates stop looking dead.
+- **§19 consolidation (P4).** The 7-entry §19 anti-pattern family (one root cause, much repetition) collapsed to one principle + a 6-row instance table (with a new tier-3-hook column). Legacy ids retained for cross-references.
+- **Wrapper-lib: assessed, declined (P4).** The only duplication is trivial 1-liners + an 8-line block in 2 wrappers; self-containment is a documented design value and a sourced lib would add a failure mode on the Phase 0 critical path. Cargo-cult DRY, declined with rationale.
+
+The three enforcement tiers are now explicit: soft instruction → structural-coupling wrapper (default) → opt-in harness hook. See [`references/hooks.md`](skills/do/references/hooks.md).
+
 ### Cleanup — gate investigation, §19 consolidation, wrapper-lib assessment (P4)
 
 #### Dead-gate investigation → keep all five (measurement artifact, not theater)
