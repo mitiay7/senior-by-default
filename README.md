@@ -352,15 +352,15 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 ## Status
 
-`v0.6.0` released (2026-05-21). Architecture stable. v0.6 cycle (10 commits, May 14–21) hardened Phase 0 around four **structurally-coupled** wrappers — `metrics-append`, `config-init`, `config-ensure-metrics`, `check-caveman` — every side-effect announce token (`Caveman:`, `Config:`, `Metrics config:`, `Metrics:`) comes from wrapper stdout that the announce literally interpolates. Skipping the side-effect physically prevents emitting a fake announce line; off-line copies are detectable via path / probed-paths / line-count tells the wrappers include. Production runs surface fabrications as visible bugs rather than silent skips.
+`v0.7.0` released (2026-05-29). Architecture stable. The v0.7 cycle acts on a 225→254-entry telemetry audit (May 14–24) — **measurement integrity + a PR-size ceiling that actually blocks**:
 
-Other v0.6 highlights:
-- **Zero-touch project setup** — `/do` auto-generates `.claude/do/config.json` on first run (issue_tracker from git remote, locale from `$ARGUMENTS` script, specialists preset, tier-1 metrics preset). Existing configs missing the metrics block get patched in idempotently.
-- **Line-aware complexity routing** — Phase 0 estimates both files AND lines; refactor-keyword bumper for scope-multiplying changes. Phase 2.0 plan-size sanity check re-routes if Sonnet's plan exceeds the bucket's caps.
-- **`metrics-append` v2** — strict 3-value outcome enum, timestamp ordering gate, orchestrator capture. Post-audit cleanup of 121 entries that had 16 outcome variants and 36% negative cycle times.
-- **Phantom plugin removed** — `frontend-excellence` (aspirational placeholder, no public marketplace) replaced with real `ui-design` + `javascript-typescript` from wshobson/agents.
+- **Controlled vocabulary for `gates`** — `metrics-append` normalizes gate keys (alias map → 19 canonical names) and statuses (→ `pass|warn|fail|block|skipped`), preserving unknown task-specific keys with a `noncanon=` tell. The audit found ~110 distinct keys for ~19 real gates; the daily report now buckets cleanly (60 → 19 + a few one-offs).
+- **Split self-review calibration** — `calibration_defect` (real code defect missed) vs `calibration_size` (diff-size prediction), de-confounding the FP rate that 39% of historical "false positives" were just `pr_size=warn` noise inflating.
+- **PR-size ceiling** — `plan-size-check` H bucket got a real 25-file / 1500-line ceiling (was effectively unbounded), so `SPLIT-REQUIRED` fires at plan time. New `pr-size-check` wrapper owns the Phase 3.0 PASS/WARN/**BLOCK** decision and **exits 3 on block** (hard halt → draft PR + `blocked`), so the 8 historical >2000-line PRs that shipped as `warn` would now block.
 
-Tier-1 metrics schema is stable; new fields added strictly via enum extension. See [`CHANGELOG.md`](CHANGELOG.md) for the per-fix postmortem trail — every wrapper added in this cycle has a documented production-failure origin.
+Builds on the v0.6 foundation of **structurally-coupled** wrappers — every side-effect announce token comes from wrapper stdout with an anti-fabrication tell, so skipping a check surfaces as a visible bug rather than a silent skip. v0.7 adds `pr-size-check` to that family (`metrics-append`, `config-init`, `config-ensure-metrics`, `check-caveman`, `plan-size-check`, `pr-size-check`).
+
+Tier-1 metrics schema is stable; new fields added strictly via enum extension (the back-compat `calibration` field is retained alongside the split). See [`CHANGELOG.md`](CHANGELOG.md) for the per-fix postmortem trail — every wrapper has a documented production-failure origin.
 
 ## Uninstall
 

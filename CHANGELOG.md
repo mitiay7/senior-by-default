@@ -4,6 +4,17 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-29
+
+**Measurement integrity + a PR-size ceiling that actually blocks.** This cycle acts on a 225-entry audit (May 14–24, since extended to 254 live entries). Two of the three big findings were that the metrics *instrument itself* was lying — the `gates` vocabulary had drifted to ~110 names for ~19 real gates, and the single `calibration` field conflated "missed a real defect" with "didn't predict diff size" (39% of "false positives" were pure `pr_size=warn` noise). The third was the real defect: tasks were too big and the size ceiling was never enforced — 8 PRs added >2000 lines and every one shipped as `pr_size=warn` despite `block_lines=2000`.
+
+**Release-level summary** (detail in the entries below + the post-v0.6.0 follow-ups folded in from the prior `[Unreleased]`):
+
+- **Controlled vocabulary for `gates` (P1).** `metrics-append` normalizes gate keys (alias map → 19 canonical names) + statuses (→ `pass|warn|fail|block|skipped`), coerces scalar values, merges collisions by severity, and **preserves** (never rejects) unknown task-specific keys with a `noncanon=` tell. Measured on 254 live entries: 60 raw synonym buckets → 19 canonical + a few one-offs.
+- **Split calibration (P2).** New `calibration_defect` (real code defect missed — the de-confounded primary signal) + `calibration_size` (diff-size prediction) dimensions alongside the back-compat `calibration`. Flags default to `n_a`; the orchestrator computes both per the §4.11 logic.
+- **PR-size ceiling that blocks (P0).** `plan-size-check` H bucket got a real ceiling (25 files / 1500 lines) so `SPLIT-REQUIRED` fires instead of being dead code. New `pr-size-check` wrapper owns the Phase 3.0 PASS/WARN/BLOCK decision; **BLOCK exits 3** (hard halt → draft PR + `blocked`), so the orchestrator can no longer downgrade block to warn.
+- **Same structural-coupling invariant throughout.** Every new check is a wrapper that owns the decision + the literal strings + an anti-fabrication tell (gate rename counts, computed split counts, breach/overage lists); the spec only invokes + dispatches.
+
 ### Metrics — controlled vocabulary for `gates` keys + statuses (P1)
 
 Audit of 225 canonical entries (May 14–24) found the `gates` JSON had **~110 distinct keys for ~19 real gates** — `test`/`tests`/`test_gate`/`go_test`, `ui`/`ui_gate`/`visual_verify`/`visual_smoke`, `i18n`/`i18n_gate`, `contract`/`contract_gate`, `dep_vuln`/`dep_vuln_go`/`dep_vuln_pnpm`, `type_check`/`type-check`/`lint_typecheck` — plus equally-drifty statuses (`skip`/`n/a`/`n-a`/`na`/`n_a`, scalar `pass`/`true`/`ok`/`clean`). Same data-quality class as the v0.6.0 `outcome`-enum drift: every synonym splits one gate's stats across buckets, so the daily-report gate-failure-rate was noise. `outcome` got a controlled vocabulary in v0.6.0; `gates` had none until now.
