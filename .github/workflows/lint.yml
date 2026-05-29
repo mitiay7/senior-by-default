@@ -34,7 +34,7 @@ jobs:
         run: python -m pip install --quiet jsonschema
       - name: JSON syntax
         run: |
-          for f in examples/*.json .claude-plugin/plugin.json skills/do/references/config.schema.json; do
+          for f in examples/*.json .claude-plugin/plugin.json skills/do/references/config.schema.json skills/do/hooks/settings.with-hooks.json; do
             echo "Checking $f"
             python -m json.tool "$f" > /dev/null
           done

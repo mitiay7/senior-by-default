@@ -221,6 +221,17 @@ Three Claude models with hard role boundaries — see [`skills/do/SKILL.md`](ski
 
 See [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md) for the full schema and [`examples/`](examples/) for ready-to-adapt configs.
 
+## Optional: harness-level enforcement hooks
+
+The skill's default enforcement is **structural-coupling wrappers** — each side-effect runs through a `scripts/*` wrapper that owns the decision + an anti-fabrication tell, so a skipped or faked check shows up as a visible bug. That's strong but still *model-dependent*: if the orchestrator never invokes a wrapper, it can't fire.
+
+For the two checks that **must** happen every task, you can opt into **Claude Code hooks** — scripts the runtime executes itself, independent of the model:
+
+- **Stop hook** (`do-metrics-stop-gate.sh`) — blocks the turn from ending when a `/do` finalize lacks a valid, file-backed `Metrics:` line. Makes metrics emission non-bypassable. Self-scopes to `/do` runs (no-op on normal turns), so it's safe to register globally.
+- **PreToolUse hook** (`do-plan-size-pretooluse.sh`, matcher `Task`) — surfaces the Phase 2.0 plan-size verdict at implementer-spawn time. Non-blocking (injects context, never denies).
+
+These are **opt-in and off by default** — the skill works identically without them (it degrades to the wrapper tier). Enable by merging [`skills/do/hooks/settings.with-hooks.json`](skills/do/hooks/settings.with-hooks.json) into your `~/.claude/settings.json` (or per-project `.claude/settings.json`), or let `install.sh` do it when it prompts (default No). Full rationale + the three enforcement tiers: [`skills/do/references/hooks.md`](skills/do/references/hooks.md).
+
 ## Recommended companion: caveman (install FIRST)
 
 [caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill that compresses agent output by ~75% via "caveman speak" while preserving full technical accuracy. It's passive (SessionStart hook), so once installed it just works for any session — including ours.
@@ -329,6 +340,7 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 - [`skills/do/references/adr.md`](skills/do/references/adr.md) — ADR template + numbering
 - [`skills/do/references/notifications.md`](skills/do/references/notifications.md) — Slack / Teams webhook formats
 - [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md) — what NOT to do (sanity-check before announce)
+- [`skills/do/references/hooks.md`](skills/do/references/hooks.md) — opt-in harness-level enforcement (Stop / PreToolUse hooks) + the three enforcement tiers
 
 ## Troubleshooting
 

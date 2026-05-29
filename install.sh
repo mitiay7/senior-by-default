@@ -234,6 +234,67 @@ EOF
   fi
 fi
 
+# --- Step 6.5: optional enforcement hooks (OPT-IN, default No) --------------
+
+# Tier-3 enforcement (see skills/do/references/hooks.md): a Stop hook that makes
+# Phase 4.11 metrics emission non-bypassable, and a PreToolUse hook that surfaces
+# the plan-size verdict at spawn time. NOT enabled unless the user opts in; merged
+# idempotently into ~/.claude/settings.json with a backup. Default No.
+
+HOOKS_DIR_INSTALLED="$SYMLINK_PATH/hooks"
+SETTINGS_JSON="$HOME/.claude/settings.json"
+ENABLE_HOOKS=$(prompt "Enable opt-in enforcement hooks? (Stop=metrics non-bypassable, PreToolUse=plan-size) — merges into $SETTINGS_JSON" "N" "ENABLE_HOOKS")
+
+if [[ "$ENABLE_HOOKS" =~ ^[Yy] ]]; then
+  if [ ! -f "$HOOKS_DIR_INSTALLED/do-metrics-stop-gate.sh" ]; then
+    warn "Hook scripts not found at $HOOKS_DIR_INSTALLED — skipping (update your install)."
+  else
+    mkdir -p "$(dirname "$SETTINGS_JSON")"
+    if [ -f "$SETTINGS_JSON" ]; then
+      cp "$SETTINGS_JSON" "$SETTINGS_JSON.bak.$(date +%s)"
+      log "Backed up existing settings.json"
+    fi
+    STOP_CMD="$HOOKS_DIR_INSTALLED/do-metrics-stop-gate.sh"
+    PRE_CMD="$HOOKS_DIR_INSTALLED/do-plan-size-pretooluse.sh"
+    if SETTINGS_JSON="$SETTINGS_JSON" STOP_CMD="$STOP_CMD" PRE_CMD="$PRE_CMD" python3 - <<'PY'
+import json, os, sys
+p = os.environ["SETTINGS_JSON"]
+stop_cmd, pre_cmd = os.environ["STOP_CMD"], os.environ["PRE_CMD"]
+try:
+    data = json.load(open(p)) if os.path.exists(p) else {}
+except Exception as e:
+    print(f"existing settings.json is not valid JSON ({e}); leaving untouched", file=sys.stderr)
+    sys.exit(1)
+hooks = data.setdefault("hooks", {})
+def present(event, cmd):
+    return any(h.get("command") == cmd
+               for grp in hooks.get(event, []) for h in grp.get("hooks", []))
+changed = False
+if not present("Stop", stop_cmd):
+    hooks.setdefault("Stop", []).append({"hooks": [{"type": "command", "command": stop_cmd}]})
+    changed = True
+if not present("PreToolUse", pre_cmd):
+    hooks.setdefault("PreToolUse", []).append(
+        {"matcher": "Task", "hooks": [{"type": "command", "command": pre_cmd}]})
+    changed = True
+if changed:
+    with open(p, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    print("merged")
+else:
+    print("already present")
+PY
+    then
+      ok "Enforcement hooks merged into $SETTINGS_JSON — run /hooks in Claude Code to confirm. Disable by removing the 'hooks' block."
+    else
+      warn "Hook wiring skipped (see message above). Enable manually per skills/do/references/hooks.md."
+    fi
+  fi
+else
+  log "Enforcement hooks not enabled (opt-in). See $INSTALL_DIR/skills/do/references/hooks.md to enable later."
+fi
+
 # --- Step 7: soft-dependency status report ---------------------------------
 
 if [ ${#soft_missing[@]} -gt 0 ]; then

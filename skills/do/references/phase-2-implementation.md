@@ -110,6 +110,8 @@ esac
 
 **Anti-fabrication tell**: the wrapper output includes the actual computed cap values for the bucket (e.g. `caps: 8 files / 600 lines` for M). The spec contains no copy-pasteable form of either the cap values or the full output template — orchestrator skipping the wrapper can't reproduce the exact values without running it.
 
+**Optional harness backstop** (tier 3, opt-in): if the user enabled the hooks in [`hooks.md`](hooks.md), the `PreToolUse` plan-size hook re-runs `plan-size-check` at the moment the implementer `Task` is spawned and injects the verdict — provided the spawn prompt carries the `PLAN-SIZE: files={PLANNED_FILES} lines={PLANNED_LINES_EST} complexity={COMPLEXITY}` marker (emit it in the prompt's Flags section, below). Harmless without the hook; surfaces the size verdict at the runtime level when present.
+
 **Observability**: on the REBUMP branch, set `$COMPLEXITY_REBUMPED_FROM` (shown above) so the Phase 4.13 metrics-append invocation can pass `--complexity-rebumped-from "$COMPLEXITY_REBUMPED_FROM"`. Recorded in JSONL as `complexity_rebumped_from` (omitted when no re-bump). Downstream metric: count of T/L/M re-bumps over time tells whether Phase 0 routing accuracy is improving or whether plan-size is the load-bearing layer.
 
 **Why this exists** (production audit 2026-05-21): 6 of 13 false-positive cases were tasks routed Medium that shipped 942–1859 lines. Phase 0 file-count estimate was 4–8 (correct M bucket bound) but actual files came out 9–31 and lines 942–1859 — both H-bucket territory. Without this check the orchestrator runs Sonnet for an hour, Phase 3 catches `pr_size=warn` after the fact, and ~$/task is wasted on review-cycles instead of being prevented at plan time. The check is cheap (numeric comparison) and runs once per spawn.
@@ -179,6 +181,10 @@ Tests: {YES/NO} | Migration: {YES NNN/NO}
 Build: {cache.build_cmds joined with ' && '}  [+ if affected_graph → "(scoped via {tool})"]
 Lint:  {cache.lint_cmds joined with ' && '}
 Test:  {cache.test_cmd}
+PLAN-SIZE: files={PLANNED_FILES} lines={PLANNED_LINES_EST} complexity={COMPLEXITY}
+<!-- ^ machine-readable marker from §2.0. Harmless to the implementer; read by the
+     optional PreToolUse plan-size hook (references/hooks.md) to surface the verdict
+     at spawn time. Omit nothing — emit it verbatim with the §2.0 numbers. -->
 
 ## Rules
 

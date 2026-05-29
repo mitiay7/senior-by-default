@@ -68,6 +68,7 @@ Do NOT preload. Read each only when its trigger fires.
 | ADR generation (High) | [`references/adr.md`](references/adr.md) |
 | Slack/Teams notifications | [`references/notifications.md`](references/notifications.md) |
 | Pre-finalize sanity check | [`references/anti-patterns.md`](references/anti-patterns.md) |
+| Opt-in harness enforcement (Stop / PreToolUse hooks) | [`references/hooks.md`](references/hooks.md) |
 
 Example configs (at repo root):
 - [`multi-repo-go-react-config.json`](../../examples/multi-repo-go-react-config.json) — workspace Go API + React + docs + GitHub

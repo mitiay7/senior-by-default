@@ -4,6 +4,27 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Hook-based enforcement (tier 3, OPT-IN) (P3)
+
+The wrapper tier (tier 2) is strong but model-dependent: if the orchestrator never invokes a wrapper, it can't fire (~18% compliance on the internal-only plan-size check, higher on user-visible ones). For the two checks that MUST happen every task, add **Claude Code hooks** — scripts the runtime executes itself, independent of the model. Opt-in and off by default; the skill degrades cleanly to tiers 1+2 without them.
+
+#### Added
+
+- **`skills/do/hooks/do-metrics-stop-gate.sh`** (NEW, Stop hook) — makes Phase 4.11 metrics emission non-bypassable at the runtime level. Self-scopes to `/do` runs (no-op unless the last assistant message carries the `Complete. Branch:` / `Models: orchestrator=` announce signature — safe to register globally). Blocks the stop (`{"decision":"block",...}`) when a `/do` finalize lacks a `Metrics:` line OR the `Metrics: <N> entries in <path>` claim isn't backed by the file (path missing, or `wc -l < path` < N) — promoting the wrapper's pre/post line-count tell to harness enforcement. `stop_hook_active` loop-guard; terminal states (`not configured`, `APPEND FAILED`) not re-blocked.
+- **`skills/do/hooks/do-plan-size-pretooluse.sh`** (NEW, PreToolUse hook, matcher `Task`) — surfaces the Phase 2.0 plan-size verdict at implementer-spawn time. Non-blocking by design (injects `additionalContext`, never denies). Acts only on the `PLAN-SIZE: files=N lines=M complexity=C` marker the Phase 2 spawn prompt now emits; any other `Task` spawn → no-op. Self-locates `plan-size-check` via `$0`.
+- **`skills/do/hooks/settings.with-hooks.json`** (NEW) — the opt-in settings fragment to merge into `~/.claude/settings.json` or a project `.claude/settings.json`.
+- **`references/hooks.md`** (NEW) — documents the three enforcement tiers (soft instruction → structural-coupling wrapper → harness hook), which checks each covers, the two shipped hooks, install instructions, and the global-scope caveat (why both hooks self-scope).
+
+#### Changed
+
+- **`install.sh`** — new opt-in Step 6.5 (default **No**): merges the hooks into `~/.claude/settings.json` idempotently (checks for the exact command before adding, backs up first, validates JSON, refuses on un-parseable existing settings). Never a mandatory mutation; respects the `ENABLE_HOOKS` env for non-interactive installs.
+- **`phase-2-implementation.md`** — Sonnet-spawn prompt Flags section emits the `PLAN-SIZE:` marker; §2.0 documents the optional PreToolUse backstop.
+- **`SKILL.md`** progressive-disclosure table + **README** gain a hooks section / doc-map entry. **`.github/workflows/lint.yml`** json-syntax step now also validates `settings.with-hooks.json` (kept out of the `examples/*.json` schema-validation glob — it's a settings file, not a do-config).
+
+#### Tested
+
+Both hook scripts validated with mock stdin across all branches (Stop: non-/do no-op, valid/missing/file-missing/count-mismatch/not-configured/loop-guard; PreToolUse: PASS/REBUMP/SPLIT-REQUIRED injection + no-marker no-op). The settings merge tested for idempotency + key-preservation + invalid-JSON refusal. Hooks were NOT registered into the live session (a Stop hook there would gate the session itself) — runtime registration is documented for the user to enable.
+
 ## [0.7.0] — 2026-05-29
 
 **Measurement integrity + a PR-size ceiling that actually blocks.** This cycle acts on a 225-entry audit (May 14–24, since extended to 254 live entries). Two of the three big findings were that the metrics *instrument itself* was lying — the `gates` vocabulary had drifted to ~110 names for ~19 real gates, and the single `calibration` field conflated "missed a real defect" with "didn't predict diff size" (39% of "false positives" were pure `pr_size=warn` noise). The third was the real defect: tasks were too big and the size ceiling was never enforced — 8 PRs added >2000 lines and every one shipped as `pr_size=warn` despite `block_lines=2000`.
