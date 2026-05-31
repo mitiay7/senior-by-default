@@ -63,7 +63,7 @@ Types: `feat | fix | refactor | test | chore | wip`.
 
 For final commit on M/H: include `Ref: {issue_tracker.repo}#{N}` if issue tracker configured.
 
-`Co-Authored-By` line — **auto-detect current model** from environment metadata (e.g. "Claude Opus 4.7 (1M context)"). Format:
+`Co-Authored-By` line — **auto-detect current model** from environment metadata (e.g. "Claude Opus &lt;version&gt; (1M context)" — read the running build, do not copy a literal version from this doc). Format:
 ```
 Co-Authored-By: <Model Name> <noreply@anthropic.com>
 ```
