@@ -4,6 +4,14 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Fixed — stale `opus-4.7` example literals (version-agnostic now)
+
+Three example literals hardcoded `opus-4.7` / `Opus 4.7`: `scripts/metrics-append` (2 usage-comment lines for `--orchestrator`) and `references/git-rules.md` (Co-Authored-By footer example). The orchestrator read these as canonical and recorded `opus-4.7` in telemetry / could copy the stale footer even when running a newer model build.
+
+**Not a spawn-logic bug.** Agents spawn via the version-agnostic aliases `opus`/`sonnet`/`haiku` (SKILL.md notation) and frontmatter `model: opus`, all resolved by the harness to the current build — confirmed by the v0.7.0/v0.8.0 commits already carrying `Claude Opus 4.8 (1M context)` footers. Only the example literals were stale.
+
+**Fix** (consistent with the skill's own rule "Never hardcode a model version", anti-patterns §11): replaced the `opus-4.7` literals with `opus-<version>` placeholders + explicit "read the running model id from session metadata, omit to default to the `opus` alias" guidance. Runtime enum `opus-[0-9.]+` still accepts real values like `opus-4.8` — verified it records correctly. Won't rot at the next model release.
+
 ## [0.8.0] — 2026-05-29
 
 **Hook-based enforcement + cleanup.** v0.7.0 fixed the measurement instrument and added a PR-size ceiling; v0.8.0 closes the enforcement loop and tidies what the prior cycles accreted.
