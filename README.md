@@ -364,7 +364,7 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 ## Status
 
-`v0.8.0` released (2026-05-29). Architecture stable. v0.8 closes the **enforcement loop** with opt-in tier-3 harness hooks and tidies up:
+`v0.8.1` released (2026-05-31). Architecture stable. v0.8 closed the **enforcement loop** with opt-in tier-3 harness hooks; v0.8.1 is a patch making the `--orchestrator` / Co-Authored-By model examples version-agnostic (`opus-<version>` placeholder, never a hardcoded build). v0.8 highlights:
 
 - **Three enforcement tiers, now explicit** — soft instruction → structural-coupling wrapper (default) → **opt-in Claude Code hook** (runtime-enforced, model-independent). A **Stop hook** makes metrics emission non-bypassable (blocks a `/do` finalize lacking a file-backed `Metrics:` line; self-scopes so normal turns are untouched); a **PreToolUse hook** surfaces the plan-size verdict at spawn time. Off by default — see [`skills/do/references/hooks.md`](skills/do/references/hooks.md).
 - **No dead gates** — the five "never-failing" gates were investigated and kept: `0 fails` was a measurement artifact (Phase 3 records the resolved state); all fire via `fix_cycle` (`opus_review` 16/125, `test` 5/130, …). The daily report now shows a `Fired*` column.

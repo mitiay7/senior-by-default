@@ -4,6 +4,10 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-05-31
+
+**Patch — version-agnostic model examples.** Doc/comment-only fix; no behavior change.
+
 ### Fixed — stale `opus-4.7` example literals (version-agnostic now)
 
 Three example literals hardcoded `opus-4.7` / `Opus 4.7`: `scripts/metrics-append` (2 usage-comment lines for `--orchestrator`) and `references/git-rules.md` (Co-Authored-By footer example). The orchestrator read these as canonical and recorded `opus-4.7` in telemetry / could copy the stale footer even when running a newer model build.
