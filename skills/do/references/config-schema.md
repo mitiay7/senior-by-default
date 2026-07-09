@@ -256,10 +256,11 @@ Set when your team relies on cloud CI (GitHub Actions, GitLab CI, CircleCI, etc.
 - `timeout_seconds` — abort wait after N seconds, escalate to user (default 1800)
 - `fail_action: "block"` — failed checks → return to Sonnet via Phase 3 retry; `"warn"` — warn but proceed (default "block")
 
-For local-only CI workflows (lefthook, manual `make test`), build/lint/test are already enforced by Phase 2/3 directly — leave `ci` unset. Optionally add a `_note` field documenting why for future-self / teammates.
+For local-only CI workflows (lefthook, manual `make test`), build/lint/test are already enforced by Phase 2/3 directly — leave `ci` unset. Optionally add a `_note` field documenting why for future-self / teammates. Note: explicit `required: true` is also the `auto_merge` precondition (below) — leaving `ci` unset keeps auto-merge behind a per-run confirmation.
 
 #### `auto_merge`
 After PR creation (Phase 4.2), enable auto-merge so PR merges automatically when CI passes + required reviews approve.
+- **Precondition (single-sourced in [phase-4 §4.2.6](phase-4-finalize.md))**: fires only when `ci.required` is explicitly `true` AND that run's §4.2.5 CI gate passed. `false`/unset/no-`ci`-block → per-run hand-grenade warning + explicit confirmation, else `await_review`. `enabled: true` alone never merges unverified.
 - `enabled: false` by default (opt-in — auto-merge is risky)
 - `method` — `squash` (default), `merge`, or `rebase`
 - `delete_branch: true` — clean up branch after merge

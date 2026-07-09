@@ -4,6 +4,35 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Fixed — auto-merge precondition single-sourced: explicit `ci.required: true` + a passing §4.2.5 gate, else per-run confirmation → `await_review` (was: two authoritative texts disagreed, and the unset-CI default auto-merged unverified)
+
+§4.2.6's guard read "never auto-merge if `ci.required: false`" — by its letter it covered only the explicit `false`, not the common UNSET default (the solo/local setup the spec optimizes for), and its "verify CI is green (4.2.5 already passed)" was vacuous when §4.2.5 was skipped (that gate only runs on explicit `true`). Meanwhile anti-patterns' auto-merge bullet said the same state "warns; user must explicitly accept" — "never" vs "warn+accept", two contradictory instructions for one state, so an orchestrator inclined to proceed could cite whichever text permitted it. Net effect: `auto_merge.enabled: true` + no `ci` block auto-merged a PR with zero post-push verification.
+
+**Fix — one rule, defined in §4.2.6 only:**
+
+- **Precondition**: auto-merge fires ONLY when `config.ci.required` is **explicitly `true`** AND this run's §4.2.5 gate PASSED. Explicit `false`, unset, and no-`ci`-block are ONE state — unverified; config alone never pre-authorizes an unverified merge.
+- **Unverified + auto-merge requested** → hand-grenade warning + **exact-phrase per-run confirmation** (`merge unverified`); confirmed → merge proceeds with `⚠ merged unverified (per-run user confirmation, no CI gate)` recorded in the §4.7 issue comment and the §4.13 announce (new optional token); anything else, including silence → `await_review` (PR stays open, pipeline completes normally — not an error).
+- **All other texts now defer**: the anti-patterns bullet points at §4.2.6 and explicitly disclaims being a rule of its own ("never cite this bullet as the permissive alternative"); §4.2.5 states the hard dependency; config-schema.md's `ci`/`auto_merge` sections and both README surfaces (security bullet + cheat-sheet row) repeat the pointer, not a second rule.
+
+No config field shape changed (`ci.required` stays a boolean; `auto_merge` block unchanged) — schema untouched; all `examples/*.json` re-validated against it (none enables `auto_merge`, no example drift).
+
+Audit finding #11 (major).
+
+### Fixed — Phase 0 fresh-machine preflight: wrapper-owned gh/glab presence+auth gate with DEGRADED-to-none, and an explicit non-git-directory STOP (was: both states resolved by model improvisation)
+
+Auto-init wrote `issue_tracker.type: github` purely from the remote URL — never `command -v gh`, never `gh auth status` — so the most common fresh-machine state (git present, gh absent) committed the pipeline to a tracker it can't talk to, and the first failure surfaced as a raw `gh: command not found` mid-pipeline with no spec'd fallback. Running `/do` outside a git repo likewise had no defined behavior: Step 3's `git rev-parse` failed quietly and the first symptom was later Step 4/5 bash dereferencing an unset `$REPO` — both against the skill's own every-failure-mode-is-a-spec'd-line philosophy.
+
+**Fix:**
+
+- **`config-init` owns the tracker preflight** (existing wrapper extended — no wrapper sprawl): on github/gitlab detections it probes `command -v gh|glab` + `gh|glab auth status` BEFORE writing the type. Probe fails → the written config degrades to `type: "none"` with `_meta.tracker_degraded_from`/`tracker_degraded_reason` + the remedy in `_setup_notes`, and a second stdout line after the `Config:` line: `Tracker: DEGRADED to none (<tool> missing|unauthenticated — <fix>)` (honest degraded state, copyable on purpose). Probe passes → `Tracker: github|gitlab OK (<tool version>; auth account: <login>)` — version + account are runtime probes, not composable from spec text (the §19c tell standard; ledger row extended, including "pre-probing gh in spec bash and flipping `$TRACKER` yourself" as a named bypass). The verdict rides second so phase-0's `"Config: AUTO-GENERATED"*` prefix glob keeps matching; both lines travel inside `$CONFIG_LINE` verbatim into the announce.
+- **DEGRADED-to-none is a defined mode, never a silent skip**: trackers.md §none documents it (runtime-identical to plain none; the difference is observability + the recorded restore path); phase-1-issue.md now requires an announced skip — `[Phase 1] SKIPPED — tracker: none (DEGRADED from github: gh missing)` — repeating the reason at the phase that lost functionality (plain-none and Low-complexity skips gain announce lines too).
+- **Step 3 non-git STOP**: verbatim bash — `git rev-parse --show-toplevel` failure prints `STOP: not inside a git repo — cd into a project repo, pass --repo=NAME (needs config.workspace.repos), or git init first` and HALTs Phase 0 before any Step 4/5 work or side effects.
+- README: auto-init section shows the `Tracker:` verdict forms; troubleshooting gains the degraded-tracker and non-git-STOP entries.
+
+Verified in a sandboxed probe matrix (33 checks green on macOS bash 3.2; 31/31 behavioral re-pass on debian/GNU — the 2 skips are python3-jsonschema absent in the container, and the schema checks passed on macOS): non-git STOP text + exit 1 and in-repo `Repo:` pass-through; gh-missing (PATH-restricted) → DEGRADED line + `type: none` + `_meta` markers + remedy, no dangling `repo` key; gh-present-unauthenticated (shim) → `gh unauthenticated` reason; gh-authenticated (shim) → exact OK line with version+account tell, no degrade markers; glab-missing gitlab mirror; plain `--tracker none` unchanged (single stdout line, no verdict); the phase-0 prefix glob against a 2-line `$CONFIG_LINE`; degraded + OK configs validate against config.schema.json; all three REJECT paths unchanged (overwrite / bad tracker / missing `--tracker-repo`). Shellcheck-clean, bash-3.2-clean.
+
+Audit finding #13 (major).
+
 ### Fixed — tier-3 hooks live-verified end-to-end + the missing §19f PR-creation backstop shipped (was: hooks validated with mock stdin only, never live-registered; §19f's Tier-3 cell claimed a hook that didn't exist)
 
 v0.8.0 shipped the hooks with mock-stdin validation only — the `last_assistant_message` field name and the transcript-fallback jq shape were assumptions about the real Stop payload, and a wrong assumption would have made the backstop silently no-op forever while hooks.md, the §19 table, and README told users the gap was covered (the v0.2.4 "nobody re-tested the documented flow" lesson verbatim). Separately, §19f's Tier-3 cell claimed a PreToolUse backstop for the PR-size gate, but the shipped hook only acts on `PLAN-SIZE:` markers at plan time — the PR-creation hook that `pr-size-check`'s exit 3 was designed for was never shipped.

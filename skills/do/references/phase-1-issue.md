@@ -2,6 +2,14 @@
 
 **Skip entirely if** `config.issue_tracker` is missing, or `type == "none"`. For Low complexity, also skip (no issue is needed — Sonnet runs from inline task description).
 
+**Skips are announced, never silent** — print exactly one line, then move on:
+
+- Plain none/missing: `[Phase 1] SKIPPED — tracker: none`
+- Degraded none (config carries `_meta.tracker_degraded_from`, or Phase 0's `$CONFIG_LINE` included a `Tracker: DEGRADED to none (…)` line): `[Phase 1] SKIPPED — tracker: none (DEGRADED from {github|gitlab}: {tracker_degraded_reason})` — repeat the reason at the phase that lost functionality; the Phase 0 announce alone scrolls away, and a silent skip reads as "worked as configured" when the truth is "tracker CLI missing/unauthenticated" (audit #13).
+- Low complexity: `[Phase 1] SKIPPED — Low complexity (inline task description)`
+
+Downstream stays consistent with [`trackers.md`](trackers.md) §none: no `Closes #N`, no `Ref:` in commits, no issue comments in Phase 4.
+
 ## Tracker abstraction
 
 All tracker operations go through `config.issue_tracker.commands` (defaults filled per `type` — see [`trackers.md`](trackers.md)).

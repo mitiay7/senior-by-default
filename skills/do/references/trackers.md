@@ -129,11 +129,13 @@ MR (PR equivalent) creation uses `glab mr create -R "$CODE_REPO" --target-branch
 The `| jq` pipe is safe because `jq` reads stdin; no user input goes through the shell pipe boundary.
 
 ### `none`
-Phase 1 entirely skipped. No `Closes #N` in PRs. No `Ref:` in commits. Sonnet runs from inline task description (Low-task format).
+Phase 1 entirely skipped — with an explicit `[Phase 1] SKIPPED — tracker: none` announce (see [`phase-1-issue.md`](phase-1-issue.md); never silent). No `Closes #N` in PRs. No `Ref:` in commits. Sonnet runs from inline task description (Low-task format).
 
 ```json
 "issue_tracker": { "type": "none" }
 ```
+
+**DEGRADED none** — Phase 0 auto-init writes `type: "none"` itself when the remote points at github/gitlab but the CLI is missing or unauthenticated (`_meta.tracker_degraded_from` + `tracker_degraded_reason` record what was intended and why it degraded; `_setup_notes` carries the remedy). Runtime behavior is identical to plain none; the difference is observability — the Phase 0 announce carries the wrapper's `Tracker: DEGRADED to none (…)` line and the Phase 1 skip announce repeats the reason. Restore by installing/authenticating the CLI, then setting `issue_tracker` back per `_setup_notes`.
 
 ### `custom`
 For Linear, Jira, Trello, internal trackers, etc. — provide the `commands` block.

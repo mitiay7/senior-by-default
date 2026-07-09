@@ -133,7 +133,17 @@ Else if `config.workspace.repos` exists → match `$ARGUMENTS` against each repo
 - multiple → fullstack (multiple worktrees)
 - 0 → ask user
 
-Else → CWD must be inside a git repo. Use `git rev-parse --show-toplevel`.
+Else → CWD must be inside a git repo — **run this bash verbatim; STOP on failure, never let Step 4/5 dereference an unset `$REPO`**:
+
+```bash
+REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "STOP: not inside a git repo — cd into a project repo, pass --repo=NAME (needs config.workspace.repos), or git init first"
+  exit 1
+}
+echo "Repo: $REPO"
+```
+
+`STOP:` printed → **HALT Phase 0**: relay the line to the user verbatim and end the task. No Step 4/5, no auto-init, no worktree, no announce. Pre-fix this state had no defined behavior — `git rev-parse` failed quietly and the first symptom was later Step 4/5 bash operating on an empty `$REPO` (model improvisation instead of a defined stop, against the skill's own every-failure-mode-is-a-spec'd-line philosophy — audit #13).
 
 ### 4. Stack cache (load or detect)
 
@@ -156,6 +166,11 @@ Cache fields used throughout phases 1–4: `stack`, `package_manager`, `build_cm
 ```bash
 # Detect tracker from git remote (origin). Bash parameter expansion only —
 # avoids sed regex with `](...)` that confuses markdown link parsers.
+# NOTE: this detects the remote URL ONLY. Presence + auth of the tracker CLI
+# is config-init's gate (wrapper-side: probes `command -v gh|glab` + `gh|glab
+# auth status`; failure degrades the written config to type:none and emits a
+# second "Tracker: …" stdout line — see "Tracker preflight" below). Do NOT
+# pre-probe gh here and flip $TRACKER yourself — the wrapper owns the verdict.
 REMOTE_URL="$(git -C "$REPO" remote get-url origin 2>/dev/null || true)"
 case "$REMOTE_URL" in
   *github.com*) TRACKER="github"; TR_PATH="${REMOTE_URL##*github.com[:/]}"; TRACKER_REPO="${TR_PATH%.git}" ;;
@@ -243,6 +258,8 @@ Locale detection rationale: keeps the wrapper as the single source of truth for 
 - `config.json` already exists — refuses to overwrite (Step 1 already loaded it; this branch shouldn't execute, but defense in depth).
 - `jq` not installed — refuses with reason.
 
+**Tracker preflight (wrapper-side, fires only on github/gitlab detections)**: before writing `type: github|gitlab`, config-init probes `command -v gh|glab` + `gh|glab auth status`. Probe fails → the wrapper DEGRADES the written config to `type: "none"` (records `_meta.tracker_degraded_from` / `tracker_degraded_reason` + the remedy in `_setup_notes`) and appends a second stdout line after the `Config:` line: `Tracker: DEGRADED to none (<tool> missing|unauthenticated — <fix>)`. Probe passes → `Tracker: github|gitlab OK (<tool version>; auth account: <login>)` — version + account are runtime probes, not composable from spec text (the anti-fabrication tell; [anti-patterns §19c](anti-patterns.md)). Both forms are part of `$CONFIG_LINE` (full stdout capture) and ride into the announce verbatim. DEGRADED is an honest state, not an error: Phase 1 is skipped **with an explicit announce** (see [`phase-1-issue.md`](phase-1-issue.md)), the rest of the pipeline runs trackerless. Do NOT hand-flip the type back to github/gitlab without a working CLI — the next run's Phase 1 dies at the first `{Tracker.list_open}`. Pre-fix, auto-init trusted the remote URL alone; the fresh-machine state (git present, gh absent) committed the pipeline to a tracker it couldn't talk to, surfacing as a raw `gh: command not found` mid-pipeline (audit #13).
+
 The generated file contains: `version + _meta + issue_tracker + issue_locale + specialists` (unless `--no-specialists` passed). The specialists preset references plugins from the two recommended marketplaces (`anthropics/claude-plugins-official` + `wshobson/agents` — see [README](../../../README.md#recommended-claude-code-plugins-for-phase-3-specialist-review)). If user hasn't installed them, /do falls back to Opus inline review for that specialist group — no error. `_meta._setup_notes` in the generated file lists the exact install commands.
 
 Other config sections (`context_doc`, `workspace.repos`, `ui_gate`, `acceptance_extensions`, `naming` overrides) are left for the user to add by extending the file. The file is left unstaged — user reviews and commits when ready. Subsequent `/do` runs re-read it on each Phase 0, so no reload needed after extension.
@@ -321,7 +338,7 @@ After all 6 steps pass:
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
   Started: {STARTED_AT — the exact value echoed by the preflight task-clock capture, verbatim; Phase 4.11 reads the same value back from $CLOCK_FILE and cross-checks against this line}
   {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
-  {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose}
+  {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose; auto-init github/gitlab detections carry a SECOND line (`Tracker: … OK (…)` | `Tracker: DEGRADED to none (…)`) — keep both lines, same verbatim rule}
   {$METRICS_CONFIG_LINE — output of Step 1 config-ensure-metrics or Step 4 mirror (ALREADY CONFIGURED | EXPLICIT OPT-OUT | AUTO-ADDED | INCLUDED in auto-init | SKIPPED | PATCH SKIPPED | N/A), verbatim — DO NOT compose; the three wrapper forms carry a runtime `(cfg=…)` fingerprint (§19i) — a wrapper form without it was composed by hand}
   WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
   [+ if assumptions recorded → "Assumptions: {short list}"]

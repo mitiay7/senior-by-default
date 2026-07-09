@@ -35,7 +35,7 @@ This skill performs writes against your git repo and your issue tracker:
 - Creates branches and worktrees
 - Commits and pushes code
 - Opens pull requests
-- **With `auto_merge.enabled: true`** — merges to default branch when CI is green, without manual review
+- **With `auto_merge.enabled: true`** — merges to default branch when CI is green, without manual review. Precondition (single-sourced in [phase-4 §4.2.6](skills/do/references/phase-4-finalize.md)): explicit `ci.required: true` + a passing CI gate that run — anything else gets a per-run "merge unverified" confirmation prompt, else the PR waits for manual review
 
 The skill inherits whatever auth `gh`/`git` already have on your machine — assume it can do anything *you* can do from your terminal. Audit `.claude/do/config.json` before committing it (it carries webhook URLs, repo names, branch templates). Read `install.sh` before running with `curl | bash`. Keep `auto_merge.enabled: false` until you've watched a few task cycles.
 
@@ -117,7 +117,7 @@ SKILL_NAME=do TRIGGER=+++ INSTALL_DIR=~/.local/share/senior-by-default \
 
 **Zero-touch by default — Phase 0 auto-generates `.claude/do/config.json` on first run.** When you run `/do` in a project that doesn't have one, the orchestrator detects context and writes a minimum-viable config without prompting:
 
-- `issue_tracker.{type,repo}` from `git remote get-url origin` (github/gitlab/none, owner/repo auto-extracted)
+- `issue_tracker.{type,repo}` from `git remote get-url origin` (github/gitlab/none, owner/repo auto-extracted) — gated by a CLI preflight: `gh`/`glab` missing or unauthenticated → the config degrades to `type: "none"` (issue phase skipped, announced — never a mid-pipeline `gh: command not found`) with the remedy recorded in `_meta`
 - `issue_locale` from `$ARGUMENTS` script (Cyrillic → `ru`, Hiragana/Katakana/CJK → `ja`, Hangul → `ko`, else `en`; explicit `--issue-locale=<code>` wins)
 - recommended `specialists` preset wiring the 6 Phase-3-audit plugins listed below
 - documented tier-1 `metrics` preset (`~/.claude/do/metrics/{repo_slug}.jsonl` — cross-project, scannable by a single daily report)
@@ -126,8 +126,11 @@ SKILL_NAME=do TRIGGER=+++ INSTALL_DIR=~/.local/share/senior-by-default \
 The Phase 0 announce shows what was written verbatim — no parsing needed:
 ```
 Config: AUTO-GENERATED → /path/to/repo/.claude/do/config.json
+Tracker: github OK (gh version 2.62.0 (2026-01-15); auth account: alice)
 Metrics config: INCLUDED in auto-init
 ```
+
+The `Tracker:` line is the wrapper's CLI preflight verdict (github/gitlab detections only). On a fresh machine without `gh` (or unauthenticated) it reads `Tracker: DEGRADED to none (gh missing — install gh …, then run 'gh auth login')` — the config is written with `issue_tracker.type: "none"`, Phase 1 is skipped with an explicit announce, and everything else runs. The OK form's tool version + account are probed at runtime (anti-fabrication tell, anti-patterns §19c).
 
 On hosts without python3-jsonschema the wrapper writes the file unvalidated and says so — the success line carries a ` (schema gate SKIPPED — jsonschema unavailable)` suffix (never a silent skip); `pip install jsonschema` restores the gate.
 
@@ -221,7 +224,7 @@ Three Claude models with hard role boundaries — see [`skills/do/SKILL.md`](ski
 | i18n gate | `i18n.{fn, locale_files}` | Phase 3.3 catches hardcoded strings + locale-key drift |
 | UI gate | `ui_gate.{infra_cmd, dev_cmd, url}` | Phase 3.2 takes screenshots, checks console errors via Claude Preview |
 | Specialist parallel review | `specialists.{backend_plan, frontend_audit, ...}` | Phase 2 (High) and Phase 3.6 spawn 2-3 reviewers in parallel |
-| CI wait + auto-merge | `ci.required: true` + `auto_merge.enabled: true` | Phase 4 waits for green CI, then `gh pr merge --auto` |
+| CI wait + auto-merge | `ci.required: true` + `auto_merge.enabled: true` | Phase 4 waits for green CI, then `gh pr merge --auto`. Explicit `ci.required: true` is the auto-merge precondition — `auto_merge.enabled` without it (false OR unset) → per-run confirmation prompt, else `await_review` (phase-4 §4.2.6, the single source) |
 | Slack/Teams notifications | `notifications.slack_webhook` | Phase 1/4 broadcast task lifecycle |
 | PR-size ceiling | `pr_size.{warn_lines, block_lines, ...}` (on by default: warn 800/20, block 2000/50) | Phase 3.0 `pr-size-check` wrapper: ≤warn PASS, >warn WARN (note in PR), >block **BLOCK** (hard halt → draft PR + `blocked` label, exit 3). Plan-time sibling: Phase 2.0 `plan-size-check` H ceiling (values owned by the wrapper, scrubbed from spec prose) → SPLIT-REQUIRED |
 | Metrics for skill iteration | `metrics.log_path` + `tier: 1` | JSONL append per task; self-review calibration tracked in 3 dimensions (`calibration` + de-confounded `calibration_defect` / `calibration_size`); gate keys normalized to a controlled vocabulary |
@@ -355,7 +358,9 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 ## Troubleshooting
 
-**`gh` not authenticated** → `gh auth login` (web flow). Required scopes: `repo`, `workflow`.
+**`gh` not authenticated** → `gh auth login` (web flow). Required scopes: `repo`, `workflow`. On fresh machines Phase 0 auto-init probes `gh`/`glab` presence + auth before committing to a tracker — a failed probe degrades the config to `issue_tracker.type: "none"` (announced as `Tracker: DEGRADED to none (…)`). Fix the CLI, then set the type back per the config's `_meta._setup_notes`.
+
+**`STOP: not inside a git repo`** → `/do` runs from inside a project repo (Phase 0 Step 3 halts before any side effects otherwise). `cd` into the repo, pass `--repo=NAME` (needs `config.workspace.repos`), or `git init` first.
 
 **Phase 0 announce says "Specialists not available — falling back to Sonnet"** → That string isn't actually emitted by the skill; sub-agents say it when `Agent(subagent_type=<plugin>:<agent>)` fails because the plugin isn't installed. Check `config.specialists.*` against installed plugins (`claude plugin list`). Either install the missing plugin (see [Recommended Claude Code plugins](#recommended-claude-code-plugins-for-phase-3-specialist-review)) or remove the reference from your config — Opus inline review takes over per group.
 

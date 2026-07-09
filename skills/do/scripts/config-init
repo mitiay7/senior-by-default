@@ -28,6 +28,14 @@
 #   0  written successfully; stdout: "Config: AUTO-GENERATED → <path>"
 #      — carries a " (schema gate SKIPPED — jsonschema unavailable)" suffix
 #      when python3-jsonschema was absent and the file was written unvalidated
+#      — for --tracker github|gitlab, a SECOND stdout line follows (tracker
+#        preflight verdict): "Tracker: <type> OK (<tool version>; auth
+#        account: <login>)" when the CLI is present + authenticated, or
+#        "Tracker: DEGRADED to none (<tool> missing|unauthenticated — <fix>)"
+#        when it isn't — in which case the file is written with type:none and
+#        _meta.tracker_degraded_from records the intended type. The OK form's
+#        version + account are runtime-probed (anti-fabrication tell, §19c);
+#        the DEGRADED form is an honest degraded state, copyable on purpose.
 #   1  rejected (missing/invalid arg, file exists, refused context, schema fail); stderr: "REJECT <reason>"
 #   2  I/O failure (could not write); stderr: "IOFAIL <reason>"
 
@@ -106,6 +114,49 @@ if [ -e "$OUT_PATH" ]; then
   die "already exists: $OUT_PATH (auto-init never overwrites)"
 fi
 
+# --- tracker tool preflight (github/gitlab only) -----------------------------
+# Fresh-machine gate (audit #13): the remote URL alone used to commit the
+# pipeline to a tracker CLI that may be absent or unauthenticated — the most
+# common fresh-machine state (git present, gh absent) then surfaced as a raw
+# "gh: command not found" mid-pipeline with no spec'd fallback. Probe presence
+# + auth BEFORE writing type:github/gitlab; on failure DEGRADE to type:none
+# (Phase 1 is skipped with an explicit announce — see phase-1-issue.md) and
+# say so on stdout. The OK line's tool version + auth account are runtime
+# probes — not composable from spec text (the §19c tell standard).
+
+TRACKER_LINE=""
+TRACKER_NOTE=""
+DEGRADED_FROM=""
+DEGRADED_REASON=""
+
+degrade_tracker() {
+  # $1 = reason token ("<tool> missing" | "<tool> unauthenticated"), $2 = remedy
+  DEGRADED_FROM="$TRACKER"
+  DEGRADED_REASON="$1"
+  TRACKER_LINE="Tracker: DEGRADED to none ($1 — $2)"
+  TRACKER_NOTE=" Tracker DEGRADED: remote looks like $TRACKER but $1 — Phase 1 (issue) is SKIPPED under type:none; the rest of the pipeline runs. To restore: $2, then set issue_tracker to {\"type\": \"$TRACKER\", \"repo\": \"$TRACKER_REPO\"}."
+  TRACKER="none"
+  TRACKER_REPO=""
+}
+
+if [ "$TRACKER" = "github" ] || [ "$TRACKER" = "gitlab" ]; then
+  TOOL="gh"
+  INSTALL_HINT="install gh (https://cli.github.com, brew install gh) then run 'gh auth login'"
+  if [ "$TRACKER" = "gitlab" ]; then
+    TOOL="glab"
+    INSTALL_HINT="install glab (https://gitlab.com/gitlab-org/cli, brew install glab) then run 'glab auth login'"
+  fi
+  if ! command -v "$TOOL" >/dev/null 2>&1; then
+    degrade_tracker "$TOOL missing" "$INSTALL_HINT"
+  elif ! AUTH_OUT="$("$TOOL" auth status 2>&1)"; then
+    degrade_tracker "$TOOL unauthenticated" "run '$TOOL auth login'"
+  else
+    TOOL_VER="$("$TOOL" --version 2>/dev/null | head -1 || true)"
+    AUTH_ACCT="$(printf '%s\n' "$AUTH_OUT" | grep -oE '(account|as) [A-Za-z0-9._@-]+' | head -1 | cut -d' ' -f2 || true)"
+    TRACKER_LINE="Tracker: $TRACKER OK (${TOOL_VER:-$TOOL}; auth account: ${AUTH_ACCT:-verified})"
+  fi
+fi
+
 # --- compose config (jq guarantees structural validity) ---------------------
 
 command -v jq >/dev/null 2>&1 || die "jq not installed (required for config compose)"
@@ -182,17 +233,20 @@ CONFIG_JSON="$(jq -n \
   --arg locale "$ISSUE_LOCALE" \
   --arg specialists_note "$SPECIALISTS_NOTE" \
   --arg metrics_note "$METRICS_NOTE" \
+  --arg tracker_note "$TRACKER_NOTE" \
+  --arg degraded_from "$DEGRADED_FROM" \
+  --arg degraded_reason "$DEGRADED_REASON" \
   --argjson tracker "$TRACKER_BLOCK" \
   --argjson specialists "$SPECIALISTS_BLOCK" \
   --argjson metrics "$METRICS_BLOCK" \
   '{
      version: 1,
-     _meta: {
+     _meta: ({
        auto_generated_by: "senior-by-default Phase 0 auto-init",
        auto_generated_at: $now,
        auto_generated_for_stack: ($stack | if . == "" then null else . end),
-       _setup_notes: ("Auto-init writes version + issue_tracker + issue_locale + specialists preset + metrics preset." + $specialists_note + $metrics_note + " For context_doc, workspace.repos, ui_gate, acceptance_extensions, naming overrides — see examples/ in senior-by-default repo and extend this file. /do re-reads on every run; no reload needed.")
-     },
+       _setup_notes: ("Auto-init writes version + issue_tracker + issue_locale + specialists preset + metrics preset." + $specialists_note + $metrics_note + $tracker_note + " For context_doc, workspace.repos, ui_gate, acceptance_extensions, naming overrides — see examples/ in senior-by-default repo and extend this file. /do re-reads on every run; no reload needed.")
+     } + (if $degraded_from == "" then {} else {tracker_degraded_from: $degraded_from, tracker_degraded_reason: $degraded_reason} end)),
      issue_tracker: $tracker,
      issue_locale: $locale
    }
@@ -242,3 +296,8 @@ mv -- "$TMP" "$OUT_PATH" || iofail "could not rename $TMP → $OUT_PATH"
 trap - EXIT
 
 echo "Config: AUTO-GENERATED → $OUT_PATH$SCHEMA_GATE_SUFFIX"
+# Tracker preflight verdict rides second so phase-0's "Config: AUTO-GENERATED"*
+# prefix glob keeps matching the captured stdout.
+if [ -n "$TRACKER_LINE" ]; then
+  echo "$TRACKER_LINE"
+fi

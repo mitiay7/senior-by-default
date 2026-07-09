@@ -105,7 +105,7 @@ Fullstack → PR per code repo. One repo's PR fails → draft PR for failing one
 
 ## 4.2.5 CI Gate — wait for green checks
 
-**Skipped if `config.ci.required` is not explicitly set to `true`** (no auto-default — feature is opt-in). Most solo / local-only setups don't run cloud CI; gating on missing checks would just timeout.
+**Skipped if `config.ci.required` is not explicitly set to `true`** (no auto-default — feature is opt-in). Most solo / local-only setups don't run cloud CI; gating on missing checks would just timeout. When skipped, §4.2.6 auto-merge is OFF the normal path — its precondition (the single source, below) requires this gate to have RUN and PASSED.
 
 When configured, this gate independently re-proves build/test post-push — but it runs after commit/push/PR, so it never replaces the Phase 3.1 `build-verify` re-run (pre-commit hygiene on every path; the ONLY independent evidence on the default no-CI path — anti-patterns §19h).
 
@@ -138,7 +138,26 @@ Outcomes:
 ## 4.2.6 Auto-merge
 
 If `config.auto_merge.enabled` OR `--auto-merge` in `$ARGUMENTS` (and `--no-auto-merge` not present):
-- Verify CI is green (4.2.5 already passed) AND PR isn't blocked by required reviews
+
+**Precondition — the single source of truth for when auto-merge may fire.** No other text defines this; [anti-patterns](anti-patterns.md)' auto-merge bullet and the README defer here:
+
+> Auto-merge is allowed ONLY when `config.ci.required` is **explicitly `true`** AND this run's §4.2.5 gate produced a PASS.
+
+`ci.required: false`, unset, and no `ci` block at all are ONE state — unverified. §4.2.5 was skipped, "CI is green" is not checkable, and no independent post-push evidence exists. Config alone (`auto_merge.enabled: true` + no `ci` block — the default solo/local setup) never pre-authorizes an unverified merge.
+
+Unverified state + auto-merge requested → print the warning and require **explicit per-run confirmation**:
+
+```
+⚠ Auto-merge requested, but config.ci.required is not explicitly true — nothing will
+  verify this PR post-push. Merging unverified is an automated hand grenade.
+  Reply exactly "merge unverified" to proceed THIS run; anything else → await_review.
+```
+
+- User replies exactly `merge unverified` → proceed to the merge commands below; add `⚠ merged unverified (per-run user confirmation, no CI gate)` to the §4.7 issue comment and the §4.13 announce.
+- Any other reply, or no reply → **`await_review`**: print PR url, wait for manual merge. Not an error — the PR is open, the pipeline completes.
+
+Precondition satisfied (§4.2.5 PASS this run, or per-run confirmation given):
+- Verify PR isn't blocked by required reviews
 - Run:
   ```
   gh pr merge {N} --auto --{config.auto_merge.method}    # squash | merge | rebase
@@ -152,7 +171,7 @@ If `config.auto_merge.enabled` OR `--auto-merge` in `$ARGUMENTS` (and `--no-auto
 
 If auto-merge command rejected (branch protection requires explicit reviewer) → fall back to `await_review` mode: print PR url and required-reviewer list, wait for manual merge.
 
-**Never auto-merge if `config.ci.required: false`** — would defeat the gate. Warn user if both flags conflict.
+Origin (audit #11): pre-fix, this section's guard read "never auto-merge if `ci.required: false`" — by its letter it missed the common UNSET default, its "verify CI is green (4.2.5 already passed)" was vacuous when 4.2.5 was skipped, and anti-patterns said "warns; user must explicitly accept" for the same state. Two texts, two rules — an orchestrator inclined to proceed cited whichever permitted it, and a PR auto-merged with zero verification. One rule now, defined here only.
 
 ## 4.3 Low complexity — skip PR
 No PR. Emit change summary:
@@ -204,7 +223,7 @@ If Sonnet failed to update → Opus updates inline + notes in PR description: `C
 ## 4.7 Issue comment (M/H — REQUIRED if issue tracker)
 Use `{Tracker.comment}` with body file:
 ```
-✅ Done. PR: <url> · Migration: {TS} (or —) · Build: <list of ✓ checks> [+ if context_doc → "· Context updated: {context_doc.path} §N[, §M]"] [+ if ADR → "· ADR-{NNNN}"] [+ if auto-merge → "· Auto-merge enabled"]
+✅ Done. PR: <url> · Migration: {TS} (or —) · Build: <list of ✓ checks> [+ if context_doc → "· Context updated: {context_doc.path} §N[, §M]"] [+ if ADR → "· ADR-{NNNN}"] [+ if auto-merge → "· Auto-merge enabled"] [+ if merged unverified per §4.2.6 confirmation → "· ⚠ merged unverified (per-run user confirmation, no CI gate)"]
 ```
 
 Required content if context_doc updated: `Context updated: {context_doc.path} §N[, §M]`.
