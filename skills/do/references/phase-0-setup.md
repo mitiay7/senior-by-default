@@ -2,7 +2,41 @@
 
 Read this when entering Phase 0 (every task starts here). Everything below runs before Phase 1+.
 
-## Preflight — intent clarity + minimal path
+## Preflight — task clock, then intent clarity + minimal path
+
+### Task clock — capture `STARTED_AT` FIRST, before anything else
+
+Very first action of Phase 0 — before the clarity check, before any other tool call. **Run this bash verbatim**:
+
+```bash
+# STARTED_AT must be captured at Phase 0 ENTRY. Phase 4.11's metrics-append
+# hard-rejects --ended-at < --started-at (production audit: 36% of pre-fix
+# entries had negative cycle times from back-computing started_at at the end).
+# Why a file, not a variable: every spec bash block runs in a FRESH shell —
+# a variable set here does not exist in the Phase 4 shell hours later. The
+# clock file is the durable carrier; the echo below is the transcript fallback.
+CLOCK_ANCHOR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+CLOCK_FILE="$HOME/.claude/do/state/$(printf '%s' "$CLOCK_ANCHOR" | sed -E 's/[^a-zA-Z0-9]+/-/g; s/^-+//; s/-+$//').task-clock.json"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+mkdir -p "$(dirname "$CLOCK_FILE")"
+printf '{"started_at":"%s","phase_entered_at":{"0":"%s"}}\n' "$STARTED_AT" "$STARTED_AT" > "$CLOCK_FILE"
+echo "Clock: started $STARTED_AT → $CLOCK_FILE"
+```
+
+Path derivation is anchored on the **orchestrator's CWD** (git toplevel, or `pwd` outside a repo) — NOT the resolved target repo (Step 3) or the worktree. It must produce the identical path when Phase 4.11 re-derives it in a fresh shell, and CWD is the only anchor that exists this early. Known limit: parallel `/do` sessions launched from the same CWD share the path — latest Phase 0 wins; the Phase 4 cross-check against the announce value (below) makes the overwrite visible.
+
+**Per-phase stamps.** On ENTERING each later phase (1, 2, 3, 4) — before the phase's first step — stamp the clock with the same derivation (fresh shell, so re-derive):
+
+```bash
+CLOCK_ANCHOR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+CLOCK_FILE="$HOME/.claude/do/state/$(printf '%s' "$CLOCK_ANCHOR" | sed -E 's/[^a-zA-Z0-9]+/-/g; s/^-+//; s/-+$//').task-clock.json"
+jq --arg p "<phase number: 1|2|3|4>" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '.phase_entered_at[$p] = $t' "$CLOCK_FILE" > "$CLOCK_FILE.tmp" && mv "$CLOCK_FILE.tmp" "$CLOCK_FILE"
+```
+
+Phase 4.11 derives `phase_durations_seconds` from these stamps (delta to the next stamp; the last stamped phase ends at `$ENDED_AT`). Degradation is graceful and asymmetric by design: a missed stamp only loses that duration split; a missed **capture** loses `--started-at` entirely and Phase 4 cannot legally reconstruct it — which is why the capture is the first action, not a step.
+
+### Intent clarity + minimal path
 
 Before any side effects (issue creation, worktree creation, commits, pushes), read `$ARGUMENTS` and decide whether the task is clear enough to execute.
 
@@ -248,6 +282,7 @@ After all 6 steps pass:
 [Phase 0] Repo: {repo} | Stack: {stack} (cached: {y/n}) | Scope: {B/F/FS} | Complexity: {T/L/M/H}
   Files: ~{N} | EstLines: ~{L} | Tests: {YES/NO} | Migration: {YES {TS}/NO} | Context doc: {required/none}
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
+  Started: {STARTED_AT — the exact value echoed by the preflight task-clock capture, verbatim; Phase 4.11 reads the same value back from $CLOCK_FILE and cross-checks against this line}
   {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
   {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose}
   {$METRICS_CONFIG_LINE — output of Step 1 config-ensure-metrics or Step 4 mirror (ALREADY CONFIGURED | EXPLICIT OPT-OUT | AUTO-ADDED | INCLUDED in auto-init | SKIPPED | PATCH SKIPPED | N/A), verbatim — DO NOT compose}
@@ -258,7 +293,7 @@ After all 6 steps pass:
   [+ if postmortem context → "ℹ Postmortem section will be added to issue"]
 ```
 
-`Models:`, `$CAVEMAN_LINE`, `$CONFIG_LINE`, and `$METRICS_CONFIG_LINE` are **mandatory** — they make model usage, companion-skill state, config state, and telemetry state explicit so users see (and metrics record) what the orchestrator decided.
+`Models:`, `Started:`, `$CAVEMAN_LINE`, `$CONFIG_LINE`, and `$METRICS_CONFIG_LINE` are **mandatory** — they make model usage, cycle-time anchor, companion-skill state, config state, and telemetry state explicit so users see (and metrics record) what the orchestrator decided. `Started:` doubles as the transcript-durable fallback for `--started-at`: if the clock file is wiped mid-task, Phase 4.11 reuses this exact value instead of inventing one.
 
 The three structural-coupling lines (`$CAVEMAN_LINE`, `$CONFIG_LINE`, `$METRICS_CONFIG_LINE`) come **only** from the bash blocks in Step 2 / Step 4 / Step 1 wrapper respectively. The spec deliberately contains no copyable templates of their full form — if you "know what the line looks like" without running the bash, you're guessing. This is the same structural-enforcement pattern as `$METRICS_LINE` in Phase 4.13 (see [`phase-4-finalize.md`](phase-4-finalize.md) and [anti-patterns §19, §19a, §19b, §19c](anti-patterns.md)).
 

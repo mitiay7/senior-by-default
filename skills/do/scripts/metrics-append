@@ -153,7 +153,7 @@ done
 [ -n "$COMPLEXITY" ]     || die "--complexity required (T|L|M|H)"
 [ -n "$IMPLEMENTER" ]    || die "--implementer required (haiku|sonnet|opus)"
 [ -n "$OUTCOME" ]        || die "--outcome required"
-[ -n "$STARTED_AT" ]     || die "--started-at required (ISO-8601 UTC)"
+[ -n "$STARTED_AT" ]     || die "--started-at required (ISO-8601 UTC; Phase 0 preflight captured it in the task clock ~/.claude/do/state/<cwd-slug>.task-clock.json — read .started_at back, never back-compute)"
 [ -n "$ENDED_AT" ]       || die "--ended-at required (ISO-8601 UTC)"
 [ -n "$FILES_CHANGED" ]  || die "--files-changed required (int)"
 [ -n "$LINES_ADDED" ]    || die "--lines-added required (int)"
@@ -217,7 +217,7 @@ ENDED_EPOCH=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$ENDED_AT" "+%s" 2>/dev/null \
            || date -u -d "$ENDED_AT" "+%s" 2>/dev/null) \
   || die "--ended-at epoch conversion failed (out-of-range field, or date(1) is neither BSD nor GNU on this host), got: $ENDED_AT"
 [ "$ENDED_EPOCH" -ge "$STARTED_EPOCH" ] \
-  || die "--ended-at ($ENDED_AT) is before --started-at ($STARTED_AT) — negative cycle time. Most common cause: writing both timestamps near task END using wrong tz or back-computing started_at incorrectly. Fix: capture STARTED_AT at the moment task begins (Phase 0), not retroactively at Phase 4.13."
+  || die "--ended-at ($ENDED_AT) is before --started-at ($STARTED_AT) — negative cycle time. Most common cause: writing both timestamps near task END using wrong tz or back-computing started_at incorrectly. Fix: Phase 0 preflight captures STARTED_AT into the task clock (~/.claude/do/state/<cwd-slug>.task-clock.json); read .started_at back from it — never re-derive at Phase 4.13."
 
 # Validate JSON payloads parse
 for var in GATES_JSON PHASE_DURATIONS_JSON SPECIALIST_ITERATIONS_JSON SR_MISCALIBRATED_JSON; do

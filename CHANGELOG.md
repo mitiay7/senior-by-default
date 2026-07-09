@@ -62,6 +62,22 @@ Verified with an 18-case probe harness of crafted Stop payloads: legit announces
 
 Audit finding #4 (major).
 
+### Fixed — Phase 0 task clock: `STARTED_AT` captured at entry into a durable file (was: never captured; Phase 4.11's hard-reject unsatisfiable)
+
+No phase-0-through-3 text ever instructed capturing `STARTED_AT`. Phase 4.11 said "capture **at Phase 0 entry** … NOT retroactively at Phase 4.13" — but that sentence lives in `phase-4-finalize.md`, which progressive disclosure (anti-patterns §8) forbids preloading, so a spec-compliant orchestrator first learned the requirement AFTER the moment it could satisfy it. The only remaining move was back-computing at emit time — the exact pattern behind the 36%-negative-cycle-time production failure that `metrics-append`'s `--ended-at < --started-at` hard-reject was built to catch. Compounding shell-model trap: even an orchestrator that ran `STARTED_AT=$(date …)` early lost it — every spec bash block executes in a fresh shell, so no Phase 0 variable survives to the Phase 4 process. The value must live on disk.
+
+**Fix — task clock file, written at Phase 0 entry, read back at Phase 4.11:**
+
+- **`phase-0-setup.md` §Preflight** — new "Task clock" block, the FIRST action of Phase 0 (before the clarity check): verbatim bash captures `STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)` and writes `{started_at, phase_entered_at: {"0": …}}` to `~/.claude/do/state/<cwd-slug>.task-clock.json` (slug: same char-mapping as the stack cache, anchored on the orchestrator's CWD git-toplevel — the only anchor that exists before Step 3 resolves the target repo, and re-derivable identically in Phase 4's fresh shell). Echoes `Clock: started <ts> → <file>` as the transcript fallback. Per-phase stamps: a one-liner `jq '.phase_entered_at[$p] = $t'` run on ENTERING each later phase — degradation is asymmetric by design (missed stamp loses one duration split; missed capture would lose `--started-at` entirely, hence capture-first).
+- **`phase-0-setup.md` §Announce** — new mandatory `Started: {STARTED_AT}` line (listed with `Models:` in the mandatory set). Doubles as the transcript-durable fallback and the cross-check anchor: parallel same-CWD sessions share the clock path (latest Phase 0 wins), and a Phase 4 read-back that mismatches the announce means an overwrite — prefer the announce value, it is the genuine echo of this task's capture.
+- **`phase-4-finalize.md` §4.11** — "Computing `$STARTED_AT`" rewritten as read-back-from-disk (`jq -r '.started_at'`), never `date` re-derivation; `$ENDED_AT` documented as the ONLY timestamp legitimately generated in Phase 4; `$PHASE_DURATIONS_JSON` now derived from the clock's stamps (delta to next stamp; last stamped phase ends at `$ENDED_AT`) instead of being invented from memory. Clock missing AND no announce line → Phase 0 spec violation noted in `--notes`, not a license to back-compute.
+- **`phase-4-finalize.md` §4.13** — the announce/emit bash block opens with the clock read-back + duration-derivation lines (CWD-anchored re-derivation, `fromdateiso8601` deltas), so `--started-at` and `--phase-durations-json` are populated by the same one-shell flow that emits — previously the block referenced `$STARTED_AT` that nothing had ever set. Phase-entry stamp reminder added at the top of the file.
+- **`scripts/metrics-append`** — both `--started-at` die messages (missing-arg, negative-cycle) now point at the clock file read-back instead of the unactionable "capture at Phase 0" advice that fired only after the capture window had passed.
+
+Degradation verified empirically: missing clock file → empty read-back → announce-value fallback; clock without stamps → `PHASE_DURATIONS_JSON=""` → optional flag omitted; phase-0-only stamps → `{"0": <total>}`; skipped phase 3 → its span correctly attributed to the preceding stamp's delta. Duration keys match the documented `phase_durations_seconds` shape (`config-schema.md` tier-1 example).
+
+Audit finding #14 (major) — now-tier slice (`STARTED_AT` capture). The sibling next-tier items (de-verbatim Metrics-config templates + §19g row, `branch-normalize` wrapper, wrapper-computed calibration) are deliberately not in this change.
+
 ## [0.8.1] — 2026-05-31
 
 **Patch — version-agnostic model examples.** Doc/comment-only fix; no behavior change.
