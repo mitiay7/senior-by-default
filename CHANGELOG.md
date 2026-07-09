@@ -4,6 +4,10 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-09
+
+Enforcement-integrity release. Two audit tiers (26-finding, 17-agent audit of 2026-07-09): the now-tier (9 fixes: timestamp migrations, `+++` first-line issue callout, portable metrics-append, stop-gate bypass closure, STARTED_AT task clock, schema fixes, uninstall hook reversal, stale-ref sweep) and the next-tier (enforcement integrity on every install path: dynamic wrapper resolution + self-marketplace, wrapper-owned secret-scan coupled to the push, orchestrator-verified build/lint/test, grounded plan-size inputs, §19 de-verbatim + branch-normalize + in-wrapper calibration, hook live-sim release gate, single-sourced auto-merge + tracker preflight, verified specialists preset + locked writes, metrics-report consumer, caveman fork/smart integration + spec-contradiction fixes). All entries below this heading until [0.8.1] belong to this release.
+
 ### Fixed — caveman detection matches the real plugin-cache layout + fork-aware install hint + `levels:` register tell (was: plugin installs read NOT INSTALLED — the exact false negative the wrapper was built to kill)
 
 `check-caveman`'s plugin-cache probes tested `~/.claude/plugins/cache/caveman` and `.../JuliusBrussee/caveman` — paths no Claude Code plugin install ever creates. The real layout (verified 2026-07-09 against a live install) is marketplace-namespaced and versioned: `cache/<marketplace>/<plugin>/<version>/skills/<skill>/SKILL.md`. A `/plugin install`-ed caveman therefore read NOT INSTALLED — the same false-negative class as the 2026-05-17 incident the wrapper exists to prevent. The install hint also curled upstream `JuliusBrussee/caveman` while the maintained distribution is the `mitiay7/caveman` fork (adds the `smart` level; upstream 404s on `-fable` tags), and the Phase 2 directive prescribed the full grammar-dropping register that readability-enforcing harnesses fight.

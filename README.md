@@ -396,7 +396,7 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 ## Status
 
-`v0.8.1` released (2026-05-31). Architecture stable. v0.8 closed the **enforcement loop** with opt-in tier-3 harness hooks; v0.8.1 is a patch making the `--orchestrator` / Co-Authored-By model examples version-agnostic (`opus-<version>` placeholder, never a hardcoded build). v0.8 highlights:
+`v0.9.0` released (2026-07-09). **Enforcement-integrity release**, built from a 26-finding external audit: dynamic wrapper resolution works on every install layout (plugin cache, renamed skill, `~/.local/share` clone) and fails closed; the pre-push secret scan is wrapper-owned and coupled to the push itself; build/lint/test are re-run by the orchestrator instead of trusting the implementer's self-report; plan-size inputs are grounded per tier; migrations use UTC-timestamp prefixes; telemetry finally has a reader (`metrics-report`). Earlier v0.8 highlights:
 
 - **Three enforcement tiers, now explicit** — soft instruction → structural-coupling wrapper (default) → **opt-in Claude Code hook** (runtime-enforced, model-independent). A **Stop hook** is the harness-enforced backstop for metrics emission (blocks a `/do` finalize lacking a file-backed `Metrics:` line; self-scopes so normal turns are untouched); a **PreToolUse hook** surfaces the plan-size verdict at spawn time. Off by default — see [`skills/do/references/hooks.md`](skills/do/references/hooks.md).
 - **No dead gates** — the five "never-failing" gates were investigated and kept: `0 fails` was a measurement artifact (Phase 3 records the resolved state); all fire via `fix_cycle` (`opus_review` 16/125, `test` 5/130, …). (Measured with the operator-side daily report, since superseded by the shipped `metrics-report` CLI.)
