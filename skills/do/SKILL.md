@@ -138,7 +138,7 @@ Final `[Phase 0] ...` announce — must include `Models:` line (orchestrator + i
 | 3 — Code review (gates, specialist audit, Opus review) | L/M/H (Trivial uses Sonnet diff-scan only) | [`references/phase-3-review.md`](references/phase-3-review.md) |
 | 4 — Finalize (commit, push, PR, CI, auto-merge, context doc, metrics, announce) | always | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) |
 
-**Low complexity simplifications**: skip Phase 1, Phase 3 = diff scan + dep-vuln scan only, Phase 4 = push + change summary (no PR), still emit metrics + notification.
+**Low complexity simplifications**: skip Phase 1, Phase 3 = `build-verify` re-run + diff scan + dep-vuln scan (nothing else), Phase 4 = push + change summary (no PR), still emit metrics + notification.
 
 **Trivial complexity simplifications**:
 - Phase 1: skip (no issue)

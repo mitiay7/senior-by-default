@@ -6,7 +6,7 @@ Grouped into 4 categories, ~20 distinct rules. Hot ones are bolded — those are
 
 ## Process
 
-1. **Subjective reviews** ("rate 1-10", "looks fine") — pass/fail only against acceptance criteria. Includes: tests written after review (Phase 2 task — Test Gate blocks review), scope creep (log as new issue, never expand current task), issues without measurable acceptance criteria.
+1. **Subjective reviews** ("rate 1-10", "looks fine") — pass/fail only against acceptance criteria. Includes: tests written after review (Phase 2 task — Gate 3.1 Build/Test Verify blocks review), scope creep (log as new issue, never expand current task), issues without measurable acceptance criteria.
 2. **Roles immutable** — Opus writes code only with `--implementer=opus`; Sonnet never makes architectural decisions; Haiku never does logic/multi-file work. Opus fixing code directly in review → return to Sonnet, re-run gates.
 3. **Silent assumptions** — if interpretations would produce different behavior, ask BEFORE creating issues/worktrees/commits/PRs. Low-risk assumptions: record in issue body / Phase 0 announce.
 4. **Speculative scope** — speculative abstractions, config, feature flags, "future flexibility", drive-by refactors, formatting churn, comment rewrites, changed lines that don't trace to the request/requirement/criterion/cleanup.
@@ -51,6 +51,7 @@ Grouped into 4 categories, ~20 distinct rules. Hot ones are bolded — those are
     | 19e | gate vocabulary → `metrics-append` normalization (v0.7.0) | OK-line `renamed=<R> noncanon=<list>` | `gates` object has obvious synonyms (`tests`, `i18n_gate`) the wrapper would have renamed → entry was direct `>>`/Write | (via 19a) |
     | 19f | PR-size verdict → `pr-size-check` (v0.7.0) | `breached: [..]` + `+N lines/+N files` overage; **BLOCK exits 3** (hard halt, can't degrade to advisory) | `gates.pr_size.status="warn"` with `details.lines > config.block_lines` — the wrapper would have emitted `block`. 8 prod PRs >2000 lines all shipped as `warn` before this wrapper | **PreToolUse hook** (shares plan-size marker tier) |
     | 19g | pre-push secret gate → `secret-scan` (the §4.1.2 push lives in the same bash block, dispatched on its exit code; `--cached` eyeballing forbidden — earlier task commits never appear in the staged diff, yet their blobs push) | verdict line with the REAL range SHAs + counts (`range <base7>..<head7> clean (N commits, M files; globs=8 patterns=7)`); **BLOCK exits 3** with a findings list (paths + pattern names, never the secret text) | a push with no `SECRETS PASS` in the transcript, or a `gates.secret_scan` tell whose SHAs don't match the branch's real merge-base/HEAD. The ONE irreversible skip: a pushed secret is revoke-and-rotate, not revert | **PreToolUse hook** (matcher `Bash`, self-scopes to `git push`) |
+    | 19h | Phase 2 build/test evidence → `build-verify` (Gate 3.1: the ORCHESTRATOR re-runs cache build/lint/test in `$WORKTREE_PATH`; the implementer's self-reported exit codes are NEVER the gate — the report format literally asks Sonnet to write its own rc's, the same trust hole one level down); **FAIL exits 3** (return to Sonnet) | per-command `rc=<n> <n>ms <n>L tail=<8-hex>` — elapsed-ms + output-line-count + output-tail hash, not reproducible without running (a bare rc=0 is guessable and does NOT satisfy the tell standard) | `gates.build`/`test` = pass with no `Phase 3.1: VERIFY` line in the transcript; a leg `skipped` while the cache has commands for it (or `test` skipped on a Tests: YES task); **implementer report claimed PASS where the re-run FAILs → record `details.self_report_mismatch: true` and treat the report as fabrication-class** (feeds §4.11 calibration) | — (opt-in `ci.required` gate §4.2.5 re-proves post-push; it does not replace the pre-commit re-run on the default no-CI path) |
 
     Correction is identical in every row: **re-run the wrapper and use its real stdout** — never hand-compose, never post-annotate. The local `daily-report.sh` scanner (operator-side) surfaces bypassed metrics entries in a "Schema bypass" section, so 19a/19e bypasses are visible within a day even if a hook isn't enabled.
 
@@ -64,7 +65,7 @@ Grouped into 4 categories, ~20 distinct rules. Hot ones are bolded — those are
 
 These fire ONLY when corresponding config feature is enabled — without config, they don't apply:
 
-- **Skipping CI gate before announce** — only if `ci.required: true`. For local-only setups (no `ci` block) Phase 2/3 build/lint/test is the gate.
+- **Skipping CI gate before announce** — only if `ci.required: true`. For local-only setups (no `ci` block) the Phase 3.1 `build-verify` re-run is the gate (§19h) — the implementer's self-report never is.
 - **Auto-merge without CI configured** — `auto_merge.enabled: true` + `ci.required: false` = automated hand grenade. Phase 4 warns; user must explicitly accept.
 - **Frontend feature without flag** — only if `feature_flags.system` configured AND scope requires.
 - **High task without ADR** — only if `adr.dir` configured AND architectural decision involved.

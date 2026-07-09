@@ -13,7 +13,7 @@ Per gate, on failure / warning, capture:
 | 3.0 PR Size | `{ "lines": <int>, "files": <int>, "thresholds_breached": ["lines"\|"files"\|both] }` |
 | 3.0.5 Dep Vuln | `{ "scanner": "<tool>", "findings": [{"severity","package","id"}], "threshold": "<level>" }` (cap at 10 findings; rest as `"truncated_count"`) |
 | 3.0.6 Public Docs | `{ "api_files_changed": [...], "missing_docs": [...] }` |
-| 3.1 Test | `{ "uncovered_branching_funcs": [...], "failing_tests": [...] }` |
+| 3.1 Verify | per key `build`/`lint`/`test`: `{ "tell": "<that leg's per-command wrapper line(s), verbatim>" }`; on fail add `"failing_cmd"`, `"rc"`, `"self_report_mismatch": true\|false`; coverage misses add `"uncovered_branching_funcs": [...]` under `test` |
 | 3.2 UI | `{ "broken_pages": [...], "console_errors": [first 5], "skip_reason": "<if skipped>" }` |
 | 3.3 i18n | `{ "unwrapped_count": <int>, "unwrapped_samples": [{"file","line","text"}] (max 5), "locale_drift": {"<file>": ["missing keys"]} }` |
 | 3.4 Contract | `{ "mismatches": [{"endpoint","field","be_type","fe_type"}] }` |
@@ -33,7 +33,7 @@ All strings truncated to `config.metrics.max_string_length` chars. Captured data
 | 3.0 PR Size Guard | always (`config.pr_size`, defaults shown in schema) |
 | 3.0.5 Dep Vuln Scan | `config.security_scan.enabled` (default true) |
 | 3.0.6 Public Docs Check | `config.public_docs_dir` set AND diff modifies public API surface |
-| 3.1 Test Gate | always, if Tests: YES |
+| 3.1 Build/Test Verify | always (build + lint legs; test leg only if Tests: YES) |
 | 3.2 UI Gate | `config.ui_gate` set AND diff contains files matching `cache.ui_extensions` |
 | 3.3 i18n Gate | `config.i18n` set AND diff contains UI files |
 | 3.4 Contract Gate | diff contains BOTH backend (.go/.rs/.py API handler files) AND TS API type files |
@@ -123,10 +123,61 @@ If diff modifies API signatures (handler routes, public function signatures, exp
 - For each, check if a corresponding doc file in `public_docs_dir` was modified
 - Mismatch → WARN (or BLOCK if `config.public_docs_dir.required: true`): `"Public API changed in {files} but no docs updated in {public_docs_dir}. Run before review: update docs."`
 
-## 3.1 Test Gate
-Tests: YES but no PASS output → return to Sonnet for fixes (Sonnet's bug, not a review cycle).
+## 3.1 Build/Test Verify — **YOU re-run the checklist in the worktree; the implementer's report is NEVER the gate**
 
-**Coverage rule**: every public function with branching logic gets minimum 1 happy-path + 1 error-path test. Algorithm/calculation functions also test empty input + boundary values.
+Phase 2's completion report — exit codes included — is the implementer's own testimony, and the report format asks Sonnet to write its own rc's. Adjudicating "tests pass / build passes" from that report is the §19 fabrication class one trust level down: a plausible green self-report reaches commit, push, and PR with zero independent evidence (with `auto_merge` + no CI, it reaches merged main). Re-run the checklist yourself via the `build-verify` wrapper. Cost is a duplicate of Sonnet's run — acceptable for M/H, trivial for Low's small diffs (§3.5 routes Low through this same re-run); with `config.affected_graph` the re-run is scoped to affected projects (the same commands Phase 2 ran; `--no-affected-graph` = full set). The opt-in §4.2.5 CI gate re-proves this post-push when configured — it does not replace this pre-commit re-run on the default (no-CI) path.
+
+```bash
+# Canonical do-scripts resolver — identical line in every wrapper block; each
+# block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
+DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+
+# Commands come from the stack cache (stack-detection.md). If config.affected_graph
+# is in use, substitute the affected-scoped equivalents Phase 2 ran instead of
+# reading the cache arrays.
+CACHE_FILE="$HOME/.claude/do/cache/{slug}.json"     # slug per stack-detection.md
+VERIFY_ARGS=()
+while IFS= read -r c; do VERIFY_ARGS+=(--build "$c"); done < <(jq -r '.build_cmds[]?' "$CACHE_FILE")
+while IFS= read -r c; do VERIFY_ARGS+=(--lint "$c");  done < <(jq -r '.lint_cmds[]?'  "$CACHE_FILE")
+# Test leg ONLY when the task is Tests: YES (gate matrix). Tests: NO → DELETE the
+# next two lines; the wrapper reports test=skipped (a skipped leg is never a pass).
+TEST_CMD="$(jq -r '.test_cmd // empty' "$CACHE_FILE")"
+[ -n "$TEST_CMD" ] && VERIFY_ARGS+=(--test "$TEST_CMD")
+
+if [ -x "$DO_SCRIPTS/build-verify" ]; then
+  VERIFY_OUT="$("$DO_SCRIPTS/build-verify" --dir "$WORKTREE_PATH" ${VERIFY_ARGS[@]+"${VERIFY_ARGS[@]}"})" && VERIFY_RC=0 || VERIFY_RC=$?
+else
+  # FAIL CLOSED — explicit token so the case below has a matching arm.
+  VERIFY_OUT="Phase 3.1: GATE ERROR — build-verify wrapper not found (do-scripts resolver found no install)"; VERIFY_RC=127
+fi
+printf '%s\n' "$VERIFY_OUT"
+
+case "$VERIFY_OUT" in
+  "Phase 3.1: VERIFY PASS"*)     # proceed — record gates.build/lint/test per the wrapper's leg statuses
+    ;;
+  "Phase 3.1: VERIFY SKIPPED"*)  # degraded stack (stack "other") and/or Tests: NO
+    # Record gates.build/lint/test = skipped — NEVER upgrade to pass. No automated
+    # verification exists for this stack; say so in the Phase 3 announce.
+    ;;
+  "Phase 3.1: VERIFY FAIL"*)     # VERIFY_RC == 3 — return to Sonnet (Sonnet's bug, not a review cycle)
+    # 1. Hand Sonnet the wrapper's failing-command tail; re-run this block after the fix.
+    # 2. Check the Phase 2 report for the SAME command: if it claimed PASS / rc=0 →
+    #    set details.self_report_mismatch = true on that gate key — fabrication-class
+    #    signal (anti-patterns §19h); feeds §4.11 self-review calibration.
+    # 3. APPROVE requires a real VERIFY PASS line — never proceed on the old report.
+    ;;
+  "Phase 3.1: GATE ERROR"*)      # FAIL CLOSED — wrapper unreachable
+    # Falling back to "PASS in Sonnet report" is the exact hole this gate closes.
+    # STOP: surface the line to the user; fix = re-run install.sh or /plugin install,
+    # then re-run Phase 3. Metrics: gates.build = { "status": "fail",
+    # "details": { "reason": "wrapper not found" } }.
+    ;;
+esac
+```
+
+Metrics land under the **existing canonical keys** `build` / `lint` / `test` (phase-4-finalize.md §4.11 vocabulary — do not invent new ones); `details.tell` = that leg's per-command wrapper line(s) verbatim. Bypass tells (§19h): a `pass` leg with no `Phase 3.1: VERIFY` line in the transcript; a leg `skipped` while the cache has commands for it; `test` skipped on a Tests: YES task.
+
+**Coverage rule** (unchanged — adjudicated from the diff + self-review, not from execution): every public function with branching logic gets minimum 1 happy-path + 1 error-path test. Algorithm/calculation functions also test empty input + boundary values.
 
 If Sonnet's self-review (Phase 2.5) didn't list tests for each new branching function → FAIL with the function names that need coverage.
 
@@ -179,7 +230,7 @@ For each new/modified API endpoint:
 Mismatch → list with file:line, return to Sonnet.
 
 ## 3.5 Low — Opus Diff Scan
-Build + tests pass + dep vuln scan pass + Opus scans `git diff` for:
+§3.1 `build-verify` re-run PASS (the wrapper, in the worktree — Low is NOT exempt; without it the Low path is self-report-only, §19h) + dep vuln scan pass + Opus scans `git diff` for:
 - SQL injection / unsanitized input
 - Missing error handling
 - Resource leaks (DB rows, HTTP bodies, file handles, useEffect cleanup)
@@ -237,8 +288,8 @@ Max 3 review cycles.
 Acceptance criteria PASS / FAIL — check each from the issue:
 
 - **Requirements** → each checkbox maps to diff
-- **Tests pass** → PASS in Sonnet report (and listed in self-review)
-- **Build passes** → zero issues for ALL commands in Build/Lint/Test
+- **Tests pass** → §3.1 `VERIFY PASS` test leg from YOUR wrapper re-run (the Sonnet report alone is never evidence — §19h); coverage listed in self-review
+- **Build passes** → §3.1 `VERIFY PASS` build + lint legs from the same run — rc=0 for ALL commands in Build/Lint/Test
 - **No hardcoded strings** → confirmed by 3.3
 - **Migration applies** → confirmed in Sonnet report; zero-downtime audit PASS
 - **No regressions** → no deleted assertions/expects/requires, no removed `if err` blocks, no removed nil guards
@@ -257,5 +308,7 @@ Non-blocking → tech-debt: GitHub issue labeled `tech-debt`, OR append to `conf
 
 ## Announce
 ```
-[Phase 3] APPROVE after {N} cycle(s). Gates run: {list with pass/fail}. PR size: {lines}/{files}. Vulns: {count or clean}.
+[Phase 3] APPROVE after {N} cycle(s). Gates run: {list with pass/fail}. Verify: {status + "N cmds in Nms" from the 3.1 verdict line}. PR size: {lines}/{files}. Vulns: {count or clean}.
 ```
+
+The `Verify:` token is carried verbatim from the `build-verify` verdict line (its cmd-count/elapsed-ms is the anti-fabrication tell) — a hand-written `Verify: PASS` with no matching `Phase 3.1: VERIFY` line in the transcript is a §19h bypass.

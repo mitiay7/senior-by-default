@@ -1,0 +1,166 @@
+#!/bin/bash
+# build-verify — the ONLY supported way to produce the Phase 3.1 build/lint/test
+# gate decision (VERIFY PASS / FAIL / SKIPPED). Wrapper script, not implementer
+# self-report and not inline spec bash, for the same structural-coupling reason
+# as pr-size-check and secret-scan (anti-patterns §19 / §19h).
+#
+# Why: Gate 3.1 and the Phase 3.7 review criteria used to adjudicate "Tests
+# pass / Build passes" entirely from the Phase 2 implementer's completion
+# report — a report format that literally asks the sub-agent to write its own
+# exit codes. That is the §19 fabrication class one trust level down: a
+# plausible green self-report sailed through to commit, push, and PR with ZERO
+# independent evidence (and with auto_merge + no CI, to merged main), while
+# pr-size and plan-size in the same phase were wrapper-hardened against
+# exactly this failure mode. This wrapper is the orchestrator's INDEPENDENT
+# re-run of the same checklist in the worktree. Deterministic and cheap
+# relative to a bad merge; per-command tells (elapsed-ms + output line count +
+# output-tail hash) are not reproducible without running the commands —
+# a bare rc=0 would be trivially guessable and fail the §19 tell standard.
+#
+# Usage:
+#   build-verify --dir <worktree> \
+#     [--build <cmd>]... [--lint <cmd>]... [--test <cmd>]...
+#
+#   Each <cmd> runs via `bash -c` from <worktree>, so cached monorepo commands
+#   like `cd App && pnpm build` work unchanged. Command sources (the spec's
+#   §3.1 block composes the flags):
+#     - cache.build_cmds / cache.lint_cmds / cache.test_cmd (stack-detection.md)
+#     - config.affected_graph substitutes the affected-scoped equivalents —
+#       the same commands Phase 2 ran (`--no-affected-graph` = full set)
+#     - omit --test when the task is Tests: NO (gate applicability matrix);
+#       the test leg then reports `skipped`, never a fabricated pass
+#   A category with no flags reports `skipped`. No flags at all → VERIFY
+#   SKIPPED, exit 0 (degraded stack: stack "other" has build_cmds:[] and
+#   test_cmd:null per stack-detection.md) — record gates.build/lint/test
+#   = skipped, never pass.
+#
+# Execution: categories run in order build → lint → test, fail-fast — the
+# first non-zero exit stops the run; later commands print as NOT-RUN.
+#
+# Output (stdout): verdict first line — dispatch the spec's `case` on the
+# prefix — then one indented line per command carrying the anti-fabrication
+# tell (`rc=<n> <n>ms <n>L tail=<8-hex CRC of the last 20 output lines>`),
+# then on FAIL the last 15 output lines of the failing command:
+#
+#   Phase 3.1: VERIFY PASS — build 2/2 · lint 1/1 · test 1/1 — 4 cmds in 12482ms
+#     build[1/2] PASS rc=0 1204ms 87L tail=3fa9c2e1 — go build ./...
+#     ...
+#   Phase 3.1: VERIFY FAIL — test[1/1] rc=1 after 5980ms — 'go test ./...'; return to Sonnet with the tail below; if the Phase 2 report claimed PASS for this command → self-report mismatch (anti-patterns §19h)
+#   Phase 3.1: VERIFY SKIPPED — no commands supplied (degraded stack per stack-detection.md, or Tests: NO); record gates.build/lint/test = skipped
+#
+# Exit codes:
+#   0  VERIFY PASS or VERIFY SKIPPED — proceed. Record per-leg statuses
+#      exactly as printed (pass / skipped); never upgrade a skipped leg.
+#   3  VERIFY FAIL — return to Sonnet with the failing tail (implementer's
+#      bug, not a review cycle); re-run after the fix. APPROVE requires a
+#      real VERIFY PASS line in the transcript.
+#   1  REJECT (bad flag, missing --dir, not a directory); stderr:
+#      "REJECT <reason>". Fail closed — a REJECT is never a pass.
+
+set -uo pipefail
+
+die() { echo "REJECT $*" >&2; exit 1; }
+
+DIR=""
+BUILD_CMDS=()
+LINT_CMDS=()
+TEST_CMDS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dir)   [ $# -ge 2 ] || die "--dir requires a path"; DIR="$2"; shift 2 ;;
+    --build) [ $# -ge 2 ] || die "--build requires a command"; BUILD_CMDS+=("$2"); shift 2 ;;
+    --lint)  [ $# -ge 2 ] || die "--lint requires a command";  LINT_CMDS+=("$2");  shift 2 ;;
+    --test)  [ $# -ge 2 ] || die "--test requires a command";  TEST_CMDS+=("$2");  shift 2 ;;
+    -h|--help) sed -n '2,61p' "$0"; exit 0 ;;
+    *) die "unknown flag: $1" ;;
+  esac
+done
+
+[ -n "$DIR" ] || die "--dir required (the Phase 2 worktree)"
+[ -d "$DIR" ] || die "not a directory: $DIR"
+
+TOTAL=$(( ${#BUILD_CMDS[@]} + ${#LINT_CMDS[@]} + ${#TEST_CMDS[@]} ))
+if [ "$TOTAL" -eq 0 ]; then
+  echo "Phase 3.1: VERIFY SKIPPED — no commands supplied (degraded stack per stack-detection.md, or Tests: NO); record gates.build/lint/test = skipped"
+  exit 0
+fi
+
+# Millisecond clock — the elapsed-ms tell. bash>=5 EPOCHREALTIME, else perl
+# Time::HiRes (present on macOS + all common Linux), else whole seconds.
+now_ms() {
+  if [ -n "${EPOCHREALTIME:-}" ]; then
+    local s="${EPOCHREALTIME%%[.,]*}" f="${EPOCHREALTIME#*[.,]}"
+    printf '%s\n' "$(( s * 1000 + 10#${f:0:3} ))"
+  else
+    perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000' 2>/dev/null \
+      || printf '%s\n' "$(( $(date +%s) * 1000 ))"
+  fi
+}
+
+OUT_TMP=$(mktemp "${TMPDIR:-/tmp}/build-verify.XXXXXX") || die "mktemp failed"
+FAIL_TMP=$(mktemp "${TMPDIR:-/tmp}/build-verify.XXXXXX") || { rm -f "$OUT_TMP"; die "mktemp failed"; }
+trap 'rm -f "$OUT_TMP" "$FAIL_TMP"' EXIT
+
+REPORT=()        # one line per command (indented; printed after the verdict)
+FAILED=0
+FAIL_HEAD=""     # verdict fragment for the first failing command
+PASS_BUILD=0
+PASS_LINT=0
+PASS_TEST=0
+T_START=$(now_ms)
+
+run_category() {  # $1 = category name; remaining args = commands
+  local cat="$1"; shift
+  local n=$# i=0 cmd t0 t1 rc ms lines hash
+  for cmd in "$@"; do
+    i=$((i+1))
+    if [ "$FAILED" -ne 0 ]; then
+      REPORT+=("  ${cat}[${i}/${n}] NOT-RUN (fail-fast) — $cmd")
+      continue
+    fi
+    t0=$(now_ms)
+    ( cd "$DIR" && bash -c "$cmd" ) > "$OUT_TMP" 2>&1
+    rc=$?
+    t1=$(now_ms); ms=$(( t1 - t0 ))
+    lines=$(wc -l < "$OUT_TMP" | tr -d ' ')
+    hash=$(tail -n 20 "$OUT_TMP" | cksum | awk '{ printf "%08x", $1 }')
+    if [ "$rc" -eq 0 ]; then
+      REPORT+=("  ${cat}[${i}/${n}] PASS rc=0 ${ms}ms ${lines}L tail=${hash} — $cmd")
+      case "$cat" in
+        build) PASS_BUILD=$((PASS_BUILD+1)) ;;
+        lint)  PASS_LINT=$((PASS_LINT+1)) ;;
+        test)  PASS_TEST=$((PASS_TEST+1)) ;;
+      esac
+    else
+      REPORT+=("  ${cat}[${i}/${n}] FAIL rc=${rc} ${ms}ms ${lines}L tail=${hash} — $cmd")
+      FAILED=1
+      FAIL_HEAD="${cat}[${i}/${n}] rc=${rc} after ${ms}ms — '$cmd'"
+      tail -n 15 "$OUT_TMP" > "$FAIL_TMP"
+    fi
+  done
+}
+
+run_category build ${BUILD_CMDS[@]+"${BUILD_CMDS[@]}"}
+run_category lint  ${LINT_CMDS[@]+"${LINT_CMDS[@]}"}
+run_category test  ${TEST_CMDS[@]+"${TEST_CMDS[@]}"}
+
+leg() {  # $1 = name, $2 = pass count, $3 = total
+  if [ "$3" -eq 0 ]; then echo "$1 skipped"; else echo "$1 $2/$3"; fi
+}
+
+T_END=$(now_ms)
+T_MS=$(( T_END - T_START ))
+SUMMARY="$(leg build "$PASS_BUILD" "${#BUILD_CMDS[@]}") · $(leg lint "$PASS_LINT" "${#LINT_CMDS[@]}") · $(leg test "$PASS_TEST" "${#TEST_CMDS[@]}")"
+
+if [ "$FAILED" -ne 0 ]; then
+  echo "Phase 3.1: VERIFY FAIL — ${FAIL_HEAD}; return to Sonnet with the tail below; if the Phase 2 report claimed PASS for this command → self-report mismatch (anti-patterns §19h)"
+  printf '%s\n' "${REPORT[@]}"
+  echo "  --- last 15 output lines of the failing command ---"
+  sed 's/^/  /' "$FAIL_TMP"
+  exit 3
+fi
+
+echo "Phase 3.1: VERIFY PASS — ${SUMMARY} — ${TOTAL} cmds in ${T_MS}ms"
+printf '%s\n' "${REPORT[@]}"
+exit 0

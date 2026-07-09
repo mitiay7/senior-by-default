@@ -100,6 +100,8 @@ Fullstack → PR per code repo. One repo's PR fails → draft PR for failing one
 
 **Skipped if `config.ci.required` is not explicitly set to `true`** (no auto-default — feature is opt-in). Most solo / local-only setups don't run cloud CI; gating on missing checks would just timeout.
 
+When configured, this gate independently re-proves build/test post-push — but it runs after commit/push/PR, so it never replaces the Phase 3.1 `build-verify` re-run (pre-commit hygiene on every path; the ONLY independent evidence on the default no-CI path — anti-patterns §19h).
+
 If `config.ci.required: true` AND `--skip-ci-wait` not in `$ARGUMENTS`:
 
 GitHub:
@@ -298,7 +300,7 @@ final key names, the wrapper does:
 | `pr_size` | 3.0 | `ui_gate` | 3.2 |
 | `dep_vuln` | 3.0.5 | `i18n` | 3.3 |
 | `public_docs` | 3.0.6 | `contract` | 3.4 |
-| `build` / `lint` / `type_check` | 2/3 build checklist | `diff_scan` | 3.5 (Low) |
+| `build` / `lint` / `type_check` | 2 checklist / 3.1 verify | `diff_scan` | 3.5 (Low) |
 | `test` | 3.1 | `specialist_audit` | 3.6 (High) |
 | `secret_scan` | 4.1 pre-push | `opus_review` | 3.7 (M/H) |
 | `migration_audit` | 3.6 migration | `codeowners` | 3.6 routing |

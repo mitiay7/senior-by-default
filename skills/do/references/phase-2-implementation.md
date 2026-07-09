@@ -295,6 +295,8 @@ The first line `claimed_status: <ready|deferred|uncertain>` is REQUIRED — Phas
    - Build output (each command's exit code + key lines)
    - Self-review section
 
+   Report REAL output. Phase 3.1 independently re-runs the same build/lint/test checklist in the worktree (`build-verify` wrapper) — your exit codes are cross-checked, never trusted alone. A claimed PASS that FAILs the re-run is recorded as `self_report_mismatch` (fabrication-class, [anti-patterns §19h](anti-patterns.md)) and counts against your self-review calibration.
+
 ## High — Plan Review (Step 2)
 
 Sonnet outputs the plan only (no code yet). For architectural decisions, also drafts an ADR per [`adr.md`](adr.md).

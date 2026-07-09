@@ -21,7 +21,7 @@ A multi-actor pipeline skill for [Claude Code](https://claude.ai/code).
 1. **Routes by complexity** — Trivial → Haiku, Low/Medium → Sonnet, High → Opus plan-review + Sonnet implementation.
 2. **Creates an issue** in your tracker (GitHub or GitLab) with structured Acceptance Criteria, Implementation Hints, Build Checklist, Worktree Setup.
 3. **Spawns a sub-agent** in an isolated git worktree on a properly-named branch (`feat/i42-...`).
-4. **Runs gates in Phase 3** — tests, UI rendering (via Claude Preview), i18n parity, BE↔FE contract alignment, dependency vulnerability scan, PR-size guard, optional CODEOWNERS-routed specialist audit.
+4. **Runs gates in Phase 3** — independent build/lint/test re-run in the worktree (`build-verify` wrapper — the implementer's self-report is never the gate), UI rendering (via Claude Preview), i18n parity, BE↔FE contract alignment, dependency vulnerability scan, PR-size guard, optional CODEOWNERS-routed specialist audit.
 5. **Verifies, commits, pushes, opens PR** — optionally waits for CI and enables auto-merge.
 6. **Updates context doc** (if configured), logs metrics for skill-iteration feedback, sends async notifications.
 
@@ -83,7 +83,7 @@ When a user message starts with `+++`, treat everything after `+++` as the argum
 <!-- senior-by-default:trigger:end -->
 ```
 
-> **Wrapper-path resolution — all install layouts get the full wrapper tier.** The seven tier-2 enforcement wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, `plan-size-check`, `pr-size-check`, `secret-scan`, `metrics-append`) are located at runtime by a canonical resolver repeated in every spec bash block — probe order: `$CLAUDE_PLUGIN_ROOT` → `~/.claude/skills/<any name>/scripts` (default or renamed `SKILL_NAME`) → plugin cache → `~/.local/share/senior-by-default`. Plugin install, default symlink, and custom `SKILL_NAME` all resolve; there is no hardcoded `~/.claude/skills/do/` literal in the live spec. If no install is found the affected gate **fails closed** with an explicit `SKIPPED` / `GATE ERROR` token in the announce instead of silently degrading to prose-level enforcement. (Earlier versions hardcoded the default-name path — that limitation is fixed; see CHANGELOG.)
+> **Wrapper-path resolution — all install layouts get the full wrapper tier.** The eight tier-2 enforcement wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, `plan-size-check`, `pr-size-check`, `build-verify`, `secret-scan`, `metrics-append`) are located at runtime by a canonical resolver repeated in every spec bash block — probe order: `$CLAUDE_PLUGIN_ROOT` → `~/.claude/skills/<any name>/scripts` (default or renamed `SKILL_NAME`) → plugin cache → `~/.local/share/senior-by-default`. Plugin install, default symlink, and custom `SKILL_NAME` all resolve; there is no hardcoded `~/.claude/skills/do/` literal in the live spec. If no install is found the affected gate **fails closed** with an explicit `SKIPPED` / `GATE ERROR` token in the announce instead of silently degrading to prose-level enforcement. (Earlier versions hardcoded the default-name path — that limitation is fixed; see CHANGELOG.)
 
 ### Manual — clone + symlink
 
@@ -196,7 +196,7 @@ JSON Schema for programmatic validation: [`skills/do/references/config.schema.js
              │
    ┌─────────▼──────────┐
    │ Phase 3: REVIEW    │  Gates: PR-size · dep-vuln · public-docs ·
-   │ (Opus + gates)     │  test · UI · i18n · contract · diff-scan ·
+   │ (Opus + gates)     │  build/test verify · UI · i18n · contract · diff-scan ·
    │                    │  specialist audit (High) · Opus criteria
    └─────────┬──────────┘
              │
