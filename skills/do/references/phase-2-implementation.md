@@ -104,6 +104,20 @@ case "$PLAN_SIZE_LINE" in
     # Plan fits the current bucket. Proceed to Sonnet spawn unchanged.
     ;;
   "Phase 2.0: REBUMP"*)
+    # PRECEDENCE — forced tier vs wrapper verdict (audit #19): if the current
+    # tier came from an explicit --complexity=… (or NL equivalent) in
+    # $ARGUMENTS, neither side silently wins. Do NOT auto-re-bump (the user
+    # forced the tier) and do NOT ignore the verdict (that's the §19d skip).
+    # STOP: present the wrapper line verbatim (tell included), ask the user —
+    # re-bump to H, or proceed at the forced tier?
+    #   - approves re-bump → continue below with the forced marker:
+    #     COMPLEXITY_REBUMPED_FROM="${COMPLEXITY}(forced)" — the marker rides
+    #     into metrics complexity_rebumped_from, distinguishing user-confirmed
+    #     re-bumps of forced tiers from routine estimate corrections.
+    #   - declines → keep the forced tier, quote the wrapper line in the
+    #     Phase 2 announce AND metrics --notes (verdict lines are never
+    #     dropped), skip the re-bump entirely.
+    # No forced tier → re-bump unconditionally, plain marker:
     COMPLEXITY_REBUMPED_FROM="$COMPLEXITY"
     COMPLEXITY="H"
     # Re-enter at the new tier — the path differs by whether an issue exists:
@@ -211,7 +225,7 @@ Do NOT re-explore repos that are already documented there — trust the file."]
 
 ## Flags
 Tests: {YES/NO} | Migration: {YES {TS}/NO}   <!-- {TS} = UTC timestamp prefix from Phase 0 Step 5 (`date -u +%Y%m%d%H%M%S`), never a sequential number -->
-Build: {cache.build_cmds joined with ' && '}  [+ if affected_graph → "(scoped via {tool})"]
+Build: {cache.build_cmds joined with ' && '}  [+ if affected-graph in use (phase-0 Step 4 predicate: tool detected + config enabled + no --no-affected-graph) → "(scoped via {tool})"] [+ if --no-affected-graph suppressed a detected tool → "(full build — affected-graph disabled by flag)"]
 Lint:  {cache.lint_cmds joined with ' && '}
 Test:  {cache.test_cmd}
 PLAN-SIZE: files={PLANNED_FILES} lines={PLANNED_LINES_EST} complexity={COMPLEXITY}
@@ -245,7 +259,9 @@ Now, the rules for the implementation work:
 "- Wrap entry point with feature flag `{flag_name}` ({feature_flags.system}). Default `{feature_flags.default_state}`. Register in `{feature_flags.registry_path}`."]
 [+ if config.security_scan.enabled →
 "- Do not introduce dependencies with known CVEs at threshold {threshold}. Phase 3 will scan; resolve before review."]
-[+ if Phase 0 Step 2 detected caveman as ACTIVE →
+[+ if Phase 0 Step 2 detected caveman as ACTIVE with `levels: smart` (the wrapper's hint in $CAVEMAN_LINE — it grepped the installed SKILL.md; do not re-derive) →
+"- Respond in caveman **smart** register — content compression with grammar intact: drop filler, hedges, and restatement; keep articles and verb forms (e.g. 'Bug in auth middleware: token expiry check uses `<` instead of `<=`. Fix:' — compressed, still grammatical). Smart is the designed fit here: readability-enforcing harnesses fight full-register grammar-dropping. Code, file paths, error messages, and structured output (tables, JSON, diffs) are NEVER compressed — only natural-language framing. The caveman skill is active in this session and will compress output by 65% (measured) — match its register so structure stays consistent. Self-review section, completion reports, and metrics output (Phase 4.11 calibration parsing) follow strict format below — those are LITERAL strings, not prose, do not compress them."]
+[+ if Phase 0 Step 2 detected caveman as ACTIVE with `levels: base` (install without the smart level) →
 "- Respond in caveman style — compressed prose, technical accuracy preserved (e.g. 'Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:' instead of 5-sentence narrative). Code, file paths, error messages, and structured output (tables, JSON, diffs) are NEVER compressed — only natural-language framing. The caveman skill is active in this session and will compress output by 65% (measured) — match its register so structure stays consistent. Self-review section, completion reports, and metrics output (Phase 4.11 calibration parsing) follow strict format below — those are LITERAL strings, not prose, do not compress them."]
 - No backwards compat — clean breaks only.
 - No new dependencies without explicit listing in Requirements.

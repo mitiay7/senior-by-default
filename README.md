@@ -18,7 +18,7 @@ A multi-actor pipeline skill for [Claude Code](https://claude.ai/code).
 
 ## What it actually does
 
-1. **Routes by complexity** — Trivial → Haiku, Low/Medium → Sonnet, High → Opus plan-review + Sonnet implementation.
+1. **Routes by complexity** — Trivial → Haiku, Low/Medium → Sonnet, High → Sonnet plan + specialist/Opus plan review + Sonnet implementation.
 2. **Creates an issue** in your tracker (GitHub or GitLab) with structured Acceptance Criteria, Implementation Hints, Build Checklist, Worktree Setup.
 3. **Spawns a sub-agent** in an isolated git worktree on a properly-named branch (`feat/i42-...`).
 4. **Runs gates in Phase 3** — independent build/lint/test re-run in the worktree (`build-verify` wrapper — the implementer's self-report is never the gate), UI rendering (via Claude Preview), i18n parity, BE↔FE contract alignment, dependency vulnerability scan, PR-size guard, optional CODEOWNERS-routed specialist audit.
@@ -79,7 +79,7 @@ If you want a `+++` shortcut, add this block to `~/.claude/CLAUDE.md` manually (
 <!-- senior-by-default:trigger:start -->
 ## +++ Trigger
 
-When a user message starts with `+++`, treat everything after `+++` as the argument and invoke the `/senior-by-default:do` skill with that text.
+When a user message starts with `+++` as a complete token (followed by whitespace or end of message), treat everything after `+++` as the argument and invoke the `/senior-by-default:do` skill with that text. Do NOT trigger on pasted unified diffs: a message starting `+++ b/` or `--- a/` is diff content, not an invocation.
 <!-- senior-by-default:trigger:end -->
 ```
 
@@ -186,7 +186,7 @@ JSON Schema for programmatic validation: [`skills/do/references/config.schema.js
 ┌─────────────────── Phase 0: SETUP ───────────────────┐
 │ Find config → validate → resolve repo(s)            │
 │ Stack detection (cached per repo)                   │
-│ Duplicate / concurrent-edit / migration checks      │
+│ Duplicate / migration checks                        │
 │ Complexity routing (T/L/M/H)                        │
 └────────────┬─────────────────────────────────────────┘
              │
@@ -264,20 +264,20 @@ These are **opt-in and off by default** — the skill works identically without 
 
 [caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill that compresses agent output by 65% (measured) via "caveman speak" while preserving full technical accuracy. It's passive (SessionStart hook), so once installed it just works for any session — including ours.
 
-**Install it before senior-by-default** so all Sub-Agent spawns from Phase 2 inherit compressed output:
+**Install it before senior-by-default** so all Sub-Agent spawns from Phase 2 inherit compressed output. Recommended source: our curated fork [mitiay7/caveman](https://github.com/mitiay7/caveman) — a maintained distribution of `JuliusBrussee/caveman` (`v1.10.x-fable` releases) that adds the `smart` level (content compression, grammar intact — the register readability-enforcing harnesses don't fight):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mitiay7/caveman/main/install.sh | bash
 ```
 
-We also maintain a curated fork, [mitiay7/caveman](https://github.com/mitiay7/caveman) (`v1.10.x-fable` releases), which adds a `smart` level (content compression, grammar intact) suited for Fable-class harnesses — install from the fork if you want that level; upstream works too.
+Upstream [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) works too — it just lacks the `smart` level until the fork's PRs merge, so Phase 2 sub-agents get the full (grammar-dropping) register.
 
-Phase 0 Step 2 detects whether caveman is installed via the external `scripts/check-caveman` wrapper (v3 of the detection — earlier inline-bash versions were systematically bypassed by orchestrators copy-pasting the announce template from the spec instead of running the check). The wrapper probes 4 candidate paths: `~/.claude/skills/caveman`, `~/.claude/plugins/cache/caveman`, `~/.claude/plugins/cache/JuliusBrussee/caveman`, `~/.agents/skills/caveman`. The canonical announce strings live ONLY in the wrapper:
+Phase 0 Step 2 detects whether caveman is installed via the external `scripts/check-caveman` wrapper (v3 of the detection — earlier inline-bash versions were systematically bypassed by orchestrators copy-pasting the announce template from the spec instead of running the check). The wrapper probes 4 fixed candidate paths (`~/.claude/skills/caveman`, `~/.claude/plugins/cache/caveman`, `~/.claude/plugins/cache/JuliusBrussee/caveman`, `~/.agents/skills/caveman`) plus the marketplace-namespaced plugin cache layout (`~/.claude/plugins/cache/<marketplace>/caveman[/<version>]/skills/caveman` — what `/plugin install` actually creates). The canonical announce strings live ONLY in the wrapper:
 
-- **Active** → `Caveman: ACTIVE (path: <resolved-path>)` — path varies per machine, unguessable from spec
-- **Not installed** → `Caveman: NOT INSTALLED (probed: <P1>, <P2>, <P3>, <P4>) — install: curl …` — the `(probed: …)` suffix lists every path the wrapper actually checked; **this is the anti-fabrication tell**. The list is built from the wrapper's internal array, never appears in the spec, so an orchestrator skipping the wrapper cannot include the suffix without inventing path names (a visible bug).
+- **Active** → `Caveman: ACTIVE (path: <resolved-path>; levels: smart|base)` — path varies per machine, unguessable from spec; the `levels:` hint is grepped from the installed SKILL.md at run time (`smart` = fork-capable install) and selects the Phase 2 directive register
+- **Not installed** → `Caveman: NOT INSTALLED (probed: <P1>, <P2>, …) — install: curl …` — the `(probed: …)` suffix lists every candidate the wrapper actually checked (unmatched cache globs stay in the list as literal patterns); **this is the anti-fabrication tell**. The list is built from the wrapper's internal array, never appears in the spec, so an orchestrator skipping the wrapper cannot include the suffix without inventing path names (a visible bug).
 
-When active, Sub-Agent prompts get a directive to respond in caveman style for natural-language framing (code, paths, JSON, diffs, completion-report formats are NEVER compressed — those are LITERAL strings parsed by downstream tooling).
+When active, Sub-Agent prompts get a directive to respond in caveman style for natural-language framing — `smart` register when the `levels:` hint says the install supports it, full register otherwise (code, paths, JSON, diffs, completion-report formats are NEVER compressed in either register — those are LITERAL strings parsed by downstream tooling).
 
 Per-task opt-out: `--no-caveman` in `$ARGUMENTS`.
 

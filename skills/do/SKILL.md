@@ -3,13 +3,13 @@ name: do
 version: 0.8.1
 model: opus
 description: |
-  Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Opus plan + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
+  Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Sonnet plan + specialist/Opus plan review + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
 
-  TRIGGER ONLY when the user's message LITERALLY starts with `/do`, `/<plugin>:do`, or `+++` — these are explicit invocations. NEVER auto-trigger from description matching, perceived task fit, or conversational context, EVEN IF a coding task otherwise matches every other criterion.
+  TRIGGER ONLY when the user's message LITERALLY starts with `/do`, `/<plugin>:do`, or `+++` as a COMPLETE TOKEN — followed by whitespace or end of message. `/docs`, `/done`, `/do-something` do NOT match. A message starting `+++ b/` or `--- a/` is a pasted unified diff, not an invocation — do NOT trigger. NEVER auto-trigger from description matching, perceived task fit, or conversational context, EVEN IF a coding task otherwise matches every other criterion.
 
   Side effects (creates issues, commits, pushes, opens PRs, optionally auto-merges) make false-positive triggering destructive. When in doubt, do not invoke — let the user invoke explicitly.
 
-  SKIP: pure Q&A, code review without implementation, scaffolding-from-scratch ("create new project"), exploratory ("how would I…"), single-line edits where the pipeline is overkill, ANY task not prefixed with the explicit invocation tokens above.
+  SKIP: pure Q&A, code review without implementation, scaffolding-from-scratch ("create new project"), exploratory ("how would I…"), ANY task not prefixed with the explicit invocation tokens above. An explicit invocation of an implementable task ALWAYS runs — a one-line edit routes to the Trivial tier, it is never refused as "pipeline overkill".
 ---
 
 <!--
@@ -26,12 +26,13 @@ Claude Code doesn't currently support CLI-level prompt rewriting; see CHANGELOG 
 
 - **`Agent(model: "<X>")`** — invoke the Task tool with the `subagent_type` mapping to model `<X>`. Concrete subagent types from installed plugins (e.g. `code-refactoring:code-reviewer`); harness defaults if unspecified.
 - **Worktree creation** — always explicit `git worktree add` per [`references/git-rules.md`](references/git-rules.md). Task tool's `isolation: "worktree"` is **forbidden** here (auto-names branches, breaks `config.naming` traceability).
-- **`<current model from environment>`** — Co-Authored-By footer reads running model identifier from harness session metadata. Never hardcode a model version.
+- **`<current model from environment>`** — Co-Authored-By footer reads the model identifier from the session metadata of whoever authored the commit (for spawned implementers: the sub-agent's own session model). Never hardcode a model version.
+- **Model names** — `opus` / `sonnet` / `haiku` throughout this spec are harness model-tier aliases (top / mid / fast), resolved by the harness to whatever those tiers currently map to. Never pin a dated model id in spec text, prompts, or commit trailers.
 
 ## Roles
 
-> **Opus** — analysis, issue creation, code review, merge. NEVER writes code except with `--implementer=opus` (rare: deep algorithmic, security-critical, complex concurrency, novel architecture). When Opus implements, Phase 3 Opus review MUST be fresh cold-context `Agent` invocation.
-> **Sonnet** (`Agent(model: "sonnet")`) — plan, implement, test, self-review. NEVER makes architectural decisions. Also reviews Haiku's diffs for Trivial tasks.
+> **Opus** — analysis, issue creation, plan-review adjudication (High: binding decision after 3 unresolved iterations), code review, merge. NEVER writes code except with `--implementer=opus` (rare: deep algorithmic, security-critical, complex concurrency, novel architecture). When Opus implements, Phase 3 Opus review MUST be fresh cold-context `Agent` invocation.
+> **Sonnet** (`Agent(model: "sonnet")`) — plan drafting, implement, test, self-review. Also reviews Haiku's diffs for Trivial tasks. On High, Sonnet DRAFTS the plan + ADR — drafting is not deciding: nothing Sonnet proposes is architectural authority until specialists/Opus approve it (phase-2 Step 2). Sonnet NEVER decides architecture unilaterally.
 > **Haiku** (`Agent(model: "haiku")`) — Trivial mechanical changes only (1-2 files, no logic decisions). NEVER touches M/H. NEVER reviews its own work.
 > **No backwards compat** — clean breaks only. No re-exports, `_unused` vars, shims.
 > **Context doc is mandatory IF configured.** Sonnet reads it before exploring; Phase 4 updates it.
@@ -86,7 +87,7 @@ Recognize free-form (accept natural-language equivalents too):
 
 | Flag | Effect |
 |---|---|
-| `--complexity=T\|L\|M\|H` | Force complexity bucket (T = Trivial → Haiku) |
+| `--complexity=T\|L\|M\|H` | Force complexity bucket (T = Trivial → Haiku). A forced tier still passes the Phase 2.0 plan-size gate; on a REBUMP verdict against a forced tier the orchestrator STOPs and asks — never silently overrides either side (phase-2 §2.0) |
 | `--implementer=opus\|sonnet\|haiku` | Override default implementer (Phase 2 only — review/audit/merge stay on Opus) |
 | `--repo=NAME` | Force target repo (skip workspace routing) |
 | `--redetect` | Force stack re-detection (skip cache) |
@@ -105,16 +106,17 @@ Recognize free-form (accept natural-language equivalents too):
 | `--no-config-init` | Skip Phase 0 auto-init of `.claude/do/config.json` when missing (use defaults, write nothing) |
 | `--no-specialists` | Auto-init config WITHOUT the default specialists preset (Opus inline review fallback for all groups) |
 | `--no-metrics` | Skip telemetry auto-config — Step 1 won't patch existing configs missing `metrics`, Step 4 auto-init won't include the preset |
+| `--issue-locale=<code>` | Force the `issue_locale` Phase 0 Step 4 auto-init writes (any ISO 639-1 code, e.g. `--issue-locale=fr`) — overrides the `$ARGUMENTS` script auto-detection (ru/ja/ko heuristics) |
 
 ### Implementer override semantics
 
-| Override | Allowed on | Effect |
+| Override | On tier | Effect |
 |---|---|---|
-| `--implementer=opus` | M/H | Phase 2 spawns `Agent(model: "opus")` instead of Sonnet. Phase 3 Opus review MUST be fresh cold-context. Announce: `Implementer: Opus (cold-context review required)`. |
-| `--implementer=sonnet` | T | Phase 2 spawns Sonnet; Phase 3 diff-scan upgrades to Opus. Effectively `--complexity=L` minus the issue-skip warning. |
-| `--implementer=haiku` | T only | No-op (default). On M/H → **HARD REJECT** (Haiku must not make logic decisions on multi-file or architectural work). |
+| `--implementer=opus` | M/H | Phase 2 spawns `Agent(model: "opus")` instead of Sonnet. Phase 3 Opus review MUST be fresh cold-context. Announce: `Implementer: Opus (cold-context review required)`. On L → warn `Opus on Low is overkill — proceed?` but honor. |
+| `--implementer=sonnet` | T | Phase 2 spawns Sonnet instead of Haiku; Phase 3 diff-scan upgrades to Opus. On L/M/H → explicit **no-op** (Sonnet is already the default implementer; announce `implementer=sonnet (no-op — already default)`). |
+| `--implementer=haiku` | T | No-op (Haiku is the Trivial default). On L/M/H → **HARD REJECT** (Haiku must not make logic decisions on multi-file, logic-bearing, or architectural work). |
 
-`--implementer=opus` does NOT skip specialists, ADR, CODEOWNERS, or PR-size guards — it only changes who writes the code. `--implementer=opus` on L → warn `Opus on Low is overkill — proceed?` but honor.
+Every tier/override combination is covered above — there are no implicit rejections beyond the one HARD REJECT (haiku on L/M/H); redundant overrides are announced no-ops, never silent downgrades. `--implementer=opus` does NOT skip specialists, ADR, CODEOWNERS, or PR-size guards — it only changes who writes the code.
 
 ## Phase 0 — Setup & Routing
 
@@ -124,7 +126,7 @@ Read [`references/phase-0-setup.md`](references/phase-0-setup.md). Six logical s
 2. Companion-skill detect (caveman — sets prompt directive for Phase 2)
 3. Resolve target repo(s)
 4. Stack cache (load or detect)
-5. Sanity checks (duplicate / concurrent-edit / migration / context doc)
+5. Sanity checks (duplicate / migration / context doc — the concurrent-edit check runs in Phase 1, after the planned-files list exists)
 6. Complexity routing + model assignment + announce
 
 Final `[Phase 0] ...` announce — must include `Models:` line (orchestrator + implementer).
@@ -135,7 +137,7 @@ Final `[Phase 0] ...` announce — must include `Models:` line (orchestrator + i
 |---|---|---|
 | 1 — Issue creation | M/H only (skipped for T/L) | [`references/phase-1-issue.md`](references/phase-1-issue.md) |
 | 2 — Implementation + self-review + ADR (High) | L/M/H (Trivial uses simplified flow below) | [`references/phase-2-implementation.md`](references/phase-2-implementation.md) |
-| 3 — Code review (gates, specialist audit, Opus review) | L/M/H (Trivial uses Sonnet diff-scan only) | [`references/phase-3-review.md`](references/phase-3-review.md) |
+| 3 — Code review (gates, specialist audit, Opus review) | L/M/H (Trivial: Sonnet diff-scan + dep-vuln when deps changed — see below) | [`references/phase-3-review.md`](references/phase-3-review.md) |
 | 4 — Finalize (commit, push, PR, CI, auto-merge, context doc, metrics, announce) | always | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) |
 
 **Low complexity simplifications**: skip Phase 1, Phase 3 = `build-verify` re-run + diff scan + dep-vuln scan (nothing else), Phase 4 = push + change summary (no PR), still emit metrics + notification.
@@ -144,7 +146,7 @@ Final `[Phase 0] ...` announce — must include `Models:` line (orchestrator + i
 - Phase 1: skip (no issue)
 - Phase 2: spawn `Agent(model: "haiku")` with tightly scoped prompt — exact files + exact change. Haiku does NOT explore codebase, does NOT make architectural decisions, does NOT touch tests. Anything ambiguous → **abort and re-route to Low**.
 - Phase 3: skip all gates except dep-vuln (only if deps changed). `Agent(model: "sonnet")` diff-scan with one question: "does this diff do exactly what was asked, nothing more?" Reject + retry once; second failure → re-route to Low.
-- Phase 4: commit + push to worktree branch. **No PR**, no context-doc update, no ADR. Emit metrics + notification. Co-Author = `Claude Haiku 4.5` (not parent model).
+- Phase 4: commit + push to worktree branch. **No PR**, no context-doc update, no ADR. Emit metrics + notification. Co-Author = the implementer sub-agent's model identifier read from ITS session metadata (the Haiku-tier agent that wrote the diff — not the orchestrator's model, and never a hardcoded version; see Notation).
 - Worktree rule still applies — Trivial does not bypass [`git-rules.md`](references/git-rules.md).
 
 Before announcing completion, scan [`references/anti-patterns.md`](references/anti-patterns.md).
@@ -152,7 +154,7 @@ Before announcing completion, scan [`references/anti-patterns.md`](references/an
 ## Top-level git constraints (full: [`references/git-rules.md`](references/git-rules.md))
 
 - Worktree only — never `git checkout -b`, never `git clone`
-- Never commit to `main`. Never `--force` / `--hard` / `--amend` / `--no-verify`
+- Never commit to `main` (sole scoped exception: Phase 4.6 context-doc delivery into a separate docs repo, gated on `context_doc.allow_main_push: true` — never the code repo). Never `--force` / `--hard` / `--amend` / `--no-verify`
 - Never modify `.git/config` or `core.hooksPath`
 - Never commit `.env*` / `*.key` / `*.pem` / `credentials.*` / `*.secret` or inline keys/tokens. The Phase 4.1.2 `secret-scan` wrapper gates every push over the full push range (`merge-base(origin/main, HEAD)..HEAD`) — push only on its exit 0, never on eyeballed diffs
 - `Co-Authored-By: <current model from environment>` — auto-detect, never hardcode
@@ -164,7 +166,7 @@ Before announcing completion, scan [`references/anti-patterns.md`](references/an
 - **Final assistant message ends with PR-summary prose and NO `Metrics: ...` line** — Phase 4.13 procedure skipped. Run bash flow verbatim from `phase-4-finalize.md` instead of composing prose.
 - **Auto-named branches without `i{N}` for M/H** — Phase 4.0 renames UNCONDITIONALLY before PR open. "Pre-spawned worktree" is NOT an excuse — `git branch -m` works on pre-spawned worktrees too.
 - **Using `Agent(isolation: "worktree")` for Phase 2** — auto-names branches, breaks `config.naming`. Pre-create worktree explicitly via `git worktree add`.
-- **Downgrading a Phase 3.0 PR-size BLOCK to `warn`** — the `pr-size-check` wrapper owns the verdict and BLOCK exits 3 (hard halt → draft PR + `blocked`). Never eyeball the diff and ship an over-block PR as `warn` (8 production violations). Plan-time sibling: Phase 2.0 `plan-size-check` SPLIT-REQUIRED.
+- **Downgrading a Phase 3.0 PR-size BLOCK to `warn`** — the `pr-size-check` wrapper owns the verdict and BLOCK exits 3 (hard halt → draft PR + `blocked`). Never eyeball the diff and ship an over-block PR as `warn` (production ledger: [anti-patterns §19f](references/anti-patterns.md)). Plan-time sibling: Phase 2.0 `plan-size-check` SPLIT-REQUIRED.
 - **Skipping zero-downtime migration audit** when migration present
 - **Bypassing CODEOWNERS** when file exists in repo
 - **Subjective reviews / scope creep / silent assumptions / speculative abstractions / drive-by refactors**

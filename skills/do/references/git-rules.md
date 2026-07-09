@@ -41,8 +41,8 @@ Before the final commit & push, Phase 4.0 runs the **`branch-normalize` wrapper*
 
 A `BRANCH RENAMED` verdict is a SIGNAL that worktree creation didn't follow spec — recorded as `branch_rename` in the metrics entry's `--notes`; fix the next-task creation flow.
 
-## Forbidden operations (no exceptions)
-- Never commit to `main` / `master`
+## Forbidden operations
+- Never commit to `main` / `master` — **sole scoped exception**: Phase 4.6 context-doc delivery into a SEPARATE docs repo (never the task's code repo), gated on explicit `config.context_doc.allow_main_push: true`; see [phase-4-finalize.md](phase-4-finalize.md) §4.6. Everything else below has no exceptions.
 - Never `--force`, `--force-with-lease`, `--hard`, `--amend`, `--no-verify`
 - Never modify `.git/config` or `core.hooksPath`
 - Undo with `git revert` only — never history rewrite

@@ -132,9 +132,11 @@ Phase 2's completion report — exit codes included — is the implementer's own
 # block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
 DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
 
-# Commands come from the stack cache (stack-detection.md). If config.affected_graph
-# is in use, substitute the affected-scoped equivalents Phase 2 ran instead of
-# reading the cache arrays.
+# Commands come from the stack cache (stack-detection.md). If affected-graph is
+# in use per the phase-0 Step 4 predicate (tool detected + config enabled +
+# --no-affected-graph absent), substitute the affected-scoped equivalents
+# Phase 2 ran instead of reading the cache arrays; with --no-affected-graph
+# the full cache commands run here too.
 CACHE_FILE="$HOME/.claude/do/cache/{slug}.json"     # slug per stack-detection.md
 VERIFY_ARGS=()
 while IFS= read -r c; do VERIFY_ARGS+=(--build "$c"); done < <(jq -r '.build_cmds[]?' "$CACHE_FILE")

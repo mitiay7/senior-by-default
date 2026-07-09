@@ -37,7 +37,8 @@
       "deployment": 11,
       "constraints": 12
     },
-    "required_for_finalize": true
+    "required_for_finalize": true,
+    "allow_main_push": true
   },
 
   "tech_debt_doc": "/path/to/workspace/docs/tech-debt.md",

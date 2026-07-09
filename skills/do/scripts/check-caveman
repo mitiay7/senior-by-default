@@ -12,12 +12,14 @@
 # fabricate the exact output without running it because:
 #   - ACTIVE form includes the RESOLVED PATH (varies per machine,
 #     orchestrator can't guess /Users/<USER>/.agents/skills/caveman vs
-#     /Users/<USER>/.claude/skills/caveman, etc.)
+#     /Users/<USER>/.claude/skills/caveman, etc.) AND a `levels:` hint
+#     grepped from the installed SKILL.md at run time (smart-capable
+#     fork vs base upstream — not knowable without reading the file).
 #   - NOT-INSTALLED form includes the FULL PROBED-PATHS LIST (suffix
-#     "probed: <P1>, <P2>, <P3>, <P4>"). The list is not in the spec —
-#     spec just invokes the wrapper — so orchestrator skipping the
-#     wrapper cannot include this suffix without inventing path names,
-#     which is a detectable fabrication tell.
+#     "probed: <P1>, <P2>, ..."). The list is not in the spec — spec
+#     just invokes the wrapper — so orchestrator skipping the wrapper
+#     cannot include this suffix without inventing path names, which
+#     is a detectable fabrication tell.
 #
 # Usage:
 #   check-caveman                 # zero args — sole output: announce line on stdout
@@ -26,8 +28,18 @@
 #   0  always (informational tool — both outcomes are valid)
 #
 # Output (one of):
-#   Caveman: ACTIVE (path: <resolved-path>)
-#   Caveman: NOT INSTALLED (probed: <P1>, <P2>, <P3>, <P4>) — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
+#   Caveman: ACTIVE (path: <resolved-path>; levels: smart|base)
+#   Caveman: NOT INSTALLED (probed: <P1>, <P2>, ...) — install: curl -fsSL https://raw.githubusercontent.com/mitiay7/caveman/main/install.sh | bash
+#
+# `levels: smart` = the installed SKILL.md mentions the `smart` level
+# (content compression, grammar intact — mitiay7/caveman fork, v1.10+).
+# Phase 2 keys the sub-agent directive register off this hint: smart
+# when supported (readability-enforcing harnesses fight full-register
+# grammar-dropping), full otherwise. `levels: base` = no smart level.
+#
+# Install hint points at the curated fork mitiay7/caveman (adds the
+# smart level; -fable release tags) — upstream JuliusBrussee/caveman
+# works too but 404s on -fable tags and lacks smart pre-merge.
 
 set -euo pipefail
 
@@ -38,9 +50,31 @@ PATHS=(
   "$HOME/.agents/skills/caveman"
 )
 
+# Marketplace-namespaced plugin cache (layout verified 2026-07-09 against a
+# live Claude Code install): cache/<marketplace>/<plugin>/<version>/skills/
+# <skill>/SKILL.md. caveman's .claude-plugin/marketplace.json names both the
+# marketplace and the plugin "caveman", and the mitiay7 fork keeps those
+# names, so the <marketplace> glob covers upstream AND fork installs. The
+# versionless second glob covers older cache layouts without the <version>
+# segment. Unmatched globs stay in the probed list as literal patterns —
+# still part of the tell (the spec prints neither form).
+CACHE_HIT=0
+shopt -s nullglob
+for p in "$HOME/.claude/plugins/cache"/*/caveman/*/skills/caveman \
+         "$HOME/.claude/plugins/cache"/*/caveman/skills/caveman; do
+  PATHS+=("$p"); CACHE_HIT=1
+done
+shopt -u nullglob
+if [ "$CACHE_HIT" -eq 0 ]; then
+  PATHS+=("$HOME/.claude/plugins/cache/*/caveman/*/skills/caveman")
+fi
+
 for p in "${PATHS[@]}"; do
   if [ -f "$p/SKILL.md" ]; then
-    echo "Caveman: ACTIVE (path: $p)"
+    # Levels hint — grepped from the INSTALLED file at run time (the Phase 2
+    # directive register selector; not composable from spec text).
+    if grep -q smart "$p/SKILL.md" 2>/dev/null; then LEVELS="smart"; else LEVELS="base"; fi
+    echo "Caveman: ACTIVE (path: $p; levels: $LEVELS)"
     exit 0
   fi
 done
@@ -51,4 +85,4 @@ PROBED=""
 for p in "${PATHS[@]}"; do
   PROBED="${PROBED:+$PROBED, }$p"
 done
-echo "Caveman: NOT INSTALLED (probed: $PROBED) — install: curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash"
+echo "Caveman: NOT INSTALLED (probed: $PROBED) — install: curl -fsSL https://raw.githubusercontent.com/mitiay7/caveman/main/install.sh | bash (curated fork of JuliusBrussee/caveman — adds the smart level)"

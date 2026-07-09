@@ -50,7 +50,8 @@ All other fields are optional; missing fields fall back to defaults documented b
   "context_doc": {
     "path": "/abs/or/rel/path/AGENT_CONTEXT.md",
     "sections": { "current_state": 6, "structure": 4, "deployment": 11, "constraints": 12 },
-    "required_for_finalize": true
+    "required_for_finalize": true,
+    "allow_main_push": false
   },
 
   "tech_debt_doc": "/abs/or/rel/path/tech-debt.md",
@@ -214,7 +215,7 @@ Multi-repo setups. `repos.<key>.scope_keywords` drives Phase 0 Step 3 routing. M
 Omitted `type` = `github` — and `repo` is still required (every `gh` call passes `--repo`). The schema enforces exactly this: the github/gitlab branch fires on omitted type, and only an explicit `type: "custom"` demands a `commands` block. Pre-fix, the custom branch fired vacuously on omitted type, rejecting the documented github-default shorthand `{"repo": "owner/name"}`.
 
 #### `context_doc`
-Sonnet reads it before exploring. `sections` = name → number-or-anchor map. `required_for_finalize: true` → Phase 4.6 BLOCKS.
+Sonnet reads it before exploring. `sections` = name → number-or-anchor map. `required_for_finalize: true` → Phase 4.6 BLOCKS. `allow_main_push: true` (default false) opts a SEPARATE docs repo into Phase 4.6's direct-push delivery — the sole scoped exception to "never commit to main"; without it, docs-repo delivery goes through a short-lived branch + PR (phase-4 §4.6 Delivery). Ignored when the context doc lives in the task's code repo.
 
 #### `i18n`, `ui_gate`, `contract_gate`
 Each enables the corresponding Phase 3 gate. Omit → gate skipped.
@@ -302,7 +303,7 @@ If set to a positive integer: Phase 0 counts `git worktree list` across known re
 The feature originates from Kanban WIP limits for human teams (where context-switching is real cost). For AI-orchestrated workflows with isolated agent contexts, parallel sessions are usually beneficial — leave unset unless you have a specific reason for a soft ceiling.
 
 #### `concurrent_edit_check`
-Phase 0 Step 5 check: list recent commits touching planned files. Configurable lookback.
+Phase 1 check (M/H — runs right after the planned-files list is derived; moved from Phase 0 Step 5, which predated that list — audit #19): list recent commits touching planned files. Configurable lookback.
 Recent commits → warn with author + SHA list (someone else may be editing nearby).
 
 #### `feature_flags`

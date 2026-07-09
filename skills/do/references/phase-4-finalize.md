@@ -208,15 +208,28 @@ For all complexity levels: update `config.context_doc.path`. Required sections (
 - **§{sections.deployment}** — only if env / compose / webhook changed.
 - **§{sections.constraints}** — add gotchas, remove obsolete ones.
 
-### Delivery
-If the PR already touches the file → commit in same branch.
+### Delivery — three paths, strictly ordered
 
-Else push directly to context_doc's repo `main`:
-```
-cd {dir containing context_doc} && git pull origin main
-# edit
-git add {context_doc.path} && git commit -m "docs(agent-context): update after {ref_format} — {summary}" && git push origin main
-```
+1. **Context doc lives in the SAME repo as the task** → commit `{context_doc.path}` on the task branch; the PR carries it. This is the only path inside the code repo — [git-rules.md](git-rules.md) "never commit to main" has NO exception here.
+
+2. **Separate docs repo (multi-repo workspace), default** → short-lived branch + PR, same worktree discipline as any other repo:
+   ```
+   git -C {docs_repo} fetch origin --prune
+   git -C {docs_repo} worktree add {docs_repo}/.claude/worktrees/docs-{ref_format} -b docs/{ref_format}-context origin/main
+   # edit {context_doc.path} in the worktree
+   git add {context_doc.path} && git commit -m "docs(agent-context): update after {ref_format} — {summary}"
+   git push -u origin docs/{ref_format}-context
+   # open the PR; merge per the docs repo's own rules (auto-merge if configured there)
+   ```
+   Suggest worktree removal after merge per §4.8 — single-file docs branches don't linger.
+
+3. **Separate docs repo with explicit `config.context_doc.allow_main_push: true`** → direct push:
+   ```
+   cd {dir containing context_doc} && git pull origin main
+   # edit
+   git add {context_doc.path} && git commit -m "docs(agent-context): update after {ref_format} — {summary}" && git push origin main
+   ```
+   This is the **sole scoped exception** to "never commit to main": it applies only to a docs repo that is NOT the task's code repo, only to `{context_doc.path}`, and only under the explicit config opt-in. Missing opt-in, or context doc inside the code repo → paths 1/2. Pre-fix, this block said `git push origin main` unconditionally while git-rules said "never commit to main, no exceptions" — an orchestrator honoring either sentence broke the other (audit #19).
 
 If Sonnet failed to update → Opus updates inline + notes in PR description: `Context updated by Opus: {sections}`.
 
@@ -347,7 +360,7 @@ final key names, the wrapper does:
 | `secret_scan` | 4.1 pre-push | `opus_review` | 3.7 (M/H) |
 | `migration_audit` | 3.6 migration | `codeowners` | 3.6 routing |
 | `plan_size` | 2.0 | `stale_main` | 2.0.5 |
-| `concurrent_edit` | 0 Step 5 | | |
+| `concurrent_edit` | 1 (post planned-files) | | |
 
 Each value is `{ "status": "pass"|"warn"|"fail"|"block"|"skipped", ["fix_cycle": N,]
 ["details": {...}] }`. The wrapper coerces scalar values (`"pass"`, `true`) into the

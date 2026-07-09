@@ -211,7 +211,7 @@ if [ "$TRIGGER" != "none" ] && [ -n "$TRIGGER" ]; then
 $TRIGGER_BEGIN
 ## ${TRIGGER} Trigger
 
-When a user message starts with \`${TRIGGER}\`, treat everything after \`${TRIGGER}\` as the argument and invoke the \`/${SKILL_NAME}\` skill with that text. This is a shorthand — \`${TRIGGER} add user avatars\` is equivalent to \`/${SKILL_NAME} add user avatars\`.
+When a user message starts with \`${TRIGGER}\` as a complete token (followed by whitespace or end of message), treat everything after \`${TRIGGER}\` as the argument and invoke the \`/${SKILL_NAME}\` skill with that text. This is a shorthand — \`${TRIGGER} add user avatars\` is equivalent to \`/${SKILL_NAME} add user avatars\`. Do NOT trigger on pasted unified diffs: a message starting \`+++ b/\` or \`--- a/\` is diff content, not an invocation.
 $TRIGGER_END
 EOF
 )

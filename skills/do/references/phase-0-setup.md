@@ -114,15 +114,15 @@ echo "$CAVEMAN_LINE"
 ```
 
 **The wrapper is the single source of truth for the line.** Possible outputs (the spec deliberately does NOT spell out the templates — they live only in the wrapper script):
-- **ACTIVE form** — includes the resolved install path. Different per machine; orchestrator cannot guess between `~/.claude/skills/caveman`, `~/.agents/skills/caveman`, etc.
-- **NOT INSTALLED form** — includes a `(probed: <P1>, <P2>, <P3>, <P4>)` suffix listing every path the wrapper actually checked. This suffix is the **anti-fabrication tell**: the path list is built from the wrapper's internal array, never written in the spec, so orchestrator skipping the wrapper cannot include it without inventing path names (which is a detectable visible-bug).
+- **ACTIVE form** — includes the resolved install path AND a `levels:` hint. The path differs per machine; orchestrator cannot guess between `~/.claude/skills/caveman`, `~/.agents/skills/caveman`, the marketplace-namespaced plugin cache, etc. The `levels:` hint (`smart` | `base`) is grepped by the wrapper from the INSTALLED SKILL.md at run time — it selects the Phase 2 directive register (see below) and is not knowable without reading the file.
+- **NOT INSTALLED form** — includes a `(probed: <P1>, <P2>, …)` suffix listing every candidate the wrapper actually checked (fixed paths + marketplace-cache glob expansions; an unmatched glob stays in the list as its literal pattern). This suffix is the **anti-fabrication tell**: the list is built from the wrapper's internal array, never written in the spec, so orchestrator skipping the wrapper cannot include it without inventing path names (which is a detectable visible-bug).
 - **CHECK SKIPPED form** — the spec-side fail-closed fallback (the `else` branch above), fires only when the resolver finds no install at all. The one form that IS copyable from the spec — acceptable because it is an honest degraded state the user will chase (broken install), not a plausible-looking success.
 
 Why a wrapper (not inline bash like v1/v2): both prior versions had the announce-line template visible in the bash literal inside the spec. Orchestrators systematically read the template and copy-pasted it into the announce **without running the bash** (production-confirmed 2026-05-17, lea-web run: announced `Caveman: NOT INSTALLED — install: curl ...` while caveman was installed at path #1). Moving the strings into a wrapper script and adding a runtime-only tell (probed-paths list) is the structural fix.
 
 If the announce contains a `Caveman:` line that lacks the `(path: ...)` suffix for ACTIVE, the `(probed: ...)` suffix for NOT INSTALLED, and is not the exact CHECK SKIPPED fallback — orchestrator skipped the wrapper. Re-run, paste actual wrapper output.
 
-When the wrapper returns the ACTIVE form, Sub-Agent prompts get the caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section). Caveman is **passive** (SessionStart hook); once active, all assistant output flows through compression. No runtime wrapping needed — only the prompt directive.
+When the wrapper returns the ACTIVE form, Sub-Agent prompts get the caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section) — **register selected by the `levels:` hint**: `levels: smart` → smart register (content compression, grammar intact — the designed fit for readability-enforcing harnesses, which fight full-register grammar-dropping); `levels: base` → full register. Caveman is **passive** (SessionStart hook); once active, all assistant output flows through compression. No runtime wrapping needed — only the prompt directive.
 
 ### 3. Resolve target repo(s)
 
@@ -156,8 +156,10 @@ For each target repo, compute cache slug from absolute path. Slug rule: replace 
 
 **Detect** (cache miss / version mismatch / `--redetect`):
 - Run detection per [`stack-detection.md`](stack-detection.md)
-- If `nx.json` or `turbo.json` present, set `affected_graph_tool`. Override build/test commands if `config.affected_graph` enabled.
+- If `nx.json` or `turbo.json` present, set `affected_graph_tool` — a durable cache fact, recorded regardless of per-task flags.
 - Write result to cache. Always include canonical `repo_path`.
+
+**Affected-graph "in use" (per task, never cached)**: `affected_graph_tool` set AND `config.affected_graph` enabled AND `--no-affected-graph` NOT in `$ARGUMENTS`. Only when in use do the scoped equivalents substitute `cache.build_cmds` / `cache.test_cmd` — Step 6 test scoping, Phase 1 Build Checklist, Phase 2 Build line, and Phase 3 `build-verify` all key off this one predicate. The flag exists for exactly the suspicious case (user suspects the affected graph missed cross-project breakage), so honoring it means the FULL suite runs everywhere — a scoped run behind a passed flag left the user believing the full suite passed (documented no-op flag, audit #17). When the flag suppresses a detected tool, the announce reads `Affected-graph: disabled (flag)`.
 
 Cache fields used throughout phases 1–4: `stack`, `package_manager`, `build_cmds`, `lint_cmds`, `test_cmd`, `ui_files`, `ui_extensions`, `migration_dir`, `migration_pattern`, `affected_graph_tool`. Never re-derive mid-task.
 
@@ -284,15 +286,7 @@ If `--no-config-init` was passed → skip this block entirely, set `CONFIG_LINE=
 
 Duplicate issue or branch → STOP, ask user. Stale worktrees → warn.
 
-**Concurrent-edit check** (`config.concurrent_edit_check.enabled`, default true) — only when Phase 1 identifies planned files:
-
-```bash
-# REQUIRED: refresh origin/main first — otherwise reads stale ref, misses recent activity
-git -C "$REPO" fetch origin main --quiet
-git -C "$REPO" log --since="${LOOKBACK_DAYS} days ago" --name-only --pretty="%h %an" origin/main -- $PLANNED_FILES
-```
-
-Recent commits on planned files → WARN with author+SHA list. Proceed; note overlap.
+**Concurrent-edit check — runs in Phase 1, NOT here.** The check needs the planned-files list, which does not exist until Phase 1 derives it — placing it in Phase 0 was circularly sequenced (Phase 0 needed Phase 1's output; nothing looped back), leaving the gate unreachable for M/H, its only applicable tiers (audit #19). It now runs inside [`phase-1-issue.md`](phase-1-issue.md) §Concurrent-edit check, immediately after the planned-files list is derived. T/L skip it by construction (no Phase 1, no planned-files artifact).
 
 **Migration detection** (only if `cache.migration_dir != null`):
 - Migration prefix: `MIGRATION_PREFIX="$(date -u +%Y%m%d%H%M%S)"` — UTC timestamp, generated at creation time. NEVER compute "next free number" from existing files (`ls | sort -V | tail -1` + 1): every parallel session picks the same slot at spawn, and the duplicate surfaces only on the last rebase. Timestamps remove the race by construction — two sessions creating a migration in the same UTC second is essentially impossible.
@@ -326,7 +320,7 @@ Boundaries: 4 trivial files in one module → prefer Low. 3 files spanning new A
 
 Ambiguity about user intent or observable behavior is never Trivial. Ask if it changes the outcome; otherwise record the assumption and choose the lowest complexity bucket that can verify the acceptance criteria.
 
-**Test detection**: YES for new functions/services/handlers, logic changes, algorithms. NO for pure UI/CSS, config, docs. Test command from `cache.test_cmd`; if `affected_graph_tool` enabled, scope via `nx affected:test` / `turbo run test --filter=...[main]`.
+**Test detection**: YES for new functions/services/handlers, logic changes, algorithms. NO for pure UI/CSS, config, docs. Test command from `cache.test_cmd`; if affected-graph is **in use** (Step 4 predicate — tool detected, config enabled, `--no-affected-graph` absent), scope via `nx affected:test` / `turbo run test --filter=...[main]`; otherwise run the full `cache.test_cmd`.
 
 **Model assignment**:
 - Orchestrator: always `opus` (per SKILL.md frontmatter `model: opus`)
@@ -347,10 +341,9 @@ After all 6 steps pass:
   {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
   {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose; auto-init carries EXTRA wrapper lines — `Tracker: … OK (…)` | `Tracker: DEGRADED to none (…)` on github/gitlab detections, and `Specialists: PRESET VERIFIED|FILTERED|EMPTY|UNVERIFIED (…)` when the preset was requested — keep ALL lines, same verbatim rule}
   {$METRICS_CONFIG_LINE — output of Step 1 config-ensure-metrics or Step 4 mirror (ALREADY CONFIGURED | EXPLICIT OPT-OUT | AUTO-ADDED | INCLUDED in auto-init | SKIPPED | PATCH SKIPPED | N/A), verbatim — DO NOT compose; the three wrapper forms carry a runtime `(cfg=…)` fingerprint (§19i) — a wrapper form without it was composed by hand}
-  WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
+  WIP: {n}/{limit} | Affected-graph: {nx/turbo/none — or "disabled (flag)" when --no-affected-graph suppressed a detected tool}
   [+ if assumptions recorded → "Assumptions: {short list}"]
   [+ if simpler path chosen → "Tradeoff: {short explanation of narrower implementation}"]
-  [+ if concurrent edits → "⚠ Concurrent edits on planned files in last {N} days"]
   [+ if postmortem context → "ℹ Postmortem section will be added to issue"]
 ```
 
@@ -359,6 +352,7 @@ After all 6 steps pass:
 The three structural-coupling lines (`$CAVEMAN_LINE`, `$CONFIG_LINE`, `$METRICS_CONFIG_LINE`) come **only** from the bash blocks in Step 2 / Step 4 / Step 1 wrapper respectively. The spec deliberately contains no copyable templates of their full form — if you "know what the line looks like" without running the bash, you're guessing. This is the same structural-enforcement pattern as `$METRICS_LINE` in Phase 4.13 (see [`phase-4-finalize.md`](phase-4-finalize.md) and [anti-patterns §19, §19a, §19b, §19c](anti-patterns.md)).
 
 Suppression paths:
+- `--no-affected-graph` → Step 4's "in use" predicate turns false for this task: full (unscoped) build/test commands everywhere (Step 6, Phase 1 Build Checklist, Phase 2 Build line, Phase 3 `build-verify`); announce shows `Affected-graph: disabled (flag)`. The cache keeps `affected_graph_tool` — durable fact, per-task flag.
 - `--no-caveman` → Step 2 skipped, `$CAVEMAN_LINE=""`, line omitted from announce.
 - `--no-config-init` → Step 4 auto-init skipped, `$CONFIG_LINE="Config: NONE — using defaults (--no-config-init)"`, line still printed.
 - `--no-specialists` → Step 4 auto-init writes config WITHOUT `specialists` block; doesn't affect $CONFIG_LINE.

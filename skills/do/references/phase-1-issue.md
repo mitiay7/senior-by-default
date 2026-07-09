@@ -51,7 +51,19 @@ Before writing the issue body, derive the rough list of files the task will touc
 - Files matching keywords in `$ARGUMENTS` (grep the codebase)
 - New files implied by the task
 
-This list feeds the Phase 0 Step 5 concurrent-edit check AND Phase 4.2 CODEOWNERS reviewer routing.
+This list feeds the concurrent-edit check (next section) AND Phase 4.2 CODEOWNERS reviewer routing.
+
+## Concurrent-edit check (`config.concurrent_edit_check.enabled`, default true)
+
+Run immediately after the planned-files list above exists — moved here from Phase 0 Step 5, where it was circularly sequenced (it needs Phase 1's planned files; audit #19):
+
+```bash
+# REQUIRED: refresh origin/main first — otherwise reads stale ref, misses recent activity
+git -C "$REPO" fetch origin main --quiet
+git -C "$REPO" log --since="${LOOKBACK_DAYS} days ago" --name-only --pretty="%h %an" origin/main -- $PLANNED_FILES
+```
+
+`LOOKBACK_DAYS` = `config.concurrent_edit_check.lookback_days` (default 7). Recent commits on planned files → WARN with author+SHA list; proceed. The warning rides in two places: the issue body's Implementation Hints (template below) and the Phase 1 announce.
 
 ## Issue body template
 
@@ -96,7 +108,7 @@ Locale: `config.issue_locale`. Below shows `en` as canonical; for `ru` use the R
 {files, patterns, edge cases, gotchas. Pass references to similar modules from Phase 0 if relevant.}
 **Est deltas (MANDATORY)** — one line per planned file: `{path} — ~{N} lines`. The Phase 2.0 plan-size gate reads `PLANNED_FILES` (line count of this list) and `PLANNED_LINES_EST` (sum of the `~N`) from THIS list — numbers grounded in the issue artifact, never invented at gate time ([phase-2 §2.0](phase-2-implementation.md)). For High, §2.0 replays on the approved plan's deltas after plan approval.
 Prefer existing patterns and the smallest implementation that satisfies the criteria. Do not add new abstractions, config, flags, dependencies, or broad refactors unless they are listed in Requirements.
-{If concurrent-edit warning fired in Phase 0 Step 5: "⚠ Recent activity on these files: {file: author@sha list}. Coordinate or rebase frequently."}
+{If the concurrent-edit check (§Concurrent-edit check above) warned: "⚠ Recent activity on these files: {file: author@sha list}. Coordinate or rebase frequently."}
 
 [+ if Migration → "### Migration
 Prefix: {TS} — UTC timestamp generated at creation time via `date -u +%Y%m%d%H%M%S`. Never a sequential next-free number (parallel sessions collide on it).
@@ -133,7 +145,7 @@ With `{N}` = ISSUE_NUM and `{slug}` derived from $ARGUMENTS.
 {cache.build_cmds joined with " && "}
 {cache.lint_cmds joined with " && "}
 {cache.test_cmd, if Tests: YES}
-{If affected_graph in use: note "Build/test scoped to affected projects via {affected_graph.tool}."}
+{If affected-graph in use (phase-0 Step 4 predicate — false when --no-affected-graph was passed): note "Build/test scoped to affected projects via {affected_graph.tool}."}
 
 ### Branch
 {config.naming.issue.branch} substituted
@@ -191,5 +203,6 @@ Read the issue and start implementation immediately. Do NOT output a plan, do NO
 ## Announce
 ```
 [Phase 1] Issue {tracker.ref_format-substituted-N} created: {url from Tracker.view_url}
+[+ if concurrent-edit check warned → "⚠ Concurrent edits on planned files in last {LOOKBACK_DAYS} days: {file: author@sha list}"]
 [+ if notifications configured → also send "task_started" event per references/notifications.md]
 ```
