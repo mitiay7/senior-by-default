@@ -10,11 +10,21 @@
 #
 # Structural enforcement: thresholds + case-statement live ONLY in the
 # script. The spec invokes the wrapper; orchestrator cannot decide
-# "plan fits" without the wrapper printing it. And the output includes
-# an anti-fabrication tell: the actual computed cap values for the
-# current bucket are echoed back as part of the announce line, so
-# off-line guesses are detectable (orchestrator doesn't know the
-# wrapper's internal table without running it).
+# "plan fits" without the wrapper printing it.
+#
+# Anti-fabrication tell (v0.9, audit #6): every verdict line ends with a
+# derived suffix  [tell:<head8>:<ck>]  where <head8> = `git rev-parse
+# --short=8 HEAD` of the invoking directory's repo ("nogit" outside one) —
+# a session-varying component — and <ck> = POSIX `cksum` over
+# "<C>:<files>:<lines>:<maxF>:<maxL>:<head8>". The previous tell (echoing
+# the bucket caps) was void: T/L/M caps are spec-visible in the Phase 0
+# routing matrix, so every verdict line was composable from spec text
+# without running anything. A composed line now carries no valid tell —
+# the spec has no copy of the formula, the H ceiling lives only here, and
+# HEAD varies per session; an auditor re-derives <ck> from the printed
+# inputs + caps + head and flags mismatches. Consumers stay compatible:
+# §2.0 dispatches on the "Phase 2.0: ..." prefix globs, the PreToolUse
+# hook passes the line through opaquely, metrics never parse it.
 #
 # Usage:
 #   plan-size-check \
@@ -23,10 +33,10 @@
 #     --planned-lines N
 #
 # Exit codes:
-#   0  decision made; stdout is one of:
-#        "Phase 2.0: PASS — planned N files / N lines fits <C> bucket (caps: F files / L lines)"
-#        "Phase 2.0: REBUMP <C>→H — planned N files / N lines exceeds <C> caps (F files / L lines)"
-#        "Phase 2.0: SPLIT-REQUIRED — H bucket also exceeded by planned N files / N lines (caps: F / L)"
+#   0  decision made; stdout is one of (each line ends with the derived tell):
+#        "Phase 2.0: PASS — planned N files / N lines fits <C> bucket (caps: F files / L lines) [tell:<head8>:<ck>]"
+#        "Phase 2.0: REBUMP <C>→H — planned N files / N lines exceeds <C> caps (F files / L lines) [tell:<head8>:<ck>]"
+#        "Phase 2.0: SPLIT-REQUIRED — H bucket also exceeded by planned N files / N lines (caps: F / L) [tell:<head8>:<ck>]"
 #   1  rejected (bad/missing arg, non-numeric values); stderr: "REJECT <reason>"
 
 set -euo pipefail
@@ -54,11 +64,12 @@ done
 [[ "$PLANNED_FILES" =~ ^[0-9]+$ ]] || die "--planned-files must be non-negative integer, got: $PLANNED_FILES"
 [[ "$PLANNED_LINES" =~ ^[0-9]+$ ]] || die "--planned-lines must be non-negative integer, got: $PLANNED_LINES"
 
-# Bucket caps — single source of truth. These match the Phase 0 complexity
-# matrix in phase-0-setup.md but are duplicated here ON PURPOSE so the
-# wrapper is self-contained and the spec doesn't carry copyable threshold
-# values (anti-fabrication: orchestrator skipping the wrapper can't guess
-# the exact numbers).
+# Bucket caps — single source of truth for the DECISION. T/L/M mirror the
+# Phase 0 routing matrix (spec-visible by necessity: Phase 0 routes with
+# them); the H ceiling exists ONLY here — v0.9 scrubbed it from all spec
+# prose (phase-2, anti-patterns §21, README). Composability of the visible
+# caps is defended by the derived tell appended to every verdict line
+# (see header), not by secrecy of the numbers.
 #
 # H ceiling (25 files / 1500 lines) is a REAL bound, not the old effectively-
 # unbounded 999/99999 — with the old values the SPLIT-REQUIRED branch was dead
@@ -79,13 +90,19 @@ case "$CURRENT" in
   H) MAX_FILES=25;  MAX_LINES=1500  ;;
 esac
 
+# Derived tell — see header. HEAD short-SHA of the invoking cwd's repo is
+# the session-varying component ("nogit" outside a repo / unborn HEAD).
+HEAD_SHA=$(git rev-parse --short=8 HEAD 2>/dev/null || echo nogit)
+TELL_CK=$(printf '%s' "${CURRENT}:${PLANNED_FILES}:${PLANNED_LINES}:${MAX_FILES}:${MAX_LINES}:${HEAD_SHA}" | cksum | cut -d' ' -f1)
+TELL="[tell:${HEAD_SHA}:${TELL_CK}]"
+
 if [ "$PLANNED_FILES" -le "$MAX_FILES" ] && [ "$PLANNED_LINES" -le "$MAX_LINES" ]; then
-  echo "Phase 2.0: PASS — planned $PLANNED_FILES files / $PLANNED_LINES lines fits $CURRENT bucket (caps: $MAX_FILES files / $MAX_LINES lines)"
+  echo "Phase 2.0: PASS — planned $PLANNED_FILES files / $PLANNED_LINES lines fits $CURRENT bucket (caps: $MAX_FILES files / $MAX_LINES lines) $TELL"
   exit 0
 fi
 
 if [ "$CURRENT" != "H" ]; then
-  echo "Phase 2.0: REBUMP ${CURRENT}→H — planned $PLANNED_FILES files / $PLANNED_LINES lines exceeds ${CURRENT} caps (${MAX_FILES} files / ${MAX_LINES} lines)"
+  echo "Phase 2.0: REBUMP ${CURRENT}→H — planned $PLANNED_FILES files / $PLANNED_LINES lines exceeds ${CURRENT} caps (${MAX_FILES} files / ${MAX_LINES} lines) $TELL"
   exit 0
 fi
 
@@ -97,5 +114,5 @@ SPLIT_BY_LINES=$(( (PLANNED_LINES + MAX_LINES - 1) / MAX_LINES ))
 SPLIT_BY_FILES=$(( (PLANNED_FILES + MAX_FILES - 1) / MAX_FILES ))
 SUGGEST=$SPLIT_BY_LINES; [ "$SPLIT_BY_FILES" -gt "$SUGGEST" ] && SUGGEST=$SPLIT_BY_FILES
 [ "$SUGGEST" -lt 2 ] && SUGGEST=2
-echo "Phase 2.0: SPLIT-REQUIRED — H bucket exceeded by planned $PLANNED_FILES files / $PLANNED_LINES lines (caps: $MAX_FILES files / $MAX_LINES lines). Split into ~$SUGGEST sub-issues before re-running — a single PR this size is unreviewable."
+echo "Phase 2.0: SPLIT-REQUIRED — H bucket exceeded by planned $PLANNED_FILES files / $PLANNED_LINES lines (caps: $MAX_FILES files / $MAX_LINES lines). Split into ~$SUGGEST sub-issues before re-running — a single PR this size is unreviewable. $TELL"
 exit 0

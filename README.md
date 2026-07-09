@@ -221,7 +221,7 @@ Three Claude models with hard role boundaries — see [`skills/do/SKILL.md`](ski
 | Specialist parallel review | `specialists.{backend_plan, frontend_audit, ...}` | Phase 2 (High) and Phase 3.6 spawn 2-3 reviewers in parallel |
 | CI wait + auto-merge | `ci.required: true` + `auto_merge.enabled: true` | Phase 4 waits for green CI, then `gh pr merge --auto` |
 | Slack/Teams notifications | `notifications.slack_webhook` | Phase 1/4 broadcast task lifecycle |
-| PR-size ceiling | `pr_size.{warn_lines, block_lines, ...}` (on by default: warn 800/20, block 2000/50) | Phase 3.0 `pr-size-check` wrapper: ≤warn PASS, >warn WARN (note in PR), >block **BLOCK** (hard halt → draft PR + `blocked` label, exit 3). Plan-time sibling: Phase 2.0 `plan-size-check` H ceiling 25 files / 1500 lines → SPLIT-REQUIRED |
+| PR-size ceiling | `pr_size.{warn_lines, block_lines, ...}` (on by default: warn 800/20, block 2000/50) | Phase 3.0 `pr-size-check` wrapper: ≤warn PASS, >warn WARN (note in PR), >block **BLOCK** (hard halt → draft PR + `blocked` label, exit 3). Plan-time sibling: Phase 2.0 `plan-size-check` H ceiling (values owned by the wrapper, scrubbed from spec prose) → SPLIT-REQUIRED |
 | Metrics for skill iteration | `metrics.log_path` + `tier: 1` | JSONL append per task; self-review calibration tracked in 3 dimensions (`calibration` + de-confounded `calibration_defect` / `calibration_size`); gate keys normalized to a controlled vocabulary |
 
 See [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md) for the full schema and [`examples/`](examples/) for ready-to-adapt configs.
@@ -382,7 +382,7 @@ The v0.7 cycle (folded below) acted on a 225→254-entry telemetry audit (May 14
 
 - **Controlled vocabulary for `gates`** — `metrics-append` normalizes gate keys (alias map → 19 canonical names) and statuses (→ `pass|warn|fail|block|skipped`), preserving unknown task-specific keys with a `noncanon=` tell. The audit found ~110 distinct keys for ~19 real gates; the daily report now buckets cleanly (60 → 19 + a few one-offs).
 - **Split self-review calibration** — `calibration_defect` (real code defect missed) vs `calibration_size` (diff-size prediction), de-confounding the FP rate that 39% of historical "false positives" were just `pr_size=warn` noise inflating.
-- **PR-size ceiling** — `plan-size-check` H bucket got a real 25-file / 1500-line ceiling (was effectively unbounded), so `SPLIT-REQUIRED` fires at plan time. New `pr-size-check` wrapper owns the Phase 3.0 PASS/WARN/**BLOCK** decision and **exits 3 on block** (hard halt → draft PR + `blocked`), so the 8 historical >2000-line PRs that shipped as `warn` would now block.
+- **PR-size ceiling** — `plan-size-check` H bucket got a real file/line ceiling (was effectively unbounded; the values live only in the wrapper), so `SPLIT-REQUIRED` fires at plan time. New `pr-size-check` wrapper owns the Phase 3.0 PASS/WARN/**BLOCK** decision and **exits 3 on block** (hard halt → draft PR + `blocked`), so the 8 historical >2000-line PRs that shipped as `warn` would now block.
 
 Builds on the v0.6 foundation of **structurally-coupled** wrappers — every side-effect announce token comes from wrapper stdout with an anti-fabrication tell, so skipping a check surfaces as a visible bug rather than a silent skip. v0.7 adds `pr-size-check` to that family (`metrics-append`, `config-init`, `config-ensure-metrics`, `check-caveman`, `plan-size-check`, `pr-size-check`).
 

@@ -15,6 +15,12 @@
 #     PLAN-SIZE: files=<N> lines=<M> complexity=<T|L|M|H>
 # No marker (any other Task spawn — Explore, code-review, etc.) → allow, no-op.
 #
+# The wrapper's verdict line ends with a derived "[tell:<head8>:<ck>]" suffix
+# (v0.9, audit #6) — injected verbatim below, never stripped or reformatted.
+# NOTE: the hook runs the wrapper from its own cwd, so its tell's <head8> may
+# legitimately differ from the orchestrator's §2.0 run (main repo vs worktree);
+# no consumer compares the two — each is independently recomputable.
+#
 # Self-locating: finds the sibling plan-size-check via $0, so it works under any
 # skill name / install path. jq or wrapper missing → silent allow (degradation).
 

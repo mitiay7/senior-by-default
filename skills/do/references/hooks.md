@@ -41,7 +41,7 @@ Surfaces the Phase 2.0 plan-size verdict when the implementer sub-agent is spawn
 PLAN-SIZE: files=<N> lines=<M> complexity=<T|L|M|H>
 ```
 
-No marker (an `Explore` / `code-review` / any non-/do `Task`) → allow, no-op. With the marker it runs `plan-size-check` and injects the PASS / REBUMP / SPLIT-REQUIRED line into the model's context (impossible to not-see), reinforcing anti-pattern [§19d](anti-patterns.md). Resolution of REBUMP/SPLIT-REQUIRED stays the orchestrator's job per [`phase-2-implementation.md`](phase-2-implementation.md) §2.0.
+No marker (an `Explore` / `code-review` / any non-/do `Task`) → allow, no-op. With the marker it runs `plan-size-check` and injects the PASS / REBUMP / SPLIT-REQUIRED line into the model's context (impossible to not-see), reinforcing anti-pattern [§19d](anti-patterns.md). The injected verdict carries the wrapper's derived `[tell:<head8>:<ck>]` suffix and is passed through verbatim — the hook's tell may differ from the orchestrator's §2.0 run (different cwd → different HEAD), which is fine: each is independently recomputable, no consumer compares them. Resolution of REBUMP/SPLIT-REQUIRED stays the orchestrator's job per [`phase-2-implementation.md`](phase-2-implementation.md) §2.0.
 
 ### `do-secret-scan-pretooluse.sh` — PreToolUse hook on `Bash` (the irreversible-skip backstop)
 

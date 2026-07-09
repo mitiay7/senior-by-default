@@ -86,6 +86,7 @@ Locale: `config.issue_locale`. Below shows `en` as canonical; for `ru` use the R
 
 ### Implementation Hints
 {files, patterns, edge cases, gotchas. Pass references to similar modules from Phase 0 if relevant.}
+**Est deltas (MANDATORY)** — one line per planned file: `{path} — ~{N} lines`. The Phase 2.0 plan-size gate reads `PLANNED_FILES` (line count of this list) and `PLANNED_LINES_EST` (sum of the `~N`) from THIS list — numbers grounded in the issue artifact, never invented at gate time ([phase-2 §2.0](phase-2-implementation.md)). For High, §2.0 replays on the approved plan's deltas after plan approval.
 Prefer existing patterns and the smallest implementation that satisfies the criteria. Do not add new abstractions, config, flags, dependencies, or broad refactors unless they are listed in Requirements.
 {If concurrent-edit warning fired in Phase 0 Step 5: "⚠ Recent activity on these files: {file: author@sha list}. Coordinate or rebase frequently."}
 

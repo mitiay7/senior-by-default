@@ -68,13 +68,21 @@ For High complexity with specialist plan-review (Step 2 below), also announce ea
   - {subagent_type_3}
 ```
 
-## 2.0 Plan-size sanity check (BEFORE Sonnet launch)
+## 2.0 Plan-size sanity check (wrapper-owned; pre-spawn every tier, again post-plan-approval for H)
 
-Before constructing the Sonnet prompt, re-verify the Phase 0 routing against the now-concrete plan (the approved plan has actual file list + behaviour scope, more precise than Phase 0's pre-exploration estimate). **Invoke the wrapper verbatim** (do not paraphrase, do not "decide mentally", do not skip — see [anti-patterns §19d](anti-patterns.md)):
+Re-verify the Phase 0 routing against grounded numbers before spending implementer time. **Invoke the wrapper verbatim** (do not paraphrase, do not "decide mentally", do not skip — see [anti-patterns §19d](anti-patterns.md)).
+
+**Input provenance — per tier.** `PLANNED_FILES` / `PLANNED_LINES_EST` MUST be read out of a written artifact. Inventing them at gate time makes the gate tautological — Phase 0 chose the bucket from the same guess, so the wrapper faithfully PASSes fabricated small estimates (production audit: 0 rebumps across 32 entries while 16 of 21 M-tasks shipped over the M caps):
+
+| Tier | Artifact §2.0 reads the numbers from | When §2.0 runs |
+|---|---|---|
+| T/L | the inline task description (format below): `PLANNED_FILES` = count of `**Files**` bullets, `PLANNED_LINES_EST` = the `**EstLines**` sum. Write the description FIRST, then gate it. | once, pre-spawn |
+| M | the Phase 1 issue's `### Implementation Hints` → mandatory `Est deltas` list ([phase-1-issue.md](phase-1-issue.md)): count of listed files + sum of their `~N lines` deltas. Copy from the issue, not from memory. | once, pre-spawn |
+| H | pre-spawn: the same Phase 1 `Est deltas` list as M. Post-approval: the approved plan's per-file line deltas. | **twice** — the approved plan does not exist until Step 2 completes (the old "run pre-spawn on the approved plan" instruction was time-inverted), so re-run after plan approval and BEFORE Step 3 implementation. The second run is where SPLIT-REQUIRED has real data. |
 
 ```bash
-PLANNED_FILES=<count of files in the approved plan>
-PLANNED_LINES_EST=<sum of per-file estimated line deltas in the approved plan>
+PLANNED_FILES=<file count read from the tier's artifact (table above)>
+PLANNED_LINES_EST=<sum of the per-file line deltas from the same artifact>
 
 # Canonical do-scripts resolver — identical line in every wrapper block; each
 # block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
@@ -96,21 +104,30 @@ case "$PLAN_SIZE_LINE" in
     # Plan fits the current bucket. Proceed to Sonnet spawn unchanged.
     ;;
   "Phase 2.0: REBUMP"*)
-    # Plan exceeds. Bump to H, re-run Phase 1 (issue update) + Phase 2
-    # specialist plan-review with new tier.
     COMPLEXITY_REBUMPED_FROM="$COMPLEXITY"
     COMPLEXITY="H"
-    # Replay Phase 1.5 / Phase 2 specialist plan-review at the new tier.
+    # Re-enter at the new tier — the path differs by whether an issue exists:
+    # - M: issue EXISTS — update it (Phase 1 edit_body: labels + a re-bump
+    #   note), then run the H flow (Step 2 specialist plan review) before
+    #   any implementation.
+    # - T/L: NO issue exists (T/L skip Phase 1 per SKILL.md) — run Phase 1
+    #   NOW to CREATE the issue at the new tier, then continue with the H
+    #   flow. "Re-run Phase 1 (issue update)" was a dead-end here; issue
+    #   CREATION is the defined path.
     ;;
   "Phase 2.0: SPLIT-REQUIRED"*)
-    # Already H and the plan STILL exceeds the H ceiling (25 files / 1500 lines).
+    # Already H and the plan STILL exceeds the H ceiling. The ceiling is
+    # owned by plan-size-check — its values live ONLY in the wrapper; spec
+    # prose deliberately carries no copy (see anti-fabrication tell below).
     # Single PR is the wrong shape — STOP before spending Sonnet time. The wrapper
     # line includes a suggested sub-issue count ("Split into ~N sub-issues").
-    # 1. Do NOT spawn Sonnet. 2. Present the wrapper line + suggested split to the
-    # user. 3. Offer to file the N sub-issues (each a scoped slice of the plan).
-    # 4. Re-run /do per sub-issue. This branch now actually fires (v0.7.0 gave H a
-    # real 25/1500 ceiling — it was 999/99999 before, so SPLIT-REQUIRED was dead code
-    # and 3000–4000-line H PRs sailed through to an unreviewable Phase 3).
+    # 1. Do NOT spawn Sonnet (on H's post-approval run: do NOT proceed to Step 3).
+    # 2. Present the wrapper line + suggested split to the user. 3. Offer to file
+    # the N sub-issues (each a scoped slice of the plan). 4. Re-run /do per
+    # sub-issue. This branch fires on real data on H's post-approval run (v0.7.0
+    # gave H a real ceiling — previously effectively unbounded, so SPLIT-REQUIRED
+    # was dead code and 3000–4000-line H PRs sailed through to an unreviewable
+    # Phase 3).
     ;;
   "Phase 2.0: GATE ERROR"*)
     # FAIL CLOSED — the wrapper is unreachable, which means the install is
@@ -122,15 +139,15 @@ case "$PLAN_SIZE_LINE" in
 esac
 ```
 
-**Why a wrapper, not inline bash** (v2 fix): the v1 inline-bash approach was systematically bypassed. Production audit of 32 post-v0.6.0 entries showed **0 re-bumps** despite **16 of 21 M-tasks shipping >600 lines or >8 files**. Same fabrication-skip pattern as caveman v1/v2 — orchestrator reads the threshold values + case-statement in the spec, decides "looks fine to me", produces no output, no signal in metrics that the check was skipped. The wrapper hides the thresholds and prints a structured decision line that the spec's case-statement must parse. If `$PLAN_SIZE_LINE` is empty (wrapper didn't run) the case-statement matches nothing — visible bug.
+**Why a wrapper, not inline bash** (v2 fix): the v1 inline-bash approach was systematically bypassed. Production audit of 32 post-v0.6.0 entries showed **0 re-bumps** despite **16 of 21 M-tasks shipping over the M-bucket caps**. Same fabrication-skip pattern as caveman v1/v2 — orchestrator reads the threshold values + case-statement in the spec, decides "looks fine to me", produces no output, no signal in metrics that the check was skipped. The wrapper owns the thresholds and prints a structured decision line that the spec's case-statement must parse. If `$PLAN_SIZE_LINE` is empty (wrapper didn't run) the case-statement matches nothing — visible bug.
 
-**Anti-fabrication tell**: the wrapper output includes the actual computed cap values for the bucket (e.g. `caps: 8 files / 600 lines` for M). The spec contains no copy-pasteable form of either the cap values or the full output template — orchestrator skipping the wrapper can't reproduce the exact values without running it.
+**Anti-fabrication tell** (v0.9 — the old tell was void: it echoed cap values that were composable from the Phase 0 routing matrix): every wrapper verdict line ends with a derived `[tell:<head8>:<ck>]` suffix — `<head8>` is the repo's current HEAD short-SHA (session-varying), `<ck>` a checksum the wrapper computes over the inputs, its internal caps, and `<head8>`. A line composed from spec text carries no valid tell: the spec contains neither the H ceiling nor the checksum formula, and HEAD changes per session, so offline composition is detectably wrong. Quote verdict lines verbatim wherever they surface (announce, self-review, issue comments) — never strip or "clean up" the suffix; audits recompute it from the printed line.
 
-**Optional harness backstop** (tier 3, opt-in): if the user enabled the hooks in [`hooks.md`](hooks.md), the `PreToolUse` plan-size hook re-runs `plan-size-check` at the moment the implementer `Task` is spawned and injects the verdict — provided the spawn prompt carries the `PLAN-SIZE: files={PLANNED_FILES} lines={PLANNED_LINES_EST} complexity={COMPLEXITY}` marker (emit it in the prompt's Flags section, below). Harmless without the hook; surfaces the size verdict at the runtime level when present.
+**Optional harness backstop** (tier 3, opt-in): if the user enabled the hooks in [`hooks.md`](hooks.md), the `PreToolUse` plan-size hook re-runs `plan-size-check` at the moment the implementer `Task` is spawned and injects the verdict — provided the spawn prompt carries the `PLAN-SIZE: files={PLANNED_FILES} lines={PLANNED_LINES_EST} complexity={COMPLEXITY}` marker (emit it in the prompt's Flags section, below). The marker carries the numbers from the **most recent** §2.0 run — for H's Step 3 (implementation) relaunch that is the post-approval plan numbers, not the Phase 1 estimates. Harmless without the hook; surfaces the size verdict at the runtime level when present.
 
 **Observability**: on the REBUMP branch, set `$COMPLEXITY_REBUMPED_FROM` (shown above) so the Phase 4.13 metrics-append invocation can pass `--complexity-rebumped-from "$COMPLEXITY_REBUMPED_FROM"`. Recorded in JSONL as `complexity_rebumped_from` (omitted when no re-bump). Downstream metric: count of T/L/M re-bumps over time tells whether Phase 0 routing accuracy is improving or whether plan-size is the load-bearing layer.
 
-**Why this exists** (production audit 2026-05-21): 6 of 13 false-positive cases were tasks routed Medium that shipped 942–1859 lines. Phase 0 file-count estimate was 4–8 (correct M bucket bound) but actual files came out 9–31 and lines 942–1859 — both H-bucket territory. Without this check the orchestrator runs Sonnet for an hour, Phase 3 catches `pr_size=warn` after the fact, and ~$/task is wasted on review-cycles instead of being prevented at plan time. The check is cheap (numeric comparison) and runs once per spawn.
+**Why this exists** (production audit 2026-05-21): 6 of 13 false-positive cases were tasks routed Medium that shipped 942–1859 lines. Phase 0 file-count estimate was 4–8 (correct M bucket bound) but actual files came out 9–31 and lines 942–1859 — both H-bucket territory. Without this check the orchestrator runs Sonnet for an hour, Phase 3 catches `pr_size=warn` after the fact, and ~$/task is wasted on review-cycles instead of being prevented at plan time. The check is cheap (numeric comparison) and runs once per spawn (twice total for H — see the input-provenance table).
 
 **Don't skip when "close enough"** — `9 files / 700 lines` on M is the exact boundary where audits showed FP rates climb. Bump even on the boundary; H workflow (specialist plan review + ADR) is the right tooling for that scale.
 
@@ -243,7 +260,23 @@ After implementation + tests + build pass, run a self-review pass:
 3. Re-read your own diff (`git diff main...HEAD`) and check against the rules above + the issue's "Out of Scope" section.
 4. Confirm simplicity + surgical scope: no speculative abstraction/config/deps/flags, no unrelated formatting/comment churn, every changed line traceable to the task.
 5. Flag anything you skipped or deferred. Don't hide it.
-6. **Run `git diff main...HEAD --stat`** and check actual diff size against the bucket the task was routed for. If `complexity=M` and diff > 600 lines OR > 8 files (M-bucket caps per Phase 0 matrix), set `size_assessment: exceeds` (below) and DO NOT claim `ready` — return `claimed_status: deferred` with a note like "diff size {N} lines / {F} files exceeds M-bucket caps; recommend re-route to H for specialist review". Same for L exceeding 200 lines / 3 files. Calibration rationale: production audit of 32 post-v0.6.0 entries showed M-tasks shipping 1000–2000 lines self-claiming `ready`, with Phase 3 catching `pr_size=warn` after the fact — wasted cycles. Phase 2.0 plan-size check (above) should have caught this at plan-time; this is a second-layer check using the ACTUAL diff post-write. If both layers miss, that's a calibration-data-point for skill iteration.
+6. **Size check on the ACTUAL diff — wrapper-owned, run verbatim.** The bucket caps are deliberately NOT printed in this prompt (copyable caps get eyeballed, and eyeballed checks get skipped) — the same `plan-size-check` wrapper that gated the plan judges the real diff:
+
+   ```bash
+   # Canonical do-scripts resolver — identical line as everywhere else in this skill.
+   DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+   STAT="$(git diff --shortstat main...HEAD)"
+   ACTUAL_FILES="$(printf '%s' "$STAT" | grep -oE '[0-9]+ file' | grep -oE '[0-9]+')"; ACTUAL_FILES="${ACTUAL_FILES:-0}"
+   ACTUAL_LINES="$(printf '%s' "$STAT" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+')"; ACTUAL_LINES="${ACTUAL_LINES:-0}"
+   if [ -x "$DO_SCRIPTS/plan-size-check" ]; then
+     ACTUAL_SIZE_LINE="$("$DO_SCRIPTS/plan-size-check" --current-complexity {COMPLEXITY} --planned-files "$ACTUAL_FILES" --planned-lines "$ACTUAL_LINES")"
+   else
+     ACTUAL_SIZE_LINE="Phase 2.5: SIZE CHECK UNAVAILABLE — plan-size-check not found; report as-is, do NOT eyeball caps"
+   fi
+   echo "$ACTUAL_SIZE_LINE"
+   ```
+
+   (`{COMPLEXITY}` is the literal tier letter, interpolated by the orchestrator — same value as the `PLAN-SIZE:` marker in Flags.) Dispatch on the line: `PASS` → `size_assessment: fits`. `REBUMP`/`SPLIT-REQUIRED` → `size_assessment: exceeds` AND claimed_status MUST be `deferred`, not `ready` — quote `$ACTUAL_SIZE_LINE` verbatim (its `[tell:…]` suffix included) under `Deferred (size)` with a re-route hint. `SIZE CHECK UNAVAILABLE` → `size_assessment: unknown`, quote the line. Calibration rationale: production audit of 32 post-v0.6.0 entries showed M-tasks shipping far over bucket while self-claiming `ready`, with Phase 3 catching `pr_size=warn` after the fact — wasted cycles. Phase 2.0 plan-size check is layer 1 (plan-time estimates); this is layer 2 on the ACTUAL post-write diff, judged by the same wrapper so the two layers cannot drift. If both layers miss, that's a calibration-data-point for skill iteration.
 7. **Declare an overall claimed_status** — one of:
    - `ready` — all acceptance criteria implemented + verified, no known issues, AND diff fits the routed bucket
    - `deferred` — implemented + tested, but explicitly deferred something (with note) OR diff exceeds routed bucket caps (re-route hint above)
@@ -254,7 +287,7 @@ Output the self-review as a section in your completion report (this section is p
 ```
 ## Self-Review
 claimed_status: ready
-size_assessment: fits          # fits | exceeds — does the ACTUAL diff fit the routed bucket caps? (drives calibration_size)
+size_assessment: fits          # fits | exceeds | unknown — from the step-6 wrapper verdict on the ACTUAL diff, never eyeballed (drives calibration_size)
 Acceptance Criterion 1: ✓ {file.go:42}
 Acceptance Criterion 2: ✓ {file.go:80}, test {file_test.go: TestX}
 Tests for new fns:
@@ -263,7 +296,7 @@ Tests for new fns:
 Simplicity/surgical check: no speculative abstractions or drive-by edits; changed lines trace to task
 Out-of-scope check: no scope creep detected
 Deferred (code): {nothing | "concurrency in connection pool — flagged for reviewer"}
-Deferred (size): {nothing | "diff 1340 lines exceeds M-bucket 600 cap — recommend re-route to H"}
+Deferred (size): {nothing | the step-6 REBUMP/SPLIT-REQUIRED wrapper line quoted verbatim + " — recommend re-route to H"}
 Uncertain: {none | "..."}
 ```
 
@@ -275,9 +308,12 @@ The first line `claimed_status: <ready|deferred|uncertain>` is REQUIRED — Phas
 ## Low-task description format (when no issue exists)
 ```
 **Goal**: {one sentence from $ARGUMENTS}
-**Files**: {expected files to modify or create}
+**Files**: {expected files to modify or create — one bullet per file, each ending with an estimated line delta: `{path} — ~{N} lines`}
+**EstLines**: {sum of the per-file deltas above}
 **Acceptance**: {3-5 pass/fail criteria}
 ```
+
+`**EstLines**` and the per-file deltas are MANDATORY — write this block BEFORE running §2.0. The gate reads `PLANNED_FILES` (bullet count) and `PLANNED_LINES_EST` (the EstLines sum) from THIS block, so the numbers exist in a reviewable artifact instead of being invented at gate time (see §2.0 input provenance).
 
 ## Tasks the agent runs (in order)
 0. **Worktree already exists** (Opus pre-created it per "Worktree setup" above). Sub-Agent verifies `git rev-parse --abbrev-ref HEAD` matches the expected branch name. If mismatch → STOP, alert Opus (don't try to fix from inside).
@@ -311,7 +347,7 @@ Pick from `config.specialists.{backend_plan|frontend_plan}` based on scope:
 
 **If `config.specialists` not set**: fallback — Opus reviews the plan inline (no parallel agents). Note this in announcement.
 
-All specialists APPROVE → Step 3.
+All specialists APPROVE → **re-run §2.0 on the approved plan's per-file line deltas** (H's second, post-approval run — the first artifact with real per-file scope; SPLIT-REQUIRED here means split, not implement), then → Step 3.
 Max 3 iterations.
 
 **After 3 iterations without full approval**: Opus makes a binding decision, documents the rationale in an issue comment, proceeds to Step 3. The ADR records "decided over objections from {agent} re: {concern}" in the Alternatives section.
