@@ -1,0 +1,164 @@
+#!/bin/bash
+# branch-normalize — the ONLY supported way to produce the Phase 4.0 branch
+# name and enforce it. Wrapper script, not inline spec bash / model judgment,
+# for the same structural-coupling reason as secret-scan and plan-size-check
+# (anti-patterns §19 / §19j).
+#
+# Why: branch normalization was inline spec bash with a confirmed production
+# violation (v0.3.1): the orchestrator announced "Complete. Branch: $EXPECTED"
+# WITHOUT renaming — the worktree still sat on the harness auto-name
+# (claude/<adj>-<noun>-<hash>), breaking the i{N} traceability that links
+# commits, PRs, metrics entries, and tracker comments. Inline bash whose
+# output template is visible in the spec gets copy-pasted instead of run
+# (§19); this wrapper owns the whole decision and emits a runtime tell.
+#
+# What it owns (everything the spec prose used to hand-wave):
+#   - slug normalization: ASCII lowercased, hostile ASCII (whitespace, / \
+#     ~ ^ : ? * [ ] quotes ` $ ( ) ; & | ! # % + = < > @ { } , . _) squeezed
+#     to "-", Unicode letters PRESERVED (git-rules.md: never strip Unicode;
+#     git accepts multibyte branch names), capped at 40 chars, edge hyphens
+#     stripped (phase-1-issue.md slug rule, now executable)
+#   - config.naming template substitution: {N} and {slug} placeholders;
+#     defaults feat/{slug} (T/L) and feat/i{N}-{slug} (M/H)
+#   - collision suffixes -v2..-v9 against existing local branches, cap at
+#     -v9 → REJECT, ask user (git-rules.md §Branch collisions)
+#   - validity: final name must pass `git check-ref-format --branch`
+#   - the rename itself (`git branch -m`) + old remote-ref cleanup when the
+#     old branch had an upstream (previous inline-bash behavior, kept)
+#
+# Usage:
+#   branch-normalize -C <worktree> --complexity T|L|M|H --slug <raw-slug>
+#                    [--issue-number <N>] [--branch-template <tpl>]
+#                    [--no-remote-delete]
+#     -C <worktree>        repo/worktree whose current branch is normalized
+#     --complexity         routed tier; picks the default template
+#     --slug               raw slug (wrapper normalizes it — pass it dirty)
+#     --issue-number       {N} substitution; REQUIRED when template has {N}
+#     --branch-template    override from config.naming.{low|issue}.branch
+#     --no-remote-delete   skip deleting the old branch's remote ref
+#
+# Output (stdout, single verdict line — the anti-fabrication tell is
+# head=<sha8>, the repo's real HEAD at run time; session-varying, not
+# composable from spec text):
+#   Phase 4.0: BRANCH OK name=<name> head=<sha8>
+#   Phase 4.0: BRANCH RENAMED <old>→<new> head=<sha8> old_remote=<none|deleted(<ref>)|delete-failed(<ref>)>
+#
+# Exit codes:
+#   0  OK / RENAMED — branch now matches config.naming
+#   1  REJECT (bad args, not a repo, detached/unborn HEAD, empty slug after
+#      normalization, {N} template without --issue-number, invalid ref name,
+#      collision cap -v9 reached); stderr: "REJECT <reason>". Fail closed —
+#      do NOT push or open a PR on an unnormalized branch.
+#   2  GITFAIL (the rename itself failed); stderr: "GITFAIL <reason>"
+
+set -uo pipefail
+
+die()     { echo "REJECT $*" >&2; exit 1; }
+gitfail() { echo "GITFAIL $*" >&2; exit 2; }
+
+REPO_DIR=""
+COMPLEXITY=""
+SLUG_RAW=""
+ISSUE_NUM=""
+TEMPLATE=""
+NO_REMOTE_DELETE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -C)                [ $# -ge 2 ] || die "-C requires a directory"; REPO_DIR="$2"; shift 2 ;;
+    --complexity)      [ $# -ge 2 ] || die "--complexity requires a value"; COMPLEXITY="$2"; shift 2 ;;
+    --slug)            [ $# -ge 2 ] || die "--slug requires a value"; SLUG_RAW="$2"; shift 2 ;;
+    --issue-number)    [ $# -ge 2 ] || die "--issue-number requires a value"; ISSUE_NUM="$2"; shift 2 ;;
+    --branch-template) [ $# -ge 2 ] || die "--branch-template requires a value"; TEMPLATE="$2"; shift 2 ;;
+    --no-remote-delete) NO_REMOTE_DELETE=1; shift ;;
+    -h|--help) sed -n '2,58p' "$0"; exit 0 ;;
+    *) die "unknown flag: $1" ;;
+  esac
+done
+
+[ -n "$REPO_DIR" ]   || die "-C <worktree> required"
+[ -n "$COMPLEXITY" ] || die "--complexity required (T|L|M|H)"
+[ -n "$SLUG_RAW" ]   || die "--slug required (raw is fine — the wrapper normalizes)"
+case "$COMPLEXITY" in T|L|M|H) ;; *) die "--complexity must be T|L|M|H, got: $COMPLEXITY" ;; esac
+
+git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository: $REPO_DIR"
+HEAD8=$(git -C "$REPO_DIR" rev-parse --short=8 HEAD 2>/dev/null) || die "unborn HEAD (no commits) — nothing to normalize yet"
+ACTUAL=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null) || die "cannot resolve current branch"
+[ "$ACTUAL" != "HEAD" ] || die "detached HEAD — check out a branch first, then re-run"
+
+# --- Slug normalization (phase-1-issue.md rule, executable form) -------------
+# LC_ALL=C keeps tr/sed byte-deterministic: ASCII case folding + hostile-ASCII
+# squeeze only; multibyte (Unicode) bytes pass through untouched. [:alnum:]
+# is deliberately NOT used — under LC_ALL=C it would eat every non-ASCII
+# letter, and git-rules.md forbids stripping Unicode.
+# shellcheck disable=SC2016  # the $ in the tr set is a literal byte, not an expansion
+SLUG=$(printf '%s' "$SLUG_RAW" \
+  | LC_ALL=C tr '[:upper:]' '[:lower:]' \
+  | LC_ALL=C tr -s '[:space:][:cntrl:]/\\~^:?*[]"'\''`$();&|!#%+=<>@{},._' '-' \
+  | LC_ALL=C sed -E 's/-+/-/g; s/^-+//; s/-+$//')
+[ -n "$SLUG" ] || die "slug is empty after normalization (got: $SLUG_RAW)"
+if [ "${#SLUG}" -gt 40 ]; then
+  SLUG="${SLUG:0:40}"
+  SLUG="${SLUG%-}"
+fi
+
+# --- Template substitution ----------------------------------------------------
+if [ -z "$TEMPLATE" ]; then
+  case "$COMPLEXITY" in
+    T|L) TEMPLATE="feat/{slug}" ;;          # config.naming.low.branch default
+    M|H) TEMPLATE="feat/i{N}-{slug}" ;;     # config.naming.issue.branch default
+  esac
+fi
+case "$TEMPLATE" in
+  *"{N}"*)
+    [ -n "$ISSUE_NUM" ] || die "template '$TEMPLATE' contains {N} but --issue-number was not given — M/H branches need the issue id for i{N} traceability" ;;
+esac
+EXPECTED="${TEMPLATE//\{N\}/$ISSUE_NUM}"
+EXPECTED="${EXPECTED//\{slug\}/$SLUG}"
+
+git check-ref-format --branch "$EXPECTED" >/dev/null 2>&1 \
+  || die "computed name is not a valid branch name: $EXPECTED (template '$TEMPLATE', slug '$SLUG')"
+
+# --- Collision suffixes (git-rules.md §Branch collisions) ---------------------
+if [ "$EXPECTED" != "$ACTUAL" ] && git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$EXPECTED"; then
+  BASE_NAME="$EXPECTED"
+  RESOLVED=""
+  v=2
+  while [ "$v" -le 9 ]; do
+    if ! git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BASE_NAME-v$v"; then
+      EXPECTED="$BASE_NAME-v$v"
+      RESOLVED=1
+      break
+    fi
+    v=$((v + 1))
+  done
+  [ -n "$RESOLVED" ] || die "branch $BASE_NAME and suffixes -v2..-v9 all exist — cap reached, ask the user (git-rules.md §Branch collisions)"
+fi
+
+# --- Already correct ----------------------------------------------------------
+if [ "$ACTUAL" = "$EXPECTED" ]; then
+  echo "Phase 4.0: BRANCH OK name=$EXPECTED head=$HEAD8"
+  exit 0
+fi
+
+# --- Rename (+ old remote-ref cleanup, previous inline-bash behavior) ---------
+OLD_UPSTREAM=$(git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null || true)
+
+git -C "$REPO_DIR" branch -m "$EXPECTED" 2>/dev/null \
+  || gitfail "git branch -m $ACTUAL $EXPECTED failed"
+
+OLD_REMOTE="none"
+if [ -n "$OLD_UPSTREAM" ] && [ "$NO_REMOTE_DELETE" -ne 1 ]; then
+  REMOTE_NAME="${OLD_UPSTREAM%%/*}"
+  REMOTE_BRANCH="${OLD_UPSTREAM#*/}"
+  if git -C "$REPO_DIR" push "$REMOTE_NAME" --delete "$REMOTE_BRANCH" >/dev/null 2>&1; then
+    OLD_REMOTE="deleted($OLD_UPSTREAM)"
+  else
+    OLD_REMOTE="delete-failed($OLD_UPSTREAM)"
+  fi
+fi
+
+# ${..} braces are load-bearing: bash 3.2 mis-parses a bare $VAR immediately
+# followed by a multibyte char (the →) as part of the variable name.
+echo "Phase 4.0: BRANCH RENAMED ${ACTUAL}→${EXPECTED} head=$HEAD8 old_remote=$OLD_REMOTE"
+exit 0

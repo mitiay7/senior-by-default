@@ -70,7 +70,7 @@ Walk CWD upward for `.claude/do/config.json`. First match wins. Defaults defined
   # have no such path, and the literal killed the whole wrapper tier there
   # (audit finding #2). Probe order: plugin root → ~/.claude/skills/<any
   # name>/scripts → plugin cache → default manual clone dir. metrics-append
-  # is the sentinel file; all six wrappers ship in the same scripts/ dir.
+  # is the sentinel file; every wrapper ships in the same scripts/ dir.
   DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
 
   if [ -x "$DO_SCRIPTS/config-ensure-metrics" ]; then
@@ -82,10 +82,12 @@ Walk CWD upward for `.claude/do/config.json`. First match wins. Defaults defined
   fi
   echo "$METRICS_CONFIG_LINE"
   ```
-  Wrapper is idempotent — 3 outcomes, all via wrapper stdout, never composed:
-  - `Metrics config: ALREADY CONFIGURED in <path>` — `metrics` block exists, no change
-  - `Metrics config: EXPLICIT OPT-OUT in <path> (metrics: null)` — user set null explicitly, respected
-  - `Metrics config: AUTO-ADDED to <path>` — key was absent, default tier-1 preset patched in, `_meta` stamped with `last_patched_by`/`last_patched_at`/`last_patch_added`. May carry a wrapper-emitted ` (schema gate SKIPPED — jsonschema unavailable)` suffix — the file was written unvalidated (python3-jsonschema missing). Keep the suffix verbatim in the announce; it's the wrapper's tell, not a §19c annotation.
+  Wrapper is idempotent — 3 outcomes, all via wrapper stdout, never composed. The spec deliberately does NOT print their full form (state tokens only — the lines live in the wrapper, same pattern as `check-caveman` below; see [anti-patterns §19i](anti-patterns.md)):
+  - **ALREADY CONFIGURED state** — `metrics` block exists, no change.
+  - **EXPLICIT OPT-OUT state** — user set `metrics: null` explicitly, respected, no write.
+  - **AUTO-ADDED state** — key was absent, default tier-1 preset patched in, `_meta` stamped with `last_patched_by`/`last_patched_at`/`last_patch_added`. May carry a wrapper-emitted ` (schema gate SKIPPED — jsonschema unavailable)` suffix — the file was written unvalidated (python3-jsonschema missing). Keep the suffix verbatim in the announce; it's the wrapper's tell, not a §19c annotation.
+
+  **The anti-fabrication tell**: every outcome line ends with a runtime fingerprint suffix — `(cfg=<cksum> …)` computed over the canonicalized JSON of the config file the wrapper actually read or wrote (AUTO-ADDED adds `patched_at=<runtime clock>`, ALREADY CONFIGURED adds the actual `keys=` count). None of that is composable from spec text; auditors recompute the crc from the file on disk (`jq -cS . <path> | cksum`). A `Metrics config: ALREADY CONFIGURED / EXPLICIT OPT-OUT / AUTO-ADDED` line WITHOUT the `(cfg=…)` suffix was composed by hand — re-run the wrapper, paste actual output. The spec-side fallback forms (`PATCH SKIPPED`, `SKIPPED (--no-metrics)`, the Step 4 mirrors) remain copyable on purpose: they are honest degraded/derived states, not plausible-looking successes.
 
   If `--no-metrics` was passed → skip this block, set `METRICS_CONFIG_LINE="Metrics config: SKIPPED (--no-metrics)"`.
 - **None** → set `CONFIG_FOUND=0`. Use in-memory defaults for now. **Auto-init is DEFERRED to the end of Step 4** (needs stack-detect output to populate `_meta.auto_generated_for_stack`). `CONFIG_LINE` and `METRICS_CONFIG_LINE` will be set there.
@@ -320,7 +322,7 @@ After all 6 steps pass:
   Started: {STARTED_AT — the exact value echoed by the preflight task-clock capture, verbatim; Phase 4.11 reads the same value back from $CLOCK_FILE and cross-checks against this line}
   {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
   {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose}
-  {$METRICS_CONFIG_LINE — output of Step 1 config-ensure-metrics or Step 4 mirror (ALREADY CONFIGURED | EXPLICIT OPT-OUT | AUTO-ADDED | INCLUDED in auto-init | SKIPPED | PATCH SKIPPED | N/A), verbatim — DO NOT compose}
+  {$METRICS_CONFIG_LINE — output of Step 1 config-ensure-metrics or Step 4 mirror (ALREADY CONFIGURED | EXPLICIT OPT-OUT | AUTO-ADDED | INCLUDED in auto-init | SKIPPED | PATCH SKIPPED | N/A), verbatim — DO NOT compose; the three wrapper forms carry a runtime `(cfg=…)` fingerprint (§19i) — a wrapper form without it was composed by hand}
   WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
   [+ if assumptions recorded → "Assumptions: {short list}"]
   [+ if simpler path chosen → "Tradeoff: {short explanation of narrower implementation}"]

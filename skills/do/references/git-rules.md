@@ -35,16 +35,11 @@ Both styles are first-class. Pick by config.
 
 Override the templates in `config.naming` if your team uses different conventions. See [`config-schema.md`](config-schema.md) under `naming`.
 
-### Branch verification at Phase 4.1
+### Branch normalization at Phase 4.0 — executed by the `branch-normalize` wrapper, NOT by inline bash
 
-Before the final commit & push, verify:
-```bash
-ACTUAL=$(git -C "$WORKTREE" rev-parse --abbrev-ref HEAD)
-EXPECTED="<computed from config.naming with N + slug substituted>"
-[ "$ACTUAL" = "$EXPECTED" ] || git -C "$WORKTREE" branch -m "$ACTUAL" "$EXPECTED"
-```
+Before the final commit & push, Phase 4.0 runs the **`branch-normalize` wrapper** (`scripts/branch-normalize`, invoked per [`phase-4-finalize.md`](phase-4-finalize.md) §4.0). It owns the whole decision: slug kebab-normalization (Unicode letters preserved — see §$ARGUMENTS sanitization below; hostile ASCII → `-`; 40-char cap), `config.naming` template substitution, `-v2..-v9` collision suffixes (§Branch collisions), `git check-ref-format` validity, the rename, and old-remote-ref cleanup. Its verdict line carries the `head=<sha8>` anti-fabrication tell (anti-pattern [§19j](anti-patterns.md)). Computing an `EXPECTED` name in spec bash — or announcing a branch name that never appeared in a wrapper verdict — is the v0.3.1 production violation this wrapper exists to prevent.
 
-If a rename was needed, this is a SIGNAL that worktree creation didn't follow spec — log it in metrics and fix the next-task creation flow.
+A `BRANCH RENAMED` verdict is a SIGNAL that worktree creation didn't follow spec — recorded as `branch_rename` in the metrics entry's `--notes`; fix the next-task creation flow.
 
 ## Forbidden operations (no exceptions)
 - Never commit to `main` / `master`

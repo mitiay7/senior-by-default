@@ -83,7 +83,7 @@ When a user message starts with `+++`, treat everything after `+++` as the argum
 <!-- senior-by-default:trigger:end -->
 ```
 
-> **Wrapper-path resolution — all install layouts get the full wrapper tier.** The eight tier-2 enforcement wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, `plan-size-check`, `pr-size-check`, `build-verify`, `secret-scan`, `metrics-append`) are located at runtime by a canonical resolver repeated in every spec bash block — probe order: `$CLAUDE_PLUGIN_ROOT` → `~/.claude/skills/<any name>/scripts` (default or renamed `SKILL_NAME`) → plugin cache → `~/.local/share/senior-by-default`. Plugin install, default symlink, and custom `SKILL_NAME` all resolve; there is no hardcoded `~/.claude/skills/do/` literal in the live spec. If no install is found the affected gate **fails closed** with an explicit `SKIPPED` / `GATE ERROR` token in the announce instead of silently degrading to prose-level enforcement. (Earlier versions hardcoded the default-name path — that limitation is fixed; see CHANGELOG.)
+> **Wrapper-path resolution — all install layouts get the full wrapper tier.** The nine tier-2 enforcement wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, `plan-size-check`, `pr-size-check`, `build-verify`, `secret-scan`, `branch-normalize`, `metrics-append`) are located at runtime by a canonical resolver repeated in every spec bash block — probe order: `$CLAUDE_PLUGIN_ROOT` → `~/.claude/skills/<any name>/scripts` (default or renamed `SKILL_NAME`) → plugin cache → `~/.local/share/senior-by-default`. Plugin install, default symlink, and custom `SKILL_NAME` all resolve; there is no hardcoded `~/.claude/skills/do/` literal in the live spec. If no install is found the affected gate **fails closed** with an explicit `SKIPPED` / `GATE ERROR` token in the announce instead of silently degrading to prose-level enforcement. (Earlier versions hardcoded the default-name path — that limitation is fixed; see CHANGELOG.)
 
 ### Manual — clone + symlink
 
@@ -138,8 +138,10 @@ The file is left **unstaged** — you review and commit when ready. Subsequent `
 Phase 0 Step 1 loads it via the same path. If the file exists but **doesn't have a `metrics` block**, the orchestrator patches the documented tier-1 preset in idempotently — `_meta` is stamped with `last_patched_by` / `last_patched_at` / `last_patch_added` for observability. Existing `metrics: {...}` is left alone; explicit `metrics: null` (opt-out) is respected. Announce:
 ```
 Config: LOADED /path/to/repo/.claude/do/config.json
-Metrics config: AUTO-ADDED to /path/.../config.json    # or ALREADY CONFIGURED / EXPLICIT OPT-OUT
+Metrics config: AUTO-ADDED to /path/.../config.json (cfg=<cksum> patched_at=<utc>)   # or ALREADY CONFIGURED / EXPLICIT OPT-OUT
 ```
+
+The `(cfg=…)` suffix is the wrapper's anti-fabrication tell — a checksum of the config file it actually read or wrote (recompute with `jq -cS . <path> | cksum`). A `Metrics config:` wrapper form without it was composed by hand (anti-patterns §19i).
 
 ### Opt-outs (advanced)
 
@@ -356,7 +358,7 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 **Phase 0 announce says "Specialists not available — falling back to Sonnet"** → That string isn't actually emitted by the skill; sub-agents say it when `Agent(subagent_type=<plugin>:<agent>)` fails because the plugin isn't installed. Check `config.specialists.*` against installed plugins (`claude plugin list`). Either install the missing plugin (see [Recommended Claude Code plugins](#recommended-claude-code-plugins-for-phase-3-specialist-review)) or remove the reference from your config — Opus inline review takes over per group.
 
-**Branch is `claude/funny-leakey-...` instead of `feat/i42-...`** → Phase 4.0 detects and renames automatically before PR creation; metrics record this as a Phase 2 spec violation. If it keeps happening, your Opus instance is using `Agent(isolation: "worktree")` — see anti-pattern 13 in [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md).
+**Branch is `claude/funny-leakey-...` instead of `feat/i42-...`** → Phase 4.0's `branch-normalize` wrapper detects and renames before PR creation (verdict line carries a `head=<sha>` tell; the final announce reads the branch back live from git); metrics record the rename as a Phase 2 spec violation. If it keeps happening, your Opus instance is using `Agent(isolation: "worktree")` — see anti-pattern 13 in [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md).
 
 **Metrics not appearing in `~/.claude/do/metrics/*.jsonl`** → Two cases. (a) `config.metrics.log_path` is unset — Phase 0 should now auto-add the block on first run; if it didn't, check the announce for `Metrics config: AUTO-ADDED` or `Metrics config: PATCH SKIPPED — <reason>`. (b) Block is set but Phase 4.11 silently skipped emission — the final announce MUST include `Metrics: <count> entries in <path> (pre=<n> gates=<n>)` (the `(pre=… gates=…)` suffix is the wrapper's tell carried into the announce). If it doesn't, that's a bug; file an issue with the announce text.
 

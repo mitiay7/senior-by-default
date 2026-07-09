@@ -131,7 +131,7 @@ case "$PLAN_SIZE_LINE" in
     ;;
   "Phase 2.0: GATE ERROR"*)
     # FAIL CLOSED — the wrapper is unreachable, which means the install is
-    # broken (all six wrappers ship in the same scripts/ dir). Do NOT spawn
+    # broken (every wrapper ships in the same scripts/ dir). Do NOT spawn
     # the implementer, do NOT eyeball the thresholds yourself (§19d — that is
     # the exact fabrication path the wrapper closed). Surface the line to the
     # user, STOP; fix = re-run install.sh or /plugin install, then retry.
@@ -225,7 +225,7 @@ PLAN-SIZE: files={PLANNED_FILES} lines={PLANNED_LINES_EST} complexity={COMPLEXIT
 
 These apply to **whoever is currently executing this skill flow** — whether you are the spawned agent doing everything yourself, or a parent orchestrator that spawned a sub-agent. There is no separate "Opus picks up after Sub-Agent reports" step in most real installs (the spawned agent typically runs the entire flow start-to-finish and returns). So if you are reading this prompt, **you** are responsible for Phase 4.0 + Phase 4.13 procedures.
 
-1. **Phase 4.0 (branch rename) MUST run BEFORE Phase 4.2 (PR open)**, not after. Verify your worktree's branch matches `config.naming.{low|issue}.branch`. If you're in a worktree with auto-named `claude/<adj>-<noun>-<hash>` (Claude Code harness pre-spawn) — RENAME UNCONDITIONALLY via `git branch -m`. The worktree PATH is fine to keep; the BRANCH must follow spec so PR title / commit `Ref:` / metrics `branch_rename` field / tracker comments all cross-reference via `i{N}`. **Pre-spawned worktree is NOT an excuse** — `git branch -m` works on pre-spawned worktrees just fine. [Anti-pattern §12](anti-patterns.md).
+1. **Phase 4.0 (branch rename) MUST run BEFORE Phase 4.2 (PR open)**, not after. The rename decision is owned by the `branch-normalize` wrapper (phase-4-finalize.md §4.0) — never inline `git branch -m` from memory of the naming rules. If you're in a worktree with auto-named `claude/<adj>-<noun>-<hash>` (Claude Code harness pre-spawn) — the wrapper RENAMES UNCONDITIONALLY. The worktree PATH is fine to keep; the BRANCH must follow spec so PR title / commit `Ref:` / metrics `branch_rename` note / tracker comments all cross-reference via `i{N}`. **Pre-spawned worktree is NOT an excuse** — the wrapper's `git branch -m` works on pre-spawned worktrees just fine. [Anti-patterns §12, §19j](anti-patterns.md).
 
 2. **Phase 4.13 (final announce) is a single bash procedure, structurally coupled with Phase 4.11 metrics emission** via shared `$METRICS_LINE` shell variable. Run the bash verbatim from [`phase-4-finalize.md`](phase-4-finalize.md) §4.13. You CANNOT produce the announce text without running the emit (variable doesn't exist otherwise). If your final user-visible message ends with PR-summary prose and no `Metrics: ...` line at the very end — you composed prose announce instead of running the bash flow. That's the bug. [Anti-pattern §19a](anti-patterns.md).
 

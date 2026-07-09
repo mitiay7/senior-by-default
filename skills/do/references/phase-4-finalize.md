@@ -6,34 +6,39 @@ On entering this phase, stamp the task clock (`phase_entered_at["4"]` — one-li
 
 > **Critical ordering**: Phase 4.0 (branch normalization) MUST run BEFORE 4.2 (PR creation). Final announce (4.13) is COUPLED to Phase 4.11 metrics emission via shared bash variables — you literally cannot emit the announce without first running the metrics-append command. See "Final announce" at the bottom of this file.
 
-## 4.0 Branch normalization — UNCONDITIONAL, BEFORE any push or PR
+## 4.0 Branch normalization — UNCONDITIONAL, BEFORE any push or PR — via the `branch-normalize` wrapper
 
-The very first step of Phase 4. **Runs before commit, push, or PR creation**, so the PR opens on the correct branch name from the start.
+The very first step of Phase 4. **Runs before commit, push, or PR creation**, so the PR opens on the correct branch name from the start. The decision is **wrapper-owned** (`branch-normalize`): slug kebab-normalization (ASCII lowercased, hostile characters → `-`, Unicode letters preserved, 40-char cap), `config.naming` template substitution, `-v2..-v9` collision suffixes ([git-rules.md](git-rules.md) §Branch collisions), the rename itself, and old-remote-ref cleanup are all internal to it. Do NOT compute an `EXPECTED` name in spec bash and do NOT announce a branch name you didn't get from wrapper stdout — this step was inline bash through v0.8.x with a confirmed production violation (v0.3.1: "Complete. Branch: feat/i…" announced while the worktree still sat on the harness auto-name). See [anti-patterns §19j](anti-patterns.md).
 
 ```bash
-ACTUAL=$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD)
+# Canonical do-scripts resolver — identical line in every wrapper block; each
+# block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
+DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
 
-# Compute EXPECTED from config.naming + N + slug
-if [ "$COMPLEXITY" = "L" ] || [ "$COMPLEXITY" = "T" ]; then
-  EXPECTED="feat/${SLUG}"             # config.naming.low.branch
+if [ -x "$DO_SCRIPTS/branch-normalize" ]; then
+  # --branch-template only when config.naming overrides the defaults
+  # (low: feat/{slug}; issue: feat/i{N}-{slug} — the wrapper knows both).
+  BRANCH_LINE="$("$DO_SCRIPTS/branch-normalize" -C "$WORKTREE_PATH" \
+      --complexity "$COMPLEXITY" --slug "$SLUG" \
+      ${N:+--issue-number "$N"} \
+      ${BRANCH_TEMPLATE:+--branch-template "$BRANCH_TEMPLATE"} 2>&1)" \
+    || BRANCH_LINE="Phase 4.0: NORMALIZE FAILED — $BRANCH_LINE"
 else
-  EXPECTED="feat/i${N}-${SLUG}"       # config.naming.issue.branch
+  # FAIL CLOSED — explicit token, never an empty variable.
+  BRANCH_LINE="Phase 4.0: NORMALIZE SKIPPED — do-scripts resolver found no install (probed plugin root, ~/.claude/skills/*/scripts, plugin cache, ~/.local/share/senior-by-default)"
 fi
-
-if [ "$ACTUAL" != "$EXPECTED" ]; then
-  echo "⚠ Branch mismatch: actual=$ACTUAL expected=$EXPECTED — renaming"
-  git -C "$WORKTREE_PATH" branch -m "$EXPECTED"
-  # If old branch was already pushed, delete its remote ref:
-  git -C "$WORKTREE_PATH" push origin --delete "$ACTUAL" 2>/dev/null || true
-  RENAMED_BRANCH=true
-fi
+echo "$BRANCH_LINE"
 ```
+
+Dispatch on the wrapper's verdict line (the `head=<sha8>` — the repo's real HEAD at run time — is the §19j anti-fabrication tell; carry the line verbatim, never retype):
+
+- `Phase 4.0: BRANCH OK name=<name> head=<sha8>` — already normalized; proceed.
+- `Phase 4.0: BRANCH RENAMED <old>→<new> head=<sha8> old_remote=<…>` — renamed. Record `branch_rename: <old>→<new>` in the §4.11 `--notes` — the signal that upstream automation pre-spawned a worktree without following the worktree-setup spec. `old_remote=delete-failed(…)` → tell the user the stale remote ref needs manual cleanup; do not retry the delete yourself.
+- `Phase 4.0: NORMALIZE FAILED — REJECT <reason>` / `NORMALIZE SKIPPED` → **fail closed**: do NOT proceed to 4.1/4.2 on an unnormalized branch. Collision cap (`-v9`) → ask the user; missing install → re-run install.sh / `/plugin install`, then re-run 4.0.
 
 ### Pre-spawned worktree is NOT an excuse
 
-If you find yourself inside a worktree that was created by Claude Code's harness (`Agent(isolation: "worktree")`) with an auto-named branch like `claude/<adj>-<noun>-<hash>`, the rename is STILL UNCONDITIONAL. Do not rationalize "the worktree was pre-spawned, so I'll keep the auto-name" — the worktree path is fine to keep, but the BRANCH must follow `config.naming` so that downstream PR titles, commit `Ref:` lines, metrics entries, and tracker comments all cross-reference correctly via the `i{N}` token.
-
-If you found yourself in this situation, also record `"branch_rename"` in the metrics entry below — this is the signal that some upstream automation pre-spawned a worktree without following the skill's worktree-setup spec. Useful diagnostic.
+If you find yourself inside a worktree that was created by Claude Code's harness (`Agent(isolation: "worktree")`) with an auto-named branch like `claude/<adj>-<noun>-<hash>`, the rename is STILL UNCONDITIONAL — run the wrapper anyway. Do not rationalize "the worktree was pre-spawned, so I'll keep the auto-name" — the worktree path is fine to keep, but the BRANCH must follow `config.naming` so that downstream PR titles, commit `Ref:` lines, metrics entries, and tracker comments all cross-reference correctly via the `i{N}` token. The BRANCH RENAMED verdict + `--notes` record (above) is the diagnostic trail.
 
 ## 4.1 Commit
 Final commit message:
@@ -59,7 +64,9 @@ if [ ! -x "$DO_SCRIPTS/secret-scan" ]; then
   printf '%s\n' "$SECRET_SCAN_OUT" "PUSH WITHHELD — do not push until the wrapper resolves."
 elif SECRET_SCAN_OUT="$("$DO_SCRIPTS/secret-scan" -C "$WORKTREE_PATH" 2>&1)"; then
   printf '%s\n' "$SECRET_SCAN_OUT"                    # SECRETS PASS + range tell
-  git -C "$WORKTREE_PATH" push -u origin "$EXPECTED"
+  # HEAD = the current branch, i.e. the §4.0-normalized name (fresh shell:
+  # no $EXPECTED variable survives from 4.0; the branch itself is the carrier).
+  git -C "$WORKTREE_PATH" push -u origin HEAD
 else
   printf '%s\n' "$SECRET_SCAN_OUT"                    # SECRETS BLOCK + finding list, or REJECT
   echo "PUSH WITHHELD — secret-scan did not pass. NEVER push around this gate (separate block, other cwd, --no-verify)."
@@ -273,14 +280,21 @@ and the on-disk shape is guaranteed uniform across runs.
 The wrapper enforces:
 - Required fields present (`--ref`, `--complexity`, `--implementer`, `--outcome`,
   `--started-at`, `--ended-at`, `--files-changed`, `--lines-added`, `--lines-deleted`,
-  `--sr-performed`, `--sr-claimed`, `--sr-calibration`)
-- Enum validation on complexity / implementer / outcome / self-review fields
+  `--sr-performed`, `--sr-claimed`)
+- Enum validation on complexity / implementer / outcome / self-review fields, plus
+  outcome↔blocked_reason consistency (`blocked` requires a reason; a reason with any
+  other outcome REJECTs)
 - JSON validity of `--gates-json` / `--phase-durations-json` payloads
 - **Gate-vocabulary normalization** of `--gates-json` keys + statuses (see "Gate
   vocabulary" below) — known aliases renamed to canonical, unknown keys preserved+flagged
+- **Calibration computation** — all three self-review calibration verdicts are computed
+  INSIDE the wrapper from the raw inputs (see "Self-review calibration logic" below);
+  hand-passed `--sr-calibration*` flags are optional cross-checks that REJECT on
+  contradiction
 - Atomic append with pre/post line-count delta verification
 - Exit code 0 on success (stdout:
-  `OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|->`), 1 on schema
+  `OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|-> cal=<c>/<d>/<s>`
+  — `cal=` echoes the wrapper-computed calibration verdicts), 1 on schema
   reject (stderr: `REJECT <reason>`), 2 on I/O failure (stderr: `IOFAIL <reason>`)
 
 #### Gate vocabulary (controlled, OPEN set)
@@ -339,6 +353,8 @@ Do NOT invent values like `pr_opened`, `success`, `shipped`, `merged_pending`, `
 
 **Computing `$ORCHESTRATOR`**: pass the running model identifier from session metadata (same source as Co-Authored-By footer per [SKILL.md notation](../SKILL.md#notation)). If unknown, omit the flag — wrapper defaults to `"opus"` (spec mandates orchestrator=opus regardless of model version).
 
+**Computing `$SR_SIZE_ASSESSMENT`**: the machine-readable `size_assessment:` value from the Phase 2.5 self-review block (`fits|exceeds|unknown`), verbatim — never inferred from prose. Self-review absent → omit the flag (wrapper defaults `n_a`). Do NOT compute `--sr-calibration*` values — the wrapper computes all three calibration verdicts from the raw inputs (see "Self-review calibration logic" below).
+
 **Computing `$STARTED_AT` / `$ENDED_AT` / `$PHASE_DURATIONS_JSON`**: Phase 0 preflight already captured `STARTED_AT` into the task clock file ([`phase-0-setup.md`](phase-0-setup.md) §Task clock) — **read it back from disk; NEVER re-run `date` for it here**. A spec bash block runs in a fresh shell, so no variable from Phase 0 survives to this one; the clock file is the carrier. The wrapper hard-rejects `--ended-at < --started-at` (production audit: 36% of pre-fix entries had negative cycle times from back-computing started_at at the end). The §4.13 procedure below performs the read-back as its first lines:
 
 - `$STARTED_AT` — `jq -r '.started_at'` from the clock file. Cross-check against the Phase 0 announce `Started:` line: a mismatch means a parallel same-CWD session overwrote the clock — prefer the announce value (it is the genuine echo of this task's capture). Clock file missing AND no announce line → the capture was skipped; that is a Phase 0 spec violation to note in `--notes`, not a license to back-compute.
@@ -364,9 +380,7 @@ announce coupling depends on capturing its stdout into `$METRICS_LINE`):
   --lines-deleted    "$LINES_DELETED" \
   --sr-performed     "$SR_PERFORMED" \
   --sr-claimed       "$SR_CLAIMED_STATUS" \
-  --sr-calibration   "$SR_CALIBRATION" \
-  --sr-calibration-defect "$SR_CALIBRATION_DEFECT" \         # split dim (defaults n_a)
-  --sr-calibration-size   "$SR_CALIBRATION_SIZE" \           # split dim (defaults n_a)
+  --sr-size-assessment "$SR_SIZE_ASSESSMENT" \                # raw Phase 2.5 size_assessment value (fits|exceeds|unknown; omit → n_a)
   [--gates-json              "$GATES_JSON" \                  # optional, defaults {}
    --phase-durations-json    "$PHASE_DURATIONS_JSON" \         # optional, defaults {}
    --review-cycles           "$REVIEW_CYCLES" \                # optional, defaults 0
@@ -387,15 +401,32 @@ scans logs for schema-invalid entries and surfaces them in a dedicated section. 
 a sub-agent bypasses the wrapper, the bypass shows up in the next morning's report rather
 than silently polluting the analysis. Don't rely on this — it's a tripwire, not a fix.
 
-### Self-review calibration logic
-After Phase 3 completes, before Step 2. Compute the **legacy combined** value (kept for
-back-compat) AND the **two split dimensions** that de-confound it.
+### Self-review calibration logic — COMPUTED INSIDE `metrics-append`, not by you
+
+The three calibration verdicts (`calibration`, `calibration_defect`, `calibration_size`)
+are a pure function of data the wrapper already receives: `--sr-performed`,
+`--sr-claimed`, the normalized `--gates-json`, `--specialist-iterations-json` blockers,
+`--sr-size-assessment` (the raw Phase 2.5 `size_assessment:` value), and
+`--complexity-rebumped-from`. **The wrapper computes them** — do NOT compute and pass
+them yourself. Pre-fix they were orchestrator-computed with enum-only validation: a
+trust-based verdict on the single highest-signal data point of the telemetry loop
+(audit finding #14c). The `--sr-calibration*` flags still exist as optional
+cross-checks — if passed, a value contradicting the wrapper's computation REJECTs the
+entry (hand-math drift becomes a visible bug); omitted is the normal path. The OK line
+echoes the computed verdicts (`cal=<c>/<d>/<s>`).
+
+Your job is only to deliver the RAW inputs faithfully: the gates as Phase 3 recorded
+them, `--sr-claimed` from the Phase 2.5 `claimed_status:` line, and
+`--sr-size-assessment` from the Phase 2.5 `size_assessment:` line.
+
+**Reference — the function the wrapper implements** (documentation of wrapper
+internals, not an instruction to hand-execute):
 
 ```
 phase3_failed_gates = [g for g in gates if gates[g].status in ("fail", "block")]
 sonnet_claimed = sonnet_self_review.claimed_status        # "ready" | "deferred" | "uncertain"
 
-# --- Legacy combined calibration (--sr-calibration; unchanged) ---
+# --- Legacy combined calibration (`calibration`; unchanged semantics) ---
 if not self_review.performed:
     calibration = "skipped"
 elif sonnet_claimed == "ready" and phase3_failed_gates:
@@ -409,6 +440,9 @@ else:
     calibration = "accurate"   # flagged issues, Phase 3 confirmed
 ```
 
+(`miscalibrated` remains caller-provided free text via `--sr-miscalibrated-json` — it
+is descriptive, not a verdict.)
+
 **Why split** (production audit, 254 entries): of 44 `false_positive` entries, **17 (39%)
 fired ONLY `pr_size=warn`** — Sonnet's code was fine, it just under-predicted diff size.
 Counting those as "self-review missed something" inflates the FP rate and conflates two
@@ -420,7 +454,7 @@ records each separately so future audits read the right signal.
 specialist_blocked = any(c.blockers for c in specialist_iterations)
 defect_found = [g for g in phase3_failed_gates if g != "pr_size"] or specialist_blocked
 
-# --- calibration_defect (--sr-calibration-defect): code-correctness dimension ---
+# --- calibration_defect: code-correctness dimension ---
 if not self_review.performed:                       calibration_defect = "skipped"
 elif sonnet_claimed == "ready" and defect_found:    calibration_defect = "false_positive"
 elif sonnet_claimed == "ready":                     calibration_defect = "accurate"
@@ -428,13 +462,12 @@ elif sonnet_claimed in ("deferred","uncertain") and not defect_found:
                                                     calibration_defect = "false_negative"
 else:                                               calibration_defect = "accurate"
 
-# --- calibration_size (--sr-calibration-size): diff-size-prediction dimension ---
+# --- calibration_size: diff-size-prediction dimension ---
 pr_size_fired      = gates.get("pr_size", {}).get("status") in ("warn", "block")
-# Sonnet "flagged size" = its self-review emitted `size_assessment: exceeds` (Phase 2.5
-# step #6/#8), OR a Phase 2.0 plan-size rebump happened this task (complexity_rebumped_from
-# is set). The machine-readable `size_assessment` line is the primary signal — don't guess
-# from prose.
-sonnet_flagged_size = (sonnet_self_review.size_assessment == "exceeds") \
+# Sonnet "flagged size" = --sr-size-assessment == "exceeds" (the Phase 2.5 machine-readable
+# line — don't guess from prose), OR a Phase 2.0 plan-size rebump happened this task
+# (--complexity-rebumped-from is set).
+sonnet_flagged_size = (sr_size_assessment == "exceeds") \
                       or (COMPLEXITY_REBUMPED_FROM != "")
 
 if not self_review.performed:                       calibration_size = "skipped"
@@ -445,9 +478,7 @@ elif sonnet_flagged_size and (not pr_size_fired):   calibration_size = "false_ne
 else:                                               calibration_size = "accurate"
 ```
 
-Pass all three via `--sr-calibration`, `--sr-calibration-defect`, `--sr-calibration-size`
-in §4.13. The split dimensions default to `n_a` if omitted (back-compat), but you SHOULD
-compute and pass them — `calibration_defect` is now the **highest-signal data point** for
+Why this matters downstream: `calibration_defect` is the **highest-signal data point** for
 skill iteration (the de-confounded FP rate: defect-FP trending up → self-review prompt too
 lax; defect-FN up → Sonnet over-flagging), while `calibration_size` tells whether Phase 0/2.0
 routing predicts diff size well (size-FP up → routing under-estimates; the P0 PR-size ceiling
@@ -516,9 +547,7 @@ elif [ -n "$LOG_PATH" ]; then
         --lines-deleted    "$LINES_DELETED" \
         --sr-performed     "$SR_PERFORMED" \
         --sr-claimed       "$SR_CLAIMED_STATUS" \
-        --sr-calibration   "$SR_CALIBRATION" \
-        ${SR_CALIBRATION_DEFECT:+--sr-calibration-defect "$SR_CALIBRATION_DEFECT"} \
-        ${SR_CALIBRATION_SIZE:+--sr-calibration-size "$SR_CALIBRATION_SIZE"} \
+        ${SR_SIZE_ASSESSMENT:+--sr-size-assessment "$SR_SIZE_ASSESSMENT"} \
         ${TITLE:+--title              "$TITLE"} \
         ${SCOPE:+--scope              "$SCOPE"} \
         ${NOTES:+--notes              "$NOTES"} \
@@ -554,12 +583,19 @@ fi
 [ -n "$CONTEXT_DOC_UPDATED" ] && CTX_LINE="Context: $CONTEXT_DOC_PATH §$SECTIONS updated."
 [ -n "$ADR_NUMBER"          ] && ADR_LINE="ADR-${ADR_NUMBER} committed."
 
+# Branch name — LIVE read-back from git, never a remembered/composed value
+# (fresh shell: no variable survives from §4.0; the branch itself is the
+# carrier). MUST equal the name in the §4.0 $BRANCH_LINE verdict — a mismatch
+# means the rename never happened or was reverted (the v0.3.1 violation, §19j):
+# STOP and re-run 4.0 before announcing.
+BRANCH_NAME="$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD)"
+
 # Models line — orchestrator from frontmatter (opus), implementer from Phase 0 complexity routing,
 # specialists from Phase 2 plan-review / Phase 3.6 audit roster (or "none")
 MODELS_LINE="Models: orchestrator=${ORCHESTRATOR_MODEL:-opus}, implementer=${IMPLEMENTER_MODEL:-sonnet}, specialists=[${SPECIALISTS_LIST:-none}]"
 
 cat <<EOF
-Complete. Branch: $EXPECTED. PR: ${PR_URL:--}. CI: ${CI_STATUS:-skipped}. Auto-merge: ${AUTO_MERGE_STATUS:-off}.
+Complete. Branch: $BRANCH_NAME. PR: ${PR_URL:--}. CI: ${CI_STATUS:-skipped}. Auto-merge: ${AUTO_MERGE_STATUS:-off}.
 ${CTX_LINE:+$CTX_LINE
 }${ADR_LINE:+$ADR_LINE
 }${MODELS_LINE}.
@@ -582,7 +618,7 @@ The wrapper file (`skills/do/scripts/metrics-append`) lives in the skill and shi
 ### What "broke the procedure" looks like
 
 - Final assistant message ends with PR summary, no `Metrics:` line at the very end → you skipped the bash procedure
-- `Metrics:` line says `APPEND FAILED — REJECT <reason>` → the wrapper rejected your input. The reason is explicit (missing required arg, bad enum, malformed JSON payload). Fix the offending value and re-run the emit. Most common: forgot `--sr-performed/--sr-claimed/--sr-calibration` from Phase 2.5.
+- `Metrics:` line says `APPEND FAILED — REJECT <reason>` → the wrapper rejected your input. The reason is explicit (missing required arg, bad enum, malformed JSON payload, calibration contradiction). Fix the offending value and re-run the emit. Most common: forgot `--sr-performed/--sr-claimed` from Phase 2.5. A calibration-contradiction REJECT means your hand-passed `--sr-calibration*` value disagrees with the wrapper's computation — drop the flag (the wrapper computes the verdicts), never adjust inputs to force yours through.
 - `Metrics:` line says `APPEND FAILED — IOFAIL <reason>` → file write or count-delta check failed. Diagnose disk/lock/permission.
 - `Metrics:` line is any OTHER form — `Metrics: skipped — <reason>`, a count without the `(pre=… gates=…)` tell, prose — → no bash path above emits it; you composed it by hand. The Stop hook (when enabled) blocks unrecognized forms outright (the legal set is CLOSED) and cross-checks recognized ones: tell consistency (`pre`+1 = count) plus log freshness (last entry's ref in the announce, or mtime ≤ 30 min). A tell-less count is tolerated by the hook only for pre-tell installs — produced from THIS spec it means the flow wasn't run.
 - Announce uses different format than above (free prose) → you composed text instead of running the bash flow

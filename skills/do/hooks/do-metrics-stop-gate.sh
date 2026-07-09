@@ -14,7 +14,7 @@
 # (`Complete. Branch:` or `Models: orchestrator=`). Normal Q&A, other skills, and
 # non-/do work never match → never blocked. A turn that QUOTES the §4.13 spec
 # (docs work on the skill itself) carries UNEXPANDED placeholders
-# (`$EXPECTED`, `${METRICS_LINE}`, …) and is also a no-op — a real announce
+# (`$BRANCH_NAME`, `${METRICS_LINE}`, …) and is also a no-op — a real announce
 # ships expanded values only. This placeholder guard is deliberately narrower
 # than a cwd-based self-repo guard, which would also disable the backstop for
 # genuine /do runs on this repo.
@@ -77,7 +77,10 @@ printf '%s\n' "$MSG" | grep -qE '^(Complete\. Branch:|Models: orchestrator=)' ||
 
 # Template-quoting guard (false-positive fix): a message carrying unexpanded
 # §4.13 variables is quoting/editing the spec, not announcing a finalize.
-printf '%s' "$MSG" | grep -qE '\$(\{)?(METRICS_LINE|METRICS_RESULT|POST_COUNT|EXPECTED|ORCHESTRATOR_MODEL)' && exit 0
+# BRANCH_NAME/BRANCH_LINE cover the current spec; EXPECTED covers pre-§19j
+# spec quotes (kept — dropping it would re-enable the false positive on
+# docs work against older checkouts).
+printf '%s' "$MSG" | grep -qE '\$(\{)?(METRICS_LINE|METRICS_RESULT|POST_COUNT|EXPECTED|BRANCH_NAME|BRANCH_LINE|ORCHESTRATOR_MODEL)' && exit 0
 
 METRICS_LINE=$(printf '%s\n' "$MSG" | grep -E '^Metrics:' | tail -1)
 

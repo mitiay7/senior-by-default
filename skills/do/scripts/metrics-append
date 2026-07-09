@@ -17,13 +17,23 @@
 #     --ref i42 --complexity M --implementer sonnet --outcome merged \
 #     --started-at 2026-05-15T08:00:00Z --ended-at 2026-05-15T08:30:00Z \
 #     --files-changed 3 --lines-added 42 --lines-deleted 7 \
-#     --sr-performed true --sr-claimed ready --sr-calibration accurate \
-#     [--sr-calibration-defect accurate --sr-calibration-size false_positive]
-#                                 # optional SPLIT of calibration into two de-confounded
-#                                 # dimensions (enum: accurate|false_positive|false_negative|
-#                                 # skipped|n_a; default n_a = not computed → use legacy
-#                                 # `calibration`). defect = real code defect missed?;
-#                                 # size = diff-size-only miss? See phase-4-finalize.md §4.11.
+#     --sr-performed true --sr-claimed ready \
+#     [--sr-size-assessment fits|exceeds|unknown|n_a]
+#                                 # the RAW Phase 2.5 `size_assessment:` line value
+#                                 # (machine-readable implementer signal; default n_a)
+#     [--sr-calibration accurate] [--sr-calibration-defect accurate]
+#     [--sr-calibration-size false_positive]
+#                                 # OPTIONAL since the calibration verdicts are now
+#                                 # COMPUTED INSIDE THIS WRAPPER — a pure function of
+#                                 # --sr-performed/--sr-claimed, the normalized
+#                                 # --gates-json, --specialist-iterations-json blockers,
+#                                 # --sr-size-assessment, and --complexity-rebumped-from
+#                                 # (formula: phase-4-finalize.md §4.11 "Calibration
+#                                 # logic"). Pass them ONLY to cross-check hand math:
+#                                 # a value contradicting the computed one REJECTs
+#                                 # (fabricated/drifted calibration is a visible bug,
+#                                 # not a silent skew). defect = real code defect
+#                                 # missed?; size = diff-size-only miss?
 #     [--orchestrator opus-<version>]  # default: "opus" alias; pass the running model id from
 #                                      # session metadata. Never hardcode a version (it rots at
 #                                      # the next model release); omit to keep the "opus" alias.
@@ -63,8 +73,11 @@
 #
 # Exit codes:
 #   0   appended successfully; stdout:
-#         "OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|->"
-#   1   rejected (missing/invalid arg or schema-gate failed); stderr: "REJECT <reason>"
+#         "OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|-> cal=<c>/<d>/<s>"
+#       (cal= echoes the three WRAPPER-COMPUTED calibration verdicts —
+#       legacy/defect/size — part of the anti-fabrication tell)
+#   1   rejected (missing/invalid arg, calibration contradiction, or
+#       schema-gate failed); stderr: "REJECT <reason>"
 #   2   I/O failure (couldn't write to log, file lock, etc.)
 
 set -euo pipefail
@@ -86,12 +99,18 @@ SPECIALIST_ITERATIONS_JSON='[]'
 SR_MISCALIBRATED_JSON='[]'
 ORCHESTRATOR="opus"   # spec mandates orchestrator=opus; caller MAY pass running model id e.g. opus-<version> (never hardcode)
 COMPLEXITY_REBUMPED_FROM=""   # optional: T|L|M if Phase 2.0 plan-size check re-routed; "" if no rebump
-# Self-review calibration SPLIT dimensions (optional; default n_a = not computed by
-# this caller — fall back to the legacy combined `calibration` field). The legacy
-# `calibration` conflates "missed a real defect" with "didn't predict diff size";
-# the split de-confounds them. See phase-4-finalize.md §4.11 "Calibration logic".
-SR_CALIBRATION_DEFECT="n_a"   # real code defect Sonnet missed? (non-pr_size gate fail/block or specialist blocker)
-SR_CALIBRATION_SIZE="n_a"     # diff-size-only miss? (pr_size warn/block as the sole concern)
+SR_SIZE_ASSESSMENT="n_a"      # raw Phase 2.5 `size_assessment:` value (fits|exceeds|unknown|n_a)
+# Self-review calibration verdicts: COMPUTED by this wrapper (see the
+# "Calibration computation" block below — pure function of the raw inputs,
+# formula documented in phase-4-finalize.md §4.11). The three flags are
+# OPTIONAL cross-checks only: empty = wrapper computes; non-empty = must
+# match the computed value or the entry REJECTs (hand-math drift is a
+# visible bug). Origin: pre-fix these were orchestrator-computed with
+# enum-only validation — fabricatable trust-based values on the highest-
+# signal data point (audit finding #14c).
+SR_CALIBRATION=""             # legacy combined dimension
+SR_CALIBRATION_DEFECT=""      # real code defect Sonnet missed? (non-pr_size gate fail/block or specialist blocker)
+SR_CALIBRATION_SIZE=""        # diff-size-only miss? (pr_size warn/block as the sole concern)
 
 # --- Required (no defaults; verified after parse) ---
 LOG_PATH=""
@@ -106,7 +125,6 @@ LINES_ADDED=""
 LINES_DELETED=""
 SR_PERFORMED=""
 SR_CLAIMED=""
-SR_CALIBRATION=""
 
 # --- Parse args (long-options only; unknown = reject) ---
 while [ $# -gt 0 ]; do
@@ -123,6 +141,7 @@ while [ $# -gt 0 ]; do
     --lines-deleted)             LINES_DELETED="$2";             shift 2 ;;
     --sr-performed)              SR_PERFORMED="$2";              shift 2 ;;
     --sr-claimed)                SR_CLAIMED="$2";                shift 2 ;;
+    --sr-size-assessment)        SR_SIZE_ASSESSMENT="$2";        shift 2 ;;
     --sr-calibration)            SR_CALIBRATION="$2";            shift 2 ;;
     --sr-calibration-defect)     SR_CALIBRATION_DEFECT="$2";     shift 2 ;;
     --sr-calibration-size)       SR_CALIBRATION_SIZE="$2";       shift 2 ;;
@@ -140,7 +159,7 @@ while [ $# -gt 0 ]; do
     --orchestrator)              ORCHESTRATOR="$2";              shift 2 ;;
     --complexity-rebumped-from)  COMPLEXITY_REBUMPED_FROM="$2";  shift 2 ;;
     -h|--help)
-      sed -n '4,60p' "$0"
+      sed -n '4,81p' "$0"
       exit 0
       ;;
     *) die "unknown arg: $1" ;;
@@ -160,7 +179,6 @@ done
 [ -n "$LINES_DELETED" ]  || die "--lines-deleted required (int)"
 [ -n "$SR_PERFORMED" ]   || die "--sr-performed required (true|false)"
 [ -n "$SR_CLAIMED" ]     || die "--sr-claimed required (ready|deferred|uncertain|n/a)"
-[ -n "$SR_CALIBRATION" ] || die "--sr-calibration required (accurate|false_positive|false_negative|skipped)"
 
 # --- Enum / type validation (fail-fast, before jq) ---
 [[ "$COMPLEXITY"     =~ ^[TLMH]$ ]]                                              || die "--complexity must be T|L|M|H, got: $COMPLEXITY"
@@ -168,9 +186,19 @@ done
 [[ "$OUTCOME"        =~ ^(merged|ready_for_review|blocked)$ ]]                   || die "--outcome must be merged|ready_for_review|blocked, got: $OUTCOME  (production audit found 16 distinct values for what should be 3; canonical mapping: PR merged via auto-merge or manually → 'merged'; PR opened, awaiting review → 'ready_for_review'; Phase 3 escalation (3 cycles unresolved) → 'blocked')"
 [[ "$SR_PERFORMED"   =~ ^(true|false)$ ]]                                        || die "--sr-performed must be true|false, got: $SR_PERFORMED"
 [[ "$SR_CLAIMED"     =~ ^(ready|deferred|uncertain|n/a)$ ]]                      || die "--sr-claimed invalid, got: $SR_CLAIMED"
-[[ "$SR_CALIBRATION" =~ ^(accurate|false_positive|false_negative|skipped)$ ]]    || die "--sr-calibration invalid, got: $SR_CALIBRATION"
-[[ "$SR_CALIBRATION_DEFECT" =~ ^(accurate|false_positive|false_negative|skipped|n_a)$ ]] || die "--sr-calibration-defect must be accurate|false_positive|false_negative|skipped|n_a, got: $SR_CALIBRATION_DEFECT"
-[[ "$SR_CALIBRATION_SIZE"   =~ ^(accurate|false_positive|false_negative|skipped|n_a)$ ]] || die "--sr-calibration-size must be accurate|false_positive|false_negative|skipped|n_a, got: $SR_CALIBRATION_SIZE"
+[[ "$SR_SIZE_ASSESSMENT" =~ ^(fits|exceeds|unknown|n_a)$ ]]                      || die "--sr-size-assessment must be fits|exceeds|unknown|n_a (the raw Phase 2.5 size_assessment value), got: $SR_SIZE_ASSESSMENT"
+# The three calibration flags are optional cross-checks (wrapper computes the
+# verdicts below); "n_a" on the split dims = legacy "not computed by caller",
+# treated as omitted.
+[ -z "$SR_CALIBRATION" ] \
+  || [[ "$SR_CALIBRATION" =~ ^(accurate|false_positive|false_negative|skipped)$ ]] \
+  || die "--sr-calibration invalid, got: $SR_CALIBRATION"
+[ -z "$SR_CALIBRATION_DEFECT" ] \
+  || [[ "$SR_CALIBRATION_DEFECT" =~ ^(accurate|false_positive|false_negative|skipped|n_a)$ ]] \
+  || die "--sr-calibration-defect must be accurate|false_positive|false_negative|skipped|n_a, got: $SR_CALIBRATION_DEFECT"
+[ -z "$SR_CALIBRATION_SIZE" ] \
+  || [[ "$SR_CALIBRATION_SIZE" =~ ^(accurate|false_positive|false_negative|skipped|n_a)$ ]] \
+  || die "--sr-calibration-size must be accurate|false_positive|false_negative|skipped|n_a, got: $SR_CALIBRATION_SIZE"
 [[ "$AUTO_MERGE"     =~ ^(true|false)$ ]]                                        || die "--auto-merge must be true|false, got: $AUTO_MERGE"
 [[ "$FILES_CHANGED"  =~ ^[0-9]+$ ]]                                              || die "--files-changed must be int, got: $FILES_CHANGED"
 [[ "$LINES_ADDED"    =~ ^[0-9]+$ ]]                                              || die "--lines-added must be int, got: $LINES_ADDED"
@@ -183,6 +211,16 @@ if [ -n "$COMPLEXITY_REBUMPED_FROM" ]; then
     || die "--complexity-rebumped-from must be T|L|M (or omit entirely), got: $COMPLEXITY_REBUMPED_FROM"
   [ "$COMPLEXITY_REBUMPED_FROM" = "$COMPLEXITY" ] \
     && die "--complexity-rebumped-from cannot equal --complexity ($COMPLEXITY) — re-bump means routed tier > original tier"
+fi
+
+# Outcome ↔ blocked_reason consistency (the wrapper can't independently verify
+# merged/ready_for_review — that needs PR state — but it CAN reject the two
+# contradictions expressible in its own inputs):
+if [ "$OUTCOME" = "blocked" ] && [ -z "$BLOCKED_REASON" ]; then
+  die "--outcome blocked requires --blocked-reason (what blocked it, e.g. 'secret_scan block', '3 review cycles unresolved') — a blocked entry with no reason is unusable for the failure-analysis loop"
+fi
+if [ "$OUTCOME" != "blocked" ] && [ -n "$BLOCKED_REASON" ]; then
+  die "--blocked-reason given but --outcome=$OUTCOME — contradictory (blocked_reason is only meaningful for outcome=blocked; if the blocker was resolved, drop the flag and note it in --notes)"
 fi
 
 # Timestamp sanity: ended_at >= started_at. Catches the production pattern
@@ -353,6 +391,74 @@ if [ "$SPECIALIST_ITERATIONS_JSON" != "[]" ]; then
   [ "$STUB_CYCLES" -eq 0 ] || die "--specialist-iterations-json contains $STUB_CYCLES all-empty cycle(s) (auditors=[], approvers=[], blockers=[] — stub pattern observed in i1023 fabrication). Real cycles MUST have at least auditors populated. If specialists genuinely didn't run for a cycle, omit the cycle from the array — don't fabricate placeholder shape."
 fi
 
+# --- Calibration computation (wrapper-owned; formula = phase-4-finalize.md §4.11) ---
+#
+# The three self-review calibration verdicts are a PURE FUNCTION of inputs the
+# wrapper already holds: --sr-performed, --sr-claimed, the NORMALIZED gates
+# (post-alias, so `tests`→`test` etc. can't skew the failed-gate scan),
+# specialist blockers, --sr-size-assessment, and --complexity-rebumped-from.
+# Pre-fix they were orchestrator-computed with enum-only validation — the
+# highest-signal data point in the whole entry, on trust. Computing here makes
+# hand math impossible to drift silently: passing the legacy flags triggers a
+# cross-check that REJECTs on contradiction; omitting them just works.
+CAL_COMPUTED=$(jq -cn \
+  --argjson gates "$GATES_JSON" \
+  --argjson iters "$SPECIALIST_ITERATIONS_JSON" \
+  --arg performed "$SR_PERFORMED" \
+  --arg claimed   "$SR_CLAIMED" \
+  --arg sizeraw   "$SR_SIZE_ASSESSMENT" \
+  --arg rebumped  "$COMPLEXITY_REBUMPED_FROM" '
+  ([$gates | to_entries[] | select(.value.status == "fail" or .value.status == "block") | .key]) as $failed
+  | ($failed | length > 0) as $anyfail
+  | ([$iters[]? | select((.blockers // []) | length > 0)] | length > 0) as $specblocked
+  | (((($failed | map(select(. != "pr_size"))) | length) > 0) or $specblocked) as $defect
+  | ($gates | has("pr_size")) as $prsize_present
+  | (($gates.pr_size.status // "") | (. == "warn" or . == "block")) as $prsize_fired
+  | (($sizeraw == "exceeds") or ($rebumped != "")) as $flagged_size
+  | {
+      calibration:
+        (if $performed != "true" then "skipped"
+         elif $claimed == "ready" and $anyfail then "false_positive"
+         elif $claimed == "ready" then "accurate"
+         elif ($claimed == "deferred" or $claimed == "uncertain") and ($anyfail | not) then "false_negative"
+         else "accurate" end),
+      calibration_defect:
+        (if $performed != "true" then "skipped"
+         elif $claimed == "ready" and $defect then "false_positive"
+         elif $claimed == "ready" then "accurate"
+         elif ($claimed == "deferred" or $claimed == "uncertain") and ($defect | not) then "false_negative"
+         else "accurate" end),
+      calibration_size:
+        (if $performed != "true" then "skipped"
+         elif ($prsize_present | not) then "n_a"
+         elif $flagged_size and $prsize_fired then "accurate"
+         elif ($flagged_size | not) and $prsize_fired then "false_positive"
+         elif $flagged_size and ($prsize_fired | not) then "false_negative"
+         else "accurate" end),
+      failed: (if ($failed | length) == 0 then "-" else ($failed | join(",")) end)
+    }') || die "calibration computation failed (malformed --gates-json or --specialist-iterations-json)"
+
+CAL_C=$(echo "$CAL_COMPUTED" | jq -r '.calibration')
+CAL_D=$(echo "$CAL_COMPUTED" | jq -r '.calibration_defect')
+CAL_S=$(echo "$CAL_COMPUTED" | jq -r '.calibration_size')
+CAL_FAILED=$(echo "$CAL_COMPUTED" | jq -r '.failed')
+
+# Cross-check hand-passed values ("n_a" on the split dims = legacy "not
+# computed by caller" — treated as omitted, wrapper's value wins).
+if [ -n "$SR_CALIBRATION" ] && [ "$SR_CALIBRATION" != "$CAL_C" ]; then
+  die "--sr-calibration $SR_CALIBRATION contradicts the wrapper-computed value '$CAL_C' (pure function of sr-performed=$SR_PERFORMED sr-claimed=$SR_CLAIMED failed-gates=[$CAL_FAILED]) — hand math drifted. Drop the flag (the wrapper computes it) or fix the inputs; never force a verdict."
+fi
+if [ -n "$SR_CALIBRATION_DEFECT" ] && [ "$SR_CALIBRATION_DEFECT" != "n_a" ] && [ "$SR_CALIBRATION_DEFECT" != "$CAL_D" ]; then
+  die "--sr-calibration-defect $SR_CALIBRATION_DEFECT contradicts the wrapper-computed value '$CAL_D' (non-pr_size failed gates + specialist blockers vs sr-claimed=$SR_CLAIMED) — drop the flag or fix the inputs."
+fi
+if [ -n "$SR_CALIBRATION_SIZE" ] && [ "$SR_CALIBRATION_SIZE" != "n_a" ] && [ "$SR_CALIBRATION_SIZE" != "$CAL_S" ]; then
+  die "--sr-calibration-size $SR_CALIBRATION_SIZE contradicts the wrapper-computed value '$CAL_S' (pr_size gate status vs sr-size-assessment=$SR_SIZE_ASSESSMENT rebumped=${COMPLEXITY_REBUMPED_FROM:--}) — drop the flag or fix the inputs."
+fi
+
+SR_CALIBRATION="$CAL_C"
+SR_CALIBRATION_DEFECT="$CAL_D"
+SR_CALIBRATION_SIZE="$CAL_S"
+
 # --- Build canonical entry via jq -n ---
 JSON_ENTRY=$(jq -cn \
   --arg     ref             "$REF" \
@@ -446,4 +552,7 @@ if [ "$DELTA" -ne 1 ]; then
   iofail "append silent-fail: pre=$PRE_COUNT post=$POST_COUNT delta=$DELTA expected=1"
 fi
 
-echo "OK pre=$PRE_COUNT post=$POST_COUNT path=$LOG_PATH gates=$GATE_CANON_COUNT renamed=$GATE_RENAMED_COUNT noncanon=$GATE_NONCANON_LIST"
+# cal= echoes the wrapper-computed calibration verdicts (legacy/defect/size) —
+# with the counts, part of the anti-fabrication tell: not composable without
+# actually running the computation over the real gates payload.
+echo "OK pre=$PRE_COUNT post=$POST_COUNT path=$LOG_PATH gates=$GATE_CANON_COUNT renamed=$GATE_RENAMED_COUNT noncanon=$GATE_NONCANON_LIST cal=$SR_CALIBRATION/$SR_CALIBRATION_DEFECT/$SR_CALIBRATION_SIZE"
