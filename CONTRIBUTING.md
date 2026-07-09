@@ -81,7 +81,7 @@ There's no automated functional test suite — the skill runs through Claude. Sm
 7. **RELEASE GATE — hook live-sim must pass** (both platforms) if your change touches `hooks/`, the §4.13 announce format, `install.sh`'s hook merge, or `uninstall.sh`'s hook removal. The v0.8.0 hooks shipped validated with mock stdin only and had never been live-registered — a wrong payload-field assumption would have made the tier-3 backstop silently no-op forever (audit finding #16). Never again:
 
    ```bash
-   ./skills/do/hooks/hook-live-sim.sh   # macOS/BSD — 37 cases, sandboxed (never touches your real ~/.claude)
+   ./skills/do/hooks/hook-live-sim.sh   # macOS/BSD — 38 cases, sandboxed (never touches your real ~/.claude)
    docker run --rm -v "$PWD":/w -w /w debian:stable-slim bash -c \
      'apt-get -qq update && apt-get -qq install -y jq git python3 >/dev/null 2>&1 && ./skills/do/hooks/hook-live-sim.sh'
    ```

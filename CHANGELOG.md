@@ -119,6 +119,8 @@ v0.8.0 shipped the hooks with mock-stdin validation only — the `last_assistant
 
 Audit finding #16 (major).
 
+### Fixed — remaining §19 tier-1 surfaces: Metrics-config templates de-verbatimized, branch normalization wrapper-owned, calibration computed inside `metrics-append` (was: three announce/data surfaces still composable or trust-based)
+
 The audit's residual sweep found three surfaces contradicting the spec's own "no copyable templates" invariant — the STARTED_AT capture gap from the same finding shipped earlier (task-clock preflight); this closes the rest. **(a)** All three `Metrics config:` wrapper outcome lines were printed verbatim in phase-0 Step 1 prose with no runtime-only tell — the one wrapper-owned announce token missing from the §19 ledger; fabricating telemetry state behind a green announce was undetectable. **(b)** Phase 4.0 branch normalization was inline spec bash with a confirmed production violation (v0.3.1: "Complete. Branch: $EXPECTED" announced without renaming — the worktree still sat on the harness auto-name, breaking `i{N}` traceability), and the announce's `Complete. Branch:` value was a shell variable that — under the fresh-shell-per-block model — never even survives to §4.13. **(c)** The three self-review calibration verdicts, the highest-signal data point in the telemetry loop, were orchestrator-computed with enum-only validation — pure trust, though they are a pure function of flags `metrics-append` already receives.
 
 **Fix — the §19 treatment on all three:**
