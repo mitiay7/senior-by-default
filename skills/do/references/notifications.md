@@ -11,7 +11,7 @@ Async-friendly broadcasts at Phase boundaries. Triggered when `config.notificati
 | `task_started` | After Phase 1 issue creation (M/H) OR after Phase 0.4 announce (Low) | "Started {ref_format}: {title} → {url}" |
 | `task_blocked` | When Phase 3 escalates after 3 cycles, or Phase 2 budget exhaustion, or any STOP | "Blocked {ref_format}: {reason} → {issue_url}" |
 | `task_completed` | After Phase 4.7 issue comment | "Completed {ref_format}: PR {pr_url} merged via auto-merge" or "ready for review" if no auto-merge |
-| `migration_proposed` | When Phase 0.6 detects new migration | "Migration #{NNN} proposed in {ref_format} ({migration_dir})" |
+| `migration_proposed` | When Phase 0.6 detects new migration | "Migration {TS} proposed in {ref_format} ({migration_dir})" |
 | `ci_failed` | When Phase 4.2.5 CI gate detects failure | "CI failed for {ref_format}: {failed_check_names}" |
 
 Defaults: `["task_started", "task_blocked", "task_completed"]`. Set to empty array to disable all.

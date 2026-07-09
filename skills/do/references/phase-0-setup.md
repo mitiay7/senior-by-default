@@ -200,9 +200,11 @@ git -C "$REPO" log --since="${LOOKBACK_DAYS} days ago" --name-only --pretty="%h 
 Recent commits on planned files → WARN with author+SHA list. Proceed; note overlap.
 
 **Migration detection** (only if `cache.migration_dir != null`):
-- Next migration number: `ls {repo}/{migration_dir}/{migration_pattern} | sort -V | tail -1` + 1
-- Conflict check across other branches: `git -C {repo} branch -a | xargs -I{} git log {} --oneline -- {migration_dir} 2>/dev/null`
-- Conflict → STOP, ask user to serialize
+- Migration prefix: `MIGRATION_PREFIX="$(date -u +%Y%m%d%H%M%S)"` — UTC timestamp, generated at creation time. NEVER compute "next free number" from existing files (`ls | sort -V | tail -1` + 1): every parallel session picks the same slot at spawn, and the duplicate surfaces only on the last rebase. Timestamps remove the race by construction — two sessions creating a migration in the same UTC second is essentially impossible.
+- Mixing with existing sequential migrations is fine: every common tool sorts numerically, `000036` < `20260509073812`, so new timestamp files come after the legacy ones. Leave history as-is; do NOT renumber.
+- Legacy-duplicate scan (WARN only): `git -C {repo} branch -a | xargs -I{} git log {} --oneline -- {migration_dir} 2>/dev/null` — catches pre-existing sequential duplicates already committed on other branches. Duplicate found → WARN + note in issue; no STOP, timestamp prefixes cannot collide with in-flight work.
+
+Origin: 2026-05-09 miro-rooms-rentals — three parallel `/do` agents each computed `000036` as next-free; the duplicate gate fired only on the third rebase, the second slipped to main via `--admin` merge.
 
 **Context doc check** (only if `config.context_doc.required_for_finalize: true`):
 - Set BLOCKING flag for Phase 4 finalize
@@ -244,7 +246,7 @@ After all 6 steps pass:
 
 ```
 [Phase 0] Repo: {repo} | Stack: {stack} (cached: {y/n}) | Scope: {B/F/FS} | Complexity: {T/L/M/H}
-  Files: ~{N} | EstLines: ~{L} | Tests: {YES/NO} | Migration: {YES NNN/NO} | Context doc: {required/none}
+  Files: ~{N} | EstLines: ~{L} | Tests: {YES/NO} | Migration: {YES {TS}/NO} | Context doc: {required/none}
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
   {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
   {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose}

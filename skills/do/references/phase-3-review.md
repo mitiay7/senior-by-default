@@ -235,7 +235,7 @@ Acceptance criteria PASS / FAIL — check each from the issue:
 Blocking → return to Sonnet.
 Non-blocking → tech-debt: GitHub issue labeled `tech-debt`, OR append to `config.tech_debt_doc`, OR write to memory. **No scope creep — log as new issue.**
 
-**Migration amendment**: if review requires schema change → increment migration number, write NEW migration. Never amend existing. Note dependency in PR.
+**Migration amendment**: if review requires schema change → write NEW migration with a fresh UTC timestamp prefix (`date -u +%Y%m%d%H%M%S`). Never amend existing, never allocate sequentially. Note dependency in PR.
 
 ## Announce
 ```

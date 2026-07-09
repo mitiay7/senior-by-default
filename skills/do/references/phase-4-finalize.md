@@ -147,7 +147,7 @@ If you changed feature logic AND feature docs exist (project-specific path) → 
 
 For all complexity levels: update `config.context_doc.path`. Required sections (use `config.context_doc.sections` mapping):
 
-- **§{sections.current_state}** — bump "Last updated" to today's date. If migration → bump "Next migration" + append. If merged → move from Open Work → Recently Merged. Update "Last merged issue" / "Last PR".
+- **§{sections.current_state}** — bump "Last updated" to today's date. If migration → append it ({TS} prefix); a legacy "Next migration" counter, if present, is informational only — never allocate from it. If merged → move from Open Work → Recently Merged. Update "Last merged issue" / "Last PR".
 - **§{sections.structure}** — add new module/page/route. Remove deleted.
 - **<feature-section>** — update endpoints, invariants, types if changed.
 - **§{sections.deployment}** — only if env / compose / webhook changed.
@@ -168,7 +168,7 @@ If Sonnet failed to update → Opus updates inline + notes in PR description: `C
 ## 4.7 Issue comment (M/H — REQUIRED if issue tracker)
 Use `{Tracker.comment}` with body file:
 ```
-✅ Done. PR: <url> · Migration: NNN (or —) · Build: <list of ✓ checks> [+ if context_doc → "· Context updated: {context_doc.path} §N[, §M]"] [+ if ADR → "· ADR-{NNNN}"] [+ if auto-merge → "· Auto-merge enabled"]
+✅ Done. PR: <url> · Migration: {TS} (or —) · Build: <list of ✓ checks> [+ if context_doc → "· Context updated: {context_doc.path} §N[, §M]"] [+ if ADR → "· ADR-{NNNN}"] [+ if auto-merge → "· Auto-merge enabled"]
 ```
 
 Required content if context_doc updated: `Context updated: {context_doc.path} §N[, §M]`.

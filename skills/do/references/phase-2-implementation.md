@@ -177,7 +177,7 @@ Do NOT re-explore repos that are already documented there — trust the file."]
 [+ else: omit.]
 
 ## Flags
-Tests: {YES/NO} | Migration: {YES NNN/NO}
+Tests: {YES/NO} | Migration: {YES {TS}/NO}   <!-- {TS} = UTC timestamp prefix from Phase 0.5 (`date -u +%Y%m%d%H%M%S`), never a sequential number -->
 Build: {cache.build_cmds joined with ' && '}  [+ if affected_graph → "(scoped via {tool})"]
 Lint:  {cache.lint_cmds joined with ' && '}
 Test:  {cache.test_cmd}

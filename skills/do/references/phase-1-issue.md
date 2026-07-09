@@ -72,7 +72,7 @@ Locale: `config.issue_locale`. Below shows `en` as canonical; for `ru` use the R
 - No regressions (no deleted assertions, no removed error handling)
 - No hardcoded values, no committed secrets
 [+ if context_doc.required_for_finalize → "- `{context_doc.path}` updated (sections listed in 'On Completion')"]
-[+ if Migration → "- Migration NNN applies cleanly on a fresh DB AND passes zero-downtime audit (see references/zero-downtime-migrations.md): no DROP/RENAME without expand-contract; no NOT NULL on existing column without backfill; CONCURRENTLY index on tables >10K rows"]
+[+ if Migration → "- Migration {TS} applies cleanly on a fresh DB AND passes zero-downtime audit (see references/zero-downtime-migrations.md): no DROP/RENAME without expand-contract; no NOT NULL on existing column without backfill; CONCURRENTLY index on tables >10K rows"]
 [+ if Frontend AND i18n configured → "- All user-facing strings use `{i18n.fn}()`, keys present in: {i18n.locale_files joined by ', '}"]
 [+ if feature_flags configured AND scope in feature_flags.required_for_scopes →
     "- Feature gated behind flag `{flag_name}` in `{feature_flags.system}`; default `{feature_flags.default_state}`. Flag registered in `{feature_flags.registry_path}`."]
@@ -86,8 +86,9 @@ Prefer existing patterns and the smallest implementation that satisfies the crit
 {If concurrent-edit warning fired in Phase 0.3: "⚠ Recent activity on these files: {file: author@sha list}. Coordinate or rebase frequently."}
 
 [+ if Migration → "### Migration
-Number: NNN
-Files: {repo}/{cache.migration_dir}/NNN_{slug}.{cache.migration_pattern_ext}
+Prefix: {TS} — UTC timestamp generated at creation time via `date -u +%Y%m%d%H%M%S`. Never a sequential next-free number (parallel sessions collide on it).
+Files: {repo}/{cache.migration_dir}/{TS}_{slug}.{cache.migration_pattern_ext}
+Mixing with existing sequential migrations is fine (numeric sort: 000036 < 20260509073812); leave history as-is.
 Use IF NOT EXISTS guards for idempotency.
 **Zero-downtime audit will run** (references/zero-downtime-migrations.md). Plan expand-contract if any DROP/RENAME/NOT NULL is required."]
 
@@ -127,7 +128,7 @@ With `{N}` = ISSUE_NUM and `{slug}` derived from $ARGUMENTS.
 ### On Completion
 [+ if context_doc.required_for_finalize →
 "1. **Update `{context_doc.path}`** (BEFORE posting the completion comment). Touch at minimum:
-   - §{sections.current_state} Current State — bump migration counter if applicable; move this issue Open Work → Recently Merged; update 'Last merged issue' + 'Last PR' + 'Last updated: YYYY-MM-DD'
+   - §{sections.current_state} Current State — record new migration prefix if applicable; move this issue Open Work → Recently Merged; update 'Last merged issue' + 'Last PR' + 'Last updated: YYYY-MM-DD'
    [+ if New module → '   - §{sections.structure} Repository Structures — add `{new-path}/`']
    [+ if Feature change → '   - §<feature-section> — note the new endpoint / invariant / field']
    [+ if Infra change → '   - §{sections.deployment} Deployment — env vars / compose changes']
@@ -136,7 +137,7 @@ With `{N}` = ISSUE_NUM and `{slug}` derived from $ARGUMENTS.
 [+ if config.adr.dir AND complexity is High AND architectural decision involved → "3. ADR-{NNNN} committed at `{config.adr.dir}/{NNNN}-{slug}.md`. Status: Accepted."]
 4. Comment on this issue with:
    ```
-   ✅ Done. PR: <url> · Migration: NNN (or —) · Build: <list of ✓ checks> [+ if context_doc → "· Context updated: {context_doc.path} §N[, §M]"] [+ if ADR → "· ADR-{NNNN}"] [+ if auto-merge → "· Auto-merge enabled"]
+   ✅ Done. PR: <url> · Migration: {TS} (or —) · Build: <list of ✓ checks> [+ if context_doc → "· Context updated: {context_doc.path} §N[, §M]"] [+ if ADR → "· ADR-{NNNN}"] [+ if auto-merge → "· Auto-merge enabled"]
    ```
 ```
 

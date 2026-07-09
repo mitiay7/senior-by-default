@@ -30,7 +30,7 @@ Grouped into 4 categories, ~20 distinct rules. Hot ones are bolded — those are
 
 14. **Hardcoded user-facing strings** (only if `config.i18n` set) — must use `config.i18n.fn()`. Add keys to all `locale_files`.
 15. **Adding dependencies not listed in Requirements**. Phase 3 dep-vuln scan also blocks at configured `security_scan.threshold`.
-16. **Amending migration files during review** — always write NEW migration with higher number. Never amend.
+16. **Amending migration files during review** — always write NEW migration with a fresh UTC timestamp prefix (`date -u +%Y%m%d%H%M%S`). Never amend; never allocate "next free number" — parallel sessions all pick the same slot (2026-05-09 miro-rooms-rentals: three `/do` agents each picked `000036`).
 17. **Backwards-compat shims** — clean breaks only. No re-exports, `_unused` vars, comment-explanations of WHAT.
 18. **Skipping zero-downtime migration audit** when migration present — `migration_audit` specialist MUST apply the [`zero-downtime-migrations.md`](zero-downtime-migrations.md) checklist explicitly with PASS/FAIL per item; "looks fine" is not an audit.
 

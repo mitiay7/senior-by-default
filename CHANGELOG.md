@@ -4,6 +4,20 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Fixed — migration prefixes: sequential next-free allocation → UTC timestamps (collision-proof)
+
+The skill taught next-free-integer migration allocation at four points — Phase 0.5 computed `ls | sort -V | tail -1` + 1, the Phase 1 issue template hardcoded `Number: NNN` / `NNN_{slug}` filenames, Phase 3.7 said "increment migration number" on amendment, anti-patterns §16 said "write NEW migration with higher number" — while explicitly endorsing parallel sessions. That rebuilds by construction the 2026-05-09 miro-rooms-rentals incident: three parallel `/do` agents each picked `000036` as next-free, the duplicate gate fired only on the third rebase, and the second slipped to main via `--admin` merge. The Phase 0.5 cross-branch lookahead races identically — sessions that pick "next number" at spawn, before any commits exist, all pass it.
+
+**Fix — timestamps remove the race by construction** (two sessions creating a migration in the same UTC second is essentially impossible):
+
+- **`phase-0-setup.md` Step 5** — prefix is now *generated*, not computed: `MIGRATION_PREFIX="$(date -u +%Y%m%d%H%M%S)"`. The cross-branch scan is retained but downgraded STOP → WARN as a legacy-duplicate check only (timestamp prefixes cannot collide with in-flight work). Origin note added.
+- **`phase-1-issue.md`** — issue template's `### Migration` section now reads `Prefix: {TS}` (UTC timestamp, generated at creation time) with the `{TS}_{slug}` file pattern; acceptance criterion updated to `Migration {TS}`.
+- **`phase-3-review.md` §3.7** amendment rule — "write NEW migration with a fresh UTC timestamp prefix"; never amend, never allocate sequentially.
+- **`anti-patterns.md` §16** — "higher number" → "fresh UTC timestamp prefix", with the collision incident recorded (this line otherwise re-taught the sequential pattern the other edits remove).
+- **Display placeholders swept** (`NNN` → `{TS}`, non-breaking): Phase 0 announce + Phase 2 flags `Migration: {YES {TS}/NO}`, Phase 1/4 issue-comment `Migration: {TS} (or —)`, `notifications.md` `migration_proposed` body. Context-doc guidance in Phase 1/4 no longer bumps a "Next migration" counter — legacy counters are informational only, never allocated from.
+
+Mixing with existing sequential migrations is fine — every common migration tool sorts numerically (`000036` < `20260509073812`), so new timestamp files come after the legacy ones; history is never renumbered. No script parses migration numbers (verified), so the placeholder sweep is display-only. Aligns the skill with the global collision-proof migration-naming rule written after the same incident.
+
 ## [0.8.1] — 2026-05-31
 
 **Patch — version-agnostic model examples.** Doc/comment-only fix; no behavior change.
