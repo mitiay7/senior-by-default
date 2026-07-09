@@ -25,7 +25,7 @@ If present:
 
 ### `issue_tracker`
 If present:
-- `type` must be one of: `github`, `gitlab`, `none`, `custom`
+- `type` must be one of: `github`, `gitlab`, `none`, `custom`; omitted → treat as `github` (documented default — `repo` is still required)
 - `none` → ignore other fields
 - `github` / `gitlab` → require `repo` (string, format `owner/name`)
 - `custom` → require `commands.create` at minimum; warn for each missing operation
@@ -67,6 +67,12 @@ If present:
 - `base` must be an absolute path that exists
 - `cleanup_cmd` (if set) is a template — no validation on content
 
+### `issue_locale`
+If present: must match `^[a-z]{2}(-[A-Z]{2})?$` (any ISO 639-1 code, optional region — `en`, `ru`, `ja`, `ko`, `pt-BR`). Pattern, not an enum: Phase 0 auto-init detects `ja`/`ko` and its output must validate.
+
+### `metrics`
+If present: `null` is VALID — explicit telemetry opt-out (`config-ensure-metrics` respects it, never re-patches). Object form: `log_path` is string or `null` (`null` = keep block, disable JSONL emission — the opt-out auto-init's `_setup_notes` advises).
+
 ### `memory_path`
 If present and not `"auto"`: must be an absolute path. Warn if file doesn't exist (will be created on first write).
 
@@ -77,11 +83,12 @@ If present: each item must have non-empty `trigger_keywords` array and non-empty
 
 1. Read `config.json`
 2. Parse JSON — malformed JSON → STOP, show line:col of error
-3. Validate `version`
-4. For each section present: run rules above
-5. Collect WARNINGS and ERRORS separately
-6. ERRORS → STOP, list all errors, ask user to fix
-7. WARNINGS → print before Phase 0.0 announcement, proceed
+3. Schema gate — programmatic check against [`config.schema.json`](config.schema.json) when tooling exists (`python3 -c "import jsonschema"` succeeds). Module absent → do NOT fail, but NEVER skip silently: run the rule-based checks below and append `(schema gate SKIPPED — jsonschema unavailable)` to the `Config:` announce line. The write-path wrappers (`config-init`, `config-ensure-metrics`) emit the same suffix on their success lines when they couldn't schema-validate — a clean announce with no suffix means the schema gate actually ran. The suffix is wrapper/flow-emitted, not an agent annotation — carrying it verbatim into the announce is not a §19c violation; stripping it is.
+4. Validate `version`
+5. For each section present: run rules above
+6. Collect WARNINGS and ERRORS separately
+7. ERRORS → STOP, list all errors, ask user to fix
+8. WARNINGS → print before Phase 0.0 announcement, proceed
 
 ## Example error output
 

@@ -86,7 +86,7 @@ All other fields are optional; missing fields fall back to defaults documented b
     "issue": { "worktree_suffix": "i{N}",        "branch": "feat/i{N}-{slug}", "ref_format": "i{N}" }
   },
 
-  "issue_locale": "ru" | "en",
+  "issue_locale": "en" | "ru" | "ja" | "ko" | "pt-BR" | ...,   // any ^[a-z]{2}(-[A-Z]{2})?$ code — pattern, not an enum
 
   "worktree": {
     "base": "/abs/path/parent",
@@ -183,8 +183,8 @@ All other fields are optional; missing fields fall back to defaults documented b
 
   "lessons_doc": "docs/lessons.md",
 
-  "metrics": {
-    "log_path": "~/.claude/do/metrics/{repo_slug}.jsonl",
+  "metrics": {                                            // or null = explicit opt-out (nullable like ui_gate)
+    "log_path": "~/.claude/do/metrics/{repo_slug}.jsonl", // or null = keep block, disable JSONL emission
     "include_phase_durations": true,
     "tier": 1,
     "capture_failure_details": true,
@@ -211,6 +211,8 @@ Multi-repo setups. `repos.<key>.scope_keywords` drives Phase 0.1 routing. Multip
 #### `issue_tracker`
 `type` options: `github` (default, uses `gh`), `gitlab` (uses `glab`), `none` (skip Phase 1), `custom` (requires `commands` block). See [`trackers.md`](trackers.md).
 
+Omitted `type` = `github` — and `repo` is still required (every `gh` call passes `--repo`). The schema enforces exactly this: the github/gitlab branch fires on omitted type, and only an explicit `type: "custom"` demands a `commands` block. Pre-fix, the custom branch fired vacuously on omitted type, rejecting the documented github-default shorthand `{"repo": "owner/name"}`.
+
 #### `context_doc`
 Sonnet reads it before exploring. `sections` = name → number-or-anchor map. `required_for_finalize: true` → Phase 4.6 BLOCKS.
 
@@ -223,7 +225,10 @@ Each enables the corresponding Phase 3 gate. Omit → gate skipped.
 #### `naming`
 Branch/worktree/ref formats. Defaults match `i{N}` convention. Override for Linear / Jira / etc.
 
-#### `issue_locale`, `memory_path`, `acceptance_extensions`
+#### `issue_locale`
+Language for issue/PR bodies. Any ISO 639-1 code, optional region: `en`, `ru`, `ja`, `ko`, `pt-BR`, … — the schema validates by pattern (`^[a-z]{2}(-[A-Z]{2})?$`), NOT an enum. Phase 0 auto-init detects `ru`/`ja`/`ko` from `$ARGUMENTS`; the value it detects must always be schema-valid (the old `["ru","en"]` enum made auto-init reject its own ja/ko detection). Default `en`.
+
+#### `memory_path`, `acceptance_extensions`
 See previous schema documentation.
 
 #### `worktree`
@@ -345,6 +350,10 @@ Phase 4.10: optional prompt "Anything surprising worth recording?" → append to
 
 #### `metrics`
 Phase 4: append per-task JSONL entry to `log_path`. For DORA-ish self-analysis + skill evolution feedback loop.
+
+Two documented opt-outs, both schema-valid (nullable like `ui_gate`):
+- `metrics: null` — explicit opt-out; `config-ensure-metrics` respects the null and never re-patches the default preset in
+- `metrics.log_path: null` — keep the block, disable JSONL emission entirely (this is the opt-out auto-init's `_setup_notes` advises)
 
 - `log_path` supports `{repo_slug}` placeholder (resolves to last segment of repo path, lowercased, non-alphanum → `-`)
 - `include_phase_durations` — track per-phase wall-clock for cycle-time analysis

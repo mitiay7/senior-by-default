@@ -22,6 +22,8 @@
 #
 # Exit codes:
 #   0  success; stdout: "Metrics config: ALREADY CONFIGURED" | "Metrics config: AUTO-ADDED to <path>"
+#      — AUTO-ADDED carries a " (schema gate SKIPPED — jsonschema unavailable)"
+#      suffix when python3-jsonschema was absent (config written unvalidated)
 #   1  rejected (missing arg, invalid JSON, refused context, schema fail); stderr: "REJECT <reason>"
 #   2  I/O failure (could not read/write); stderr: "IOFAIL <reason>"
 
@@ -100,12 +102,18 @@ PATCHED_JSON="$(jq \
        last_patch_added: "metrics block (tier-1 default)"
      })' "$CONFIG_PATH")" || iofail "jq patch failed"
 
-# Schema validate the patched config before writing
+# Schema validate the patched config before writing.
+# Skips are NEVER silent: when the gate can't run, the AUTO-ADDED line below
+# carries a visible " (schema gate SKIPPED — jsonschema unavailable)" suffix
+# (wrapper-emitted, hence not a §19c annotation; downstream matchers are
+# prefix-based, so the suffix rides through).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCHEMA_PATH="$SCRIPT_DIR/../references/config.schema.json"
 
+SCHEMA_GATE_SUFFIX=" (schema gate SKIPPED — jsonschema unavailable)"
 if [ -f "$SCHEMA_PATH" ] && command -v python3 >/dev/null 2>&1 \
    && python3 -c "import jsonschema" 2>/dev/null; then
+  SCHEMA_GATE_SUFFIX=""
   if ! printf '%s' "$PATCHED_JSON" | SCHEMA_PATH="$SCHEMA_PATH" python3 -c '
 import sys, os, json, jsonschema
 schema = json.load(open(os.environ["SCHEMA_PATH"]))
@@ -130,4 +138,4 @@ printf '%s\n' "$PATCHED_JSON" > "$TMP" || iofail "could not write $TMP"
 mv -- "$TMP" "$CONFIG_PATH" || iofail "could not rename $TMP → $CONFIG_PATH"
 trap - EXIT
 
-echo "Metrics config: AUTO-ADDED to $CONFIG_PATH"
+echo "Metrics config: AUTO-ADDED to $CONFIG_PATH$SCHEMA_GATE_SUFFIX"

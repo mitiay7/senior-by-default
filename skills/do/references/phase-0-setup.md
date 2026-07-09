@@ -68,7 +68,7 @@ Walk CWD upward for `.claude/do/config.json`. First match wins. Defaults defined
   Wrapper is idempotent — 3 outcomes, all via wrapper stdout, never composed:
   - `Metrics config: ALREADY CONFIGURED in <path>` — `metrics` block exists, no change
   - `Metrics config: EXPLICIT OPT-OUT in <path> (metrics: null)` — user set null explicitly, respected
-  - `Metrics config: AUTO-ADDED to <path>` — key was absent, default tier-1 preset patched in, `_meta` stamped with `last_patched_by`/`last_patched_at`/`last_patch_added`
+  - `Metrics config: AUTO-ADDED to <path>` — key was absent, default tier-1 preset patched in, `_meta` stamped with `last_patched_by`/`last_patched_at`/`last_patch_added`. May carry a wrapper-emitted ` (schema gate SKIPPED — jsonschema unavailable)` suffix — the file was written unvalidated (python3-jsonschema missing). Keep the suffix verbatim in the announce; it's the wrapper's tell, not a §19c annotation.
 
   If `--no-metrics` was passed → skip this block, set `METRICS_CONFIG_LINE="Metrics config: SKIPPED (--no-metrics)"`.
 - **None** → set `CONFIG_FOUND=0`. Use in-memory defaults for now. **Auto-init is DEFERRED to the end of Step 4** (needs stack-detect output to populate `_meta.auto_generated_for_stack`). `CONFIG_LINE` and `METRICS_CONFIG_LINE` will be set there.
@@ -170,7 +170,10 @@ esac
 # itself emits the canonical line on success ("Config: AUTO-GENERATED → …"),
 # and "REJECT …" / "IOFAIL …" on the skip paths (already exists, refused
 # context, missing tooling). Either way, $CONFIG_LINE is the announce token —
-# do NOT append annotations like "(patched ...)" to it (see §19c).
+# do NOT append annotations like "(patched ...)" to it (see §19c). The success
+# line may already end in " (schema gate SKIPPED — jsonschema unavailable)" —
+# that suffix is WRAPPER-emitted (file written unvalidated), not an agent
+# annotation: keep it verbatim, never strip it to "clean up" the line.
 if [ "$TRACKER" = "none" ]; then
   CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
     --repo-root "$REPO" --tracker none --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" --metrics "$METRICS" 2>&1)" \

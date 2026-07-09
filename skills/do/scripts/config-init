@@ -26,6 +26,8 @@
 #
 # Exit codes:
 #   0  written successfully; stdout: "Config: AUTO-GENERATED → <path>"
+#      — carries a " (schema gate SKIPPED — jsonschema unavailable)" suffix
+#      when python3-jsonschema was absent and the file was written unvalidated
 #   1  rejected (missing/invalid arg, file exists, refused context, schema fail); stderr: "REJECT <reason>"
 #   2  I/O failure (could not write); stderr: "IOFAIL <reason>"
 
@@ -72,6 +74,11 @@ case "$METRICS" in
   default|none) ;;
   *) die "--metrics must be default|none (got: $METRICS)" ;;
 esac
+# Fail closed on locale even when the jsonschema gate below is unavailable —
+# schema pattern is ^[a-z]{2}(-[A-Z]{2})?$ (ISO 639-1, optional region). An
+# up-front check turns an opaque schema-gate error into an actionable REJECT.
+[[ "$ISSUE_LOCALE" =~ ^[a-z]{2}(-[A-Z]{2})?$ ]] \
+  || die "--issue-locale must be an ISO 639-1 code, optional region (en, ru, ja, ko, pt-BR — pattern ^[a-z]{2}(-[A-Z]{2})?\$; got: $ISSUE_LOCALE)"
 if [ "$TRACKER" != "none" ] && [ -z "$TRACKER_REPO" ]; then
   die "--tracker-repo required when --tracker=$TRACKER (expected owner/repo)"
 fi
@@ -193,12 +200,20 @@ CONFIG_JSON="$(jq -n \
    + (if $metrics == null then {} else {metrics: $metrics} end)')" || iofail "jq compose failed"
 
 # --- schema validation (best-effort: skip if tooling missing) ---------------
+# Skips are NEVER silent: when the gate can't run, the success line below
+# carries a visible " (schema gate SKIPPED — jsonschema unavailable)" suffix.
+# Pre-fix, a jsonschema-less host wrote the config unvalidated under the
+# identical clean announce — indistinguishable from a validated write.
+# phase-0-setup.md matches "Config: AUTO-GENERATED"* as a prefix glob, so the
+# suffix rides through; it is wrapper-emitted, hence not a §19c annotation.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCHEMA_PATH="$SCRIPT_DIR/../references/config.schema.json"
 
+SCHEMA_GATE_SUFFIX=" (schema gate SKIPPED — jsonschema unavailable)"
 if [ -f "$SCHEMA_PATH" ] && command -v python3 >/dev/null 2>&1 \
    && python3 -c "import jsonschema" 2>/dev/null; then
+  SCHEMA_GATE_SUFFIX=""
   if ! printf '%s' "$CONFIG_JSON" | SCHEMA_PATH="$SCHEMA_PATH" python3 -c '
 import sys, os, json, jsonschema
 schema = json.load(open(os.environ["SCHEMA_PATH"]))
@@ -226,4 +241,4 @@ printf '%s\n' "$CONFIG_JSON" > "$TMP" || iofail "could not write $TMP"
 mv -- "$TMP" "$OUT_PATH" || iofail "could not rename $TMP → $OUT_PATH"
 trap - EXIT
 
-echo "Config: AUTO-GENERATED → $OUT_PATH"
+echo "Config: AUTO-GENERATED → $OUT_PATH$SCHEMA_GATE_SUFFIX"

@@ -126,6 +126,8 @@ Config: AUTO-GENERATED → /path/to/repo/.claude/do/config.json
 Metrics config: INCLUDED in auto-init
 ```
 
+On hosts without python3-jsonschema the wrapper writes the file unvalidated and says so — the success line carries a ` (schema gate SKIPPED — jsonschema unavailable)` suffix (never a silent skip); `pip install jsonschema` restores the gate.
+
 The file is left **unstaged** — you review and commit when ready. Subsequent `/do` runs re-read it on every Phase 0; no reload after extension.
 
 ### If your project already has a config

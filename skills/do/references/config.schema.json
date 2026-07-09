@@ -72,11 +72,13 @@
       },
       "allOf": [
         {
+          "$comment": "Deliberately NO required:['type'] here — this branch must also fire when `type` is omitted: config-schema.md documents github as the default, so an omitted-type config IS a github config and must carry `repo` (every gh invocation in trackers.md passes --repo). Adding required:['type'] would make issue_tracker:{} schema-valid but runtime-broken.",
           "if": { "properties": { "type": { "enum": ["github", "gitlab"] } } },
           "then": { "required": ["repo"] }
         },
         {
-          "if": { "properties": { "type": { "const": "custom" } } },
+          "$comment": "required:['type'] stops this branch firing vacuously when `type` is omitted — pre-fix, {repo:'o/r'} (a documented-valid github-default config) was rejected demanding a custom-tracker `commands` block.",
+          "if": { "properties": { "type": { "const": "custom" } }, "required": ["type"] },
           "then": {
             "properties": { "commands": { "required": ["create"] } },
             "required": ["commands"]
@@ -183,7 +185,12 @@
       }
     },
 
-    "issue_locale": { "enum": ["ru", "en"] },
+    "issue_locale": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+      "default": "en",
+      "description": "Issue/PR body language: any ISO 639-1 code, optional region (en, ru, ja, ko, pt-BR). Pattern, NOT an enum — Phase 0 auto-init detects ru/ja/ko from $ARGUMENTS, and the pre-fix enum ['ru','en'] made auto-init exit 1 for every Japanese/Korean task."
+    },
 
     "worktree": {
       "type": "object",
@@ -367,17 +374,23 @@
     "lessons_doc": { "type": "string" },
 
     "metrics": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "log_path": { "type": "string" },
-        "include_phase_durations": { "type": "boolean" },
-        "tier": { "type": "integer", "minimum": 0, "maximum": 2 },
-        "capture_failure_details": { "type": "boolean" },
-        "capture_self_review_calibration": { "type": "boolean" },
-        "capture_specialist_iterations": { "type": "boolean" },
-        "max_string_length": { "type": "integer", "minimum": 50 }
-      }
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "log_path": { "type": ["string", "null"] },
+            "include_phase_durations": { "type": "boolean" },
+            "tier": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "capture_failure_details": { "type": "boolean" },
+            "capture_self_review_calibration": { "type": "boolean" },
+            "capture_specialist_iterations": { "type": "boolean" },
+            "max_string_length": { "type": "integer", "minimum": 50 }
+          }
+        }
+      ],
+      "description": "null = explicit telemetry opt-out (config-ensure-metrics respects it and never re-patches); object = enable. log_path: null keeps the block but disables JSONL emission entirely — the exact opt-out auto-init's _setup_notes advises. Both documented opt-outs were schema-INVALID pre-fix (same nullable shape as ui_gate)."
     },
 
     "postmortem": {
