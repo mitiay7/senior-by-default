@@ -82,6 +82,8 @@ When a user message starts with `+++`, treat everything after `+++` as the argum
 <!-- senior-by-default:trigger:end -->
 ```
 
+> **Known limitation (interim, until v0.9.0):** the tier-2 enforcement wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, `plan-size-check`, `pr-size-check`, `metrics-append`) are invoked by the spec at the literal path `~/.claude/skills/do/scripts/` — a path that only exists after the **manual symlink install at the default skill name `do`**. Under plugin install (or a custom `SKILL_NAME`) the wrapper calls fail and the skill degrades to prose-level enforcement — exactly the fabrication class the wrappers were built to prevent. If you want the wrapper tier active today, use the manual symlink install below with the default name. Dynamic wrapper-path resolution is planned for v0.9.0.
+
 ### Manual — clone + symlink
 
 For users who want to track `main` directly, hack on the skill, or use the bare `/do` command without a plugin namespace:
@@ -236,13 +238,15 @@ These are **opt-in and off by default** — the skill works identically without 
 
 ## Recommended companion: caveman (install FIRST)
 
-[caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill that compresses agent output by ~75% via "caveman speak" while preserving full technical accuracy. It's passive (SessionStart hook), so once installed it just works for any session — including ours.
+[caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill that compresses agent output by 65% (measured) via "caveman speak" while preserving full technical accuracy. It's passive (SessionStart hook), so once installed it just works for any session — including ours.
 
 **Install it before senior-by-default** so all Sub-Agent spawns from Phase 2 inherit compressed output:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
 ```
+
+We also maintain a curated fork, [mitiay7/caveman](https://github.com/mitiay7/caveman) (`v1.10.x-fable` releases), which adds a `smart` level (content compression, grammar intact) suited for Fable-class harnesses — install from the fork if you want that level; upstream works too.
 
 Phase 0 Step 2 detects whether caveman is installed via the external `scripts/check-caveman` wrapper (v3 of the detection — earlier inline-bash versions were systematically bypassed by orchestrators copy-pasting the announce template from the spec instead of running the check). The wrapper probes 4 candidate paths: `~/.claude/skills/caveman`, `~/.claude/plugins/cache/caveman`, `~/.claude/plugins/cache/JuliusBrussee/caveman`, `~/.agents/skills/caveman`. The canonical announce strings live ONLY in the wrapper:
 

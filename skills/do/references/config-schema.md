@@ -16,7 +16,7 @@ All path-bearing fields (`context_doc.path`, `tech_debt_doc`, `lessons_doc`, `i1
 
 `~` (home tilde) is expanded.
 
-Validators (Phase 0.0) and runtime path checks MUST apply this rule consistently.
+Validators (Phase 0 Step 1) and runtime path checks MUST apply this rule consistently.
 
 ## Full schema
 
@@ -206,7 +206,7 @@ All other fields are optional; missing fields fall back to defaults documented b
 ### Core (universal)
 
 #### `workspace`
-Multi-repo setups. `repos.<key>.scope_keywords` drives Phase 0.1 routing. Multiple matches → fullstack. Omit for single-repo.
+Multi-repo setups. `repos.<key>.scope_keywords` drives Phase 0 Step 3 routing. Multiple matches → fullstack. Omit for single-repo.
 
 #### `issue_tracker`
 `type` options: `github` (default, uses `gh`), `gitlab` (uses `glab`), `none` (skip Phase 1), `custom` (requires `commands` block). See [`trackers.md`](trackers.md).
@@ -294,14 +294,14 @@ Phase 3.6 specialist routing + PR reviewer auto-request via CODEOWNERS file.
 The following config sections are accepted by validators but have **incomplete implementation** or **untested production paths**. Leave unset unless you specifically know what you want and accept the rough-edge risk. Not removed for back-compat — may be promoted or deprecated in a future release based on real-usage signal.
 
 #### `wip_limit`
-**Opt-in, no default.** Omit the field → Phase 0.0.1 skipped entirely.
+**Opt-in, no default.** Omit the field → the Phase 0 Step 1 WIP check is skipped entirely.
 
 If set to a positive integer: Phase 0 counts `git worktree list` across known repos + open issues assigned to user. Over limit → warn (never block).
 
 The feature originates from Kanban WIP limits for human teams (where context-switching is real cost). For AI-orchestrated workflows with isolated agent contexts, parallel sessions are usually beneficial — leave unset unless you have a specific reason for a soft ceiling.
 
 #### `concurrent_edit_check`
-Phase 0.3 check: list recent commits touching planned files. Configurable lookback.
+Phase 0 Step 5 check: list recent commits touching planned files. Configurable lookback.
 Recent commits → warn with author + SHA list (someone else may be editing nearby).
 
 #### `feature_flags`
@@ -465,7 +465,7 @@ Override either array to customize. Set `trigger_keywords: []` AND `branch_prefi
 ## Defaults if no config
 
 - Single-repo: CWD must be inside a git repo
-- All Phase 1-4 features above: skipped or use built-in defaults (CI gate OFF (opt-in only — most setups have no cloud CI), auto-merge OFF, self-review ON, PR-size guard ON with shown thresholds, CODEOWNERS routing ON if file exists, WIP limit OFF (opt-in only), concurrent-edit check ON, security scan ON with threshold "high", everything else OFF)
+- All Phase 1-4 features above: skipped or use built-in defaults (CI gate OFF (opt-in only — most setups have no cloud CI), auto-merge OFF, self-review ON, PR-size guard ON with shown thresholds, stale-main check ON with shown thresholds (warn 20 / block 50 — Phase 2.0.5 applies them whether or not `stale_main` is configured), CODEOWNERS routing ON if file exists, WIP limit OFF (opt-in only), concurrent-edit check ON, security scan ON with threshold "high", everything else OFF)
 - Acceptance extensions: none
 - Issue locale: en
 - Memory path: auto

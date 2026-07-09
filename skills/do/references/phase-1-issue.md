@@ -43,7 +43,7 @@ Before writing the issue body, derive the rough list of files the task will touc
 - Files matching keywords in `$ARGUMENTS` (grep the codebase)
 - New files implied by the task
 
-This list feeds Phase 0.3 concurrent-edit check AND Phase 4.2 CODEOWNERS reviewer routing.
+This list feeds the Phase 0 Step 5 concurrent-edit check AND Phase 4.2 CODEOWNERS reviewer routing.
 
 ## Issue body template
 
@@ -87,7 +87,7 @@ Locale: `config.issue_locale`. Below shows `en` as canonical; for `ru` use the R
 ### Implementation Hints
 {files, patterns, edge cases, gotchas. Pass references to similar modules from Phase 0 if relevant.}
 Prefer existing patterns and the smallest implementation that satisfies the criteria. Do not add new abstractions, config, flags, dependencies, or broad refactors unless they are listed in Requirements.
-{If concurrent-edit warning fired in Phase 0.3: "⚠ Recent activity on these files: {file: author@sha list}. Coordinate or rebase frequently."}
+{If concurrent-edit warning fired in Phase 0 Step 5: "⚠ Recent activity on these files: {file: author@sha list}. Coordinate or rebase frequently."}
 
 [+ if Migration → "### Migration
 Prefix: {TS} — UTC timestamp generated at creation time via `date -u +%Y%m%d%H%M%S`. Never a sequential next-free number (parallel sessions collide on it).
@@ -102,7 +102,7 @@ System: {feature_flags.system}
 Default: {feature_flags.default_state}
 Wrap entry point. Document rollout plan in PR description."]
 
-[+ if postmortem context (Phase 0.0.2) → "### Postmortem
+[+ if postmortem context (Phase 0 Step 1) → "### Postmortem
 Cause: {one-liner}
 Impact: {who/what affected, duration if known}
 Detection: {how spotted}

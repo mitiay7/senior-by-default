@@ -112,6 +112,36 @@ Probed in a sandbox HOME (real `uninstall.sh`, no mocks): install-shaped merged 
 
 Audit finding #10 (major).
 
+### Fixed — stale-reference sweep across the executable spec; honest install caveats in README (was: phantom phase ids, dangling anti-pattern ids, drifted claims)
+
+The spec carried dead cross-references from before the Phase 0 6-step reorganization and the anti-patterns renumbering — the exact stale-reference class this repo already had an incident about (v0.5.0 README drift → phantom-plugin cascade). Executors hitting `Phase 0.0.3` or `Anti-pattern 31a` either improvise a mapping or conclude the spec is unreliable. All live-spec hits fixed; `CHANGELOG` history intentionally untouched (release notes are records, not spec).
+
+**Retired `Phase 0.x` sub-phase ids → the 6-step layout** (Step 1 config, Step 2 caveman, Step 3 repos, Step 4 stack cache, Step 5 sanity, Step 6 routing/announce):
+
+- `phase-1-issue.md` — `0.3` → Step 5 (concurrent-edit, ×2); `0.0.2` → Step 1 (postmortem context)
+- `phase-2-implementation.md` — `0.0.3` → Step 2 (caveman directive condition); `0.5` → Step 5 (`{TS}` prefix comment); `0.1` → plain "Phase 0" (reference modules — no single owning step)
+- `config-schema.md` — `0.0` → Step 1 (path-resolution validators); `0.1` → Step 3 (multi-repo routing); `0.0.1` → "Step 1 WIP check" (`wip_limit`); `0.3` → Step 5 (`concurrent_edit_check`)
+- `config-validation.md` — `0.0` → Step 1 (when validation runs); warnings print "before the Phase 0 announce (Step 6)"
+- `stack-detection.md` — `0.2` → Step 4 (when detection runs); `0.6` → "Step 5 migration detection"
+- `notifications.md` — `task_started` fires after "Step 6 announce" (was `0.4`); `migration_proposed` on "Step 5" detection (was `0.6`)
+- `config.schema.json` — `wip_limit` description names the Step 1 WIP check (was `Phase 0.0.1`; description-only, all `examples/*.json` re-validated)
+- `phase-4-finalize.md` gate-vocab table — `concurrent_edit` phase `0.3` → `0 Step 5`
+
+**Dangling anti-pattern ids** (numbering ends at §24; `31a`/`31c` never existed): `phase-2-implementation.md` pinned reminders #1/#2 now cite [anti-pattern §12] (branch rename) and [§19a] (metrics announce/emit coupling), linked.
+
+**Phantom "Phase 4.0.5"**: reminder #3 told the executor to hand-run `wc -l` pre/post — a procedure that moved INTO `metrics-append` in v0.7.0 (the wrapper emits `OK pre=N post=N+1 …` only on delta=1, `IOFAIL append silent-fail: …` otherwise). Rewritten against the wrapper's OK line: verify `OK ` + `post = pre + 1` in the captured output; non-OK surfaces verbatim as `Metrics: APPEND FAILED — <reason>`. Hand-recounting is now explicitly forbidden — a spec teaching a manual re-implementation of a wrapper-owned tell was §19-adjacent by its own standards.
+
+**`stale_main` default aligned**: `config-schema.md` "Defaults if no config" claimed stale-main was covered by "everything else OFF" while `phase-2-implementation.md` §2.0.5 applies warn-20/block-50 unconditionally. The defaults list now names it ON with the shown thresholds.
+
+**Caveman claim**: `~75%` compression → `65% (measured)` in the Phase 2 sub-agent directive and README (the measured figure the caveman skill itself ships).
+
+**README install honesty**:
+
+- **Known-limitation callout under the plugin-install section** (interim mitigation for audit finding #2 — full fix is v0.9.0 dynamic wrapper-path resolution): the six tier-2 wrappers are invoked at the literal `~/.claude/skills/do/scripts/`, which only the manual symlink install at default name `do` creates; plugin installs and custom `SKILL_NAME`s degrade to prose-level enforcement. Users who want the wrapper tier are pointed at the manual install.
+- **Caveman fork note**: one sentence pointing at the curated fork [mitiay7/caveman] (`v1.10.x-fable` releases, adds a `smart` level — content compression, grammar intact — suited for Fable-class harnesses); upstream JuliusBrussee link and install one-liner kept.
+
+Audit finding #20 (minor); README caveat = interim mitigation for finding #2 (critical); 65%-figure + fork note overlap finding #22 (minor).
+
 ## [0.8.1] — 2026-05-31
 
 **Patch — version-agnostic model examples.** Doc/comment-only fix; no behavior change.

@@ -1,6 +1,6 @@
 # Config Validation
 
-Run validation **once per task** after loading `config.json` in Phase 0.0. Skip silently for missing/optional fields. Hard-fail only on malformed schema.
+Run validation **once per task** after loading `config.json` in Phase 0 Step 1. Skip silently for missing/optional fields. Hard-fail only on malformed schema.
 
 For programmatic validation, use [`config.schema.json`](config.schema.json) (JSON Schema draft 2020-12). The rules below mirror the schema; the JSON Schema is the source of truth.
 
@@ -88,7 +88,7 @@ If present: each item must have non-empty `trigger_keywords` array and non-empty
 5. For each section present: run rules above
 6. Collect WARNINGS and ERRORS separately
 7. ERRORS → STOP, list all errors, ask user to fix
-8. WARNINGS → print before Phase 0.0 announcement, proceed
+8. WARNINGS → print before the Phase 0 announce (Step 6), proceed
 
 ## Example error output
 

@@ -275,7 +275,7 @@ final key names, the wrapper does:
 | `secret_scan` | 4.1 pre-push | `opus_review` | 3.7 (M/H) |
 | `migration_audit` | 3.6 migration | `codeowners` | 3.6 routing |
 | `plan_size` | 2.0 | `stale_main` | 2.0.5 |
-| `concurrent_edit` | 0.3 | | |
+| `concurrent_edit` | 0 Step 5 | | |
 
 Each value is `{ "status": "pass"|"warn"|"fail"|"block"|"skipped", ["fix_cycle": N,]
 ["details": {...}] }`. The wrapper coerces scalar values (`"pass"`, `true`) into the

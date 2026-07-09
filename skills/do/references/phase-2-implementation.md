@@ -163,7 +163,7 @@ Do NOT re-explore repos that are already documented there — trust the file."]
  More than 10: full contents for the most-changed; path + one-line summary for the rest.}
 
 ## Reference Modules
-{1-2 similar module paths from Phase 0.1, with key file names. Helps Sonnet match conventions without re-exploring.}
+{1-2 similar module paths from Phase 0, with key file names. Helps Sonnet match conventions without re-exploring.}
 
 ## Approved Plan
 {High only: the plan approved by specialists in Step 2 below. Omit for Low/Medium.}
@@ -177,7 +177,7 @@ Do NOT re-explore repos that are already documented there — trust the file."]
 [+ else: omit.]
 
 ## Flags
-Tests: {YES/NO} | Migration: {YES {TS}/NO}   <!-- {TS} = UTC timestamp prefix from Phase 0.5 (`date -u +%Y%m%d%H%M%S`), never a sequential number -->
+Tests: {YES/NO} | Migration: {YES {TS}/NO}   <!-- {TS} = UTC timestamp prefix from Phase 0 Step 5 (`date -u +%Y%m%d%H%M%S`), never a sequential number -->
 Build: {cache.build_cmds joined with ' && '}  [+ if affected_graph → "(scoped via {tool})"]
 Lint:  {cache.lint_cmds joined with ' && '}
 Test:  {cache.test_cmd}
@@ -192,11 +192,11 @@ PLAN-SIZE: files={PLANNED_FILES} lines={PLANNED_LINES_EST} complexity={COMPLEXIT
 
 These apply to **whoever is currently executing this skill flow** — whether you are the spawned agent doing everything yourself, or a parent orchestrator that spawned a sub-agent. There is no separate "Opus picks up after Sub-Agent reports" step in most real installs (the spawned agent typically runs the entire flow start-to-finish and returns). So if you are reading this prompt, **you** are responsible for Phase 4.0 + Phase 4.13 procedures.
 
-1. **Phase 4.0 (branch rename) MUST run BEFORE Phase 4.2 (PR open)**, not after. Verify your worktree's branch matches `config.naming.{low|issue}.branch`. If you're in a worktree with auto-named `claude/<adj>-<noun>-<hash>` (Claude Code harness pre-spawn) — RENAME UNCONDITIONALLY via `git branch -m`. The worktree PATH is fine to keep; the BRANCH must follow spec so PR title / commit `Ref:` / metrics `branch_rename` field / tracker comments all cross-reference via `i{N}`. **Pre-spawned worktree is NOT an excuse** — `git branch -m` works on pre-spawned worktrees just fine. Anti-pattern 31c.
+1. **Phase 4.0 (branch rename) MUST run BEFORE Phase 4.2 (PR open)**, not after. Verify your worktree's branch matches `config.naming.{low|issue}.branch`. If you're in a worktree with auto-named `claude/<adj>-<noun>-<hash>` (Claude Code harness pre-spawn) — RENAME UNCONDITIONALLY via `git branch -m`. The worktree PATH is fine to keep; the BRANCH must follow spec so PR title / commit `Ref:` / metrics `branch_rename` field / tracker comments all cross-reference via `i{N}`. **Pre-spawned worktree is NOT an excuse** — `git branch -m` works on pre-spawned worktrees just fine. [Anti-pattern §12](anti-patterns.md).
 
-2. **Phase 4.13 (final announce) is a single bash procedure, structurally coupled with Phase 4.11 metrics emission** via shared `$METRICS_LINE` shell variable. Run the bash verbatim from [`phase-4-finalize.md`](phase-4-finalize.md) §4.13. You CANNOT produce the announce text without running the emit (variable doesn't exist otherwise). If your final user-visible message ends with PR-summary prose and no `Metrics: ...` line at the very end — you composed prose announce instead of running the bash flow. That's the bug. Anti-pattern 31a.
+2. **Phase 4.13 (final announce) is a single bash procedure, structurally coupled with Phase 4.11 metrics emission** via shared `$METRICS_LINE` shell variable. Run the bash verbatim from [`phase-4-finalize.md`](phase-4-finalize.md) §4.13. You CANNOT produce the announce text without running the emit (variable doesn't exist otherwise). If your final user-visible message ends with PR-summary prose and no `Metrics: ...` line at the very end — you composed prose announce instead of running the bash flow. That's the bug. [Anti-pattern §19a](anti-patterns.md).
 
-3. **Phase 4.0.5 (pre-emit sanity check)**: AFTER the bash flow runs, verify `wc -l` of `$LOG_PATH` grew by exactly 1 vs the pre-count you captured before the append. If it didn't grow, the append failed silently — re-run or fail loud with `Metrics: APPEND FAILED — <reason>` in the announce. Don't gloss over.
+3. **Append verification is wrapper-owned — check the OK line, don't recount**: `metrics-append` counts `$LOG_PATH` lines before and after the write internally and emits `OK pre=N post=N+1 …` only when the delta is exactly 1 (silent write failure → `IOFAIL append silent-fail: pre=… post=… delta=… expected=1`). AFTER the §4.13 bash flow runs, verify the captured wrapper output starts with `OK ` and `post = pre + 1`; any other result surfaces verbatim as `Metrics: APPEND FAILED — <reason>` in the announce. Don't re-implement the count with hand-run `wc -l`, and don't gloss over a non-OK result.
 
 These three are NOT optional and NOT ceremony. They're the fail-fast contract that makes the skill self-verifying — if you skip them, downstream metrics-driven skill iteration breaks silently.
 
@@ -212,8 +212,8 @@ Now, the rules for the implementation work:
 "- Wrap entry point with feature flag `{flag_name}` ({feature_flags.system}). Default `{feature_flags.default_state}`. Register in `{feature_flags.registry_path}`."]
 [+ if config.security_scan.enabled →
 "- Do not introduce dependencies with known CVEs at threshold {threshold}. Phase 3 will scan; resolve before review."]
-[+ if Phase 0.0.3 detected caveman as ACTIVE →
-"- Respond in caveman style — compressed prose, technical accuracy preserved (e.g. 'Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:' instead of 5-sentence narrative). Code, file paths, error messages, and structured output (tables, JSON, diffs) are NEVER compressed — only natural-language framing. The caveman skill is active in this session and will compress output by ~75% — match its register so structure stays consistent. Self-review section, completion reports, and metrics output (Phase 4.11 calibration parsing) follow strict format below — those are LITERAL strings, not prose, do not compress them."]
+[+ if Phase 0 Step 2 detected caveman as ACTIVE →
+"- Respond in caveman style — compressed prose, technical accuracy preserved (e.g. 'Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:' instead of 5-sentence narrative). Code, file paths, error messages, and structured output (tables, JSON, diffs) are NEVER compressed — only natural-language framing. The caveman skill is active in this session and will compress output by 65% (measured) — match its register so structure stays consistent. Self-review section, completion reports, and metrics output (Phase 4.11 calibration parsing) follow strict format below — those are LITERAL strings, not prose, do not compress them."]
 - No backwards compat — clean breaks only.
 - No new dependencies without explicit listing in Requirements.
 - Commit specific files only. Convention: `feat|fix|refactor|test|chore|wip(module): desc`

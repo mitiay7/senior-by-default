@@ -290,7 +290,7 @@
         { "type": "integer", "minimum": 1 },
         { "type": "null" }
       ],
-      "description": "Opt-in. Omit/null disables Phase 0.0.1 entirely."
+      "description": "Opt-in. Omit/null disables the Phase 0 Step 1 WIP check entirely."
     },
 
     "concurrent_edit_check": {

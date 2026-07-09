@@ -1,7 +1,7 @@
 # Stack Detection & Cache
 
 ## When this runs
-Phase 0.2 only. **If cache exists and `$ARGUMENTS` doesn't request re-detection, skip this entirely** — use cached values.
+Phase 0 Step 4 only. **If cache exists and `$ARGUMENTS` doesn't request re-detection, skip this entirely** — use cached values.
 
 ## Cache location
 `~/.claude/do/cache/<slug>.json`
@@ -169,7 +169,7 @@ Pattern derived from existing files:
 - `*.exs` (Ecto)
 - `*.rs` (Diesel)
 
-None found → `migration_dir: null`, `migration_pattern: null`. Phase 0.6 skipped.
+None found → `migration_dir: null`, `migration_pattern: null`. Phase 0 Step 5 migration detection skipped.
 
 ## Detection output
 Print inline before continuing Phase 0:
