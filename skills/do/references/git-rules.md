@@ -72,14 +72,20 @@ Never hardcode an old version.
 ## Branch collisions
 Branch already exists → increment suffix `-v2`, `-v3`, ..., **cap at `-v9` → ask user**. Never touch branches you didn't create.
 
-## Secret guard (every commit AND every push)
-Forbidden file globs: `.env*`, `*.key`, `*.pem`, `credentials.*`, `*.secret`, `id_rsa*`, `*.p12`, `*.pfx`.
+## Secret guard (every push) — executed by the `secret-scan` wrapper, NOT by inspection
 
-Before each push:
-1. `git diff --cached --name-only` — verify no forbidden globs
-2. Inspect diff content (`git diff --cached`) for inline secrets in any config/auth/source file. Look for: API keys (`sk-...`, `xoxb-...`, `gh[ps]_...`, AWS `AKIA...`), tokens, OAuth client secrets, passwords, JWT signing keys.
+The gate is the **`secret-scan` wrapper** (`scripts/secret-scan`), invoked by the Phase 4.1.2 push block ([`phase-4-finalize.md`](phase-4-finalize.md)) — the push is dispatched on its exit code (0 = push, 3 = BLOCK, 1 = REJECT/fail-closed). Manual diff eyeballing is not the gate (anti-pattern [§19g](anti-patterns.md)).
 
-Found → STOP, alert user. Do not push.
+What the wrapper enforces, over the **full push range** `merge-base(origin/main, HEAD)..HEAD` (per-commit names + added content; full-tree fallback when no origin/main):
+
+- Forbidden file globs: `.env*`, `*.key`, `*.pem`, `credentials.*`, `*.secret`, `id_rsa*`, `*.p12`, `*.pfx` — basename match on every file touched in the range. Template files (`*.example`, `*.sample`, `*.template`, `*.dist`) are exempt from the name check only; their content is still scanned.
+- Inline secrets in added lines: API keys (`sk-...`, `xox[baprs]-...`, `gh[pousr]_...`, AWS `AKIA...`), PEM private-key blocks, signed JWTs, quoted password / client-secret / signing-key assignments.
+
+Why the full range and not `git diff --cached` (the pre-wrapper prose): by push time the earlier task commits are already in branch history — a secret committed (or committed-then-deleted) mid-implementation never appears in the staged diff, yet its blob is pushed with everything else. The range scan closes that latent bypass; `git log -p` per commit also catches add-then-delete.
+
+Wrapper says BLOCK → STOP, alert user (finding list = pattern names + paths, never the secret text). Do not push — not from another block, another cwd, or with `--no-verify`. A pushed secret is revoke-and-rotate, not revert.
+
+Origin: the pre-push check was instruction-only prose through v0.8.x — by the §19 ledger's law (metrics: 7 audited bypasses; caveman: 2 prod bypasses; plan-size, pr-size) it would eventually be skipped, and this is the pipeline's only unrecoverable skip. Wrapper-owned since the 2026-07 audit (finding 5).
 
 ## $ARGUMENTS sanitization
 Strip injection-enabling characters only:

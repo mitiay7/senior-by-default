@@ -154,7 +154,7 @@ Before announcing completion, scan [`references/anti-patterns.md`](references/an
 - Worktree only — never `git checkout -b`, never `git clone`
 - Never commit to `main`. Never `--force` / `--hard` / `--amend` / `--no-verify`
 - Never modify `.git/config` or `core.hooksPath`
-- Never commit `.env*` / `*.key` / `*.pem` / `credentials.*` / `*.secret`. Verify `git diff --cached --name-only` + content before every push
+- Never commit `.env*` / `*.key` / `*.pem` / `credentials.*` / `*.secret` or inline keys/tokens. The Phase 4.1.2 `secret-scan` wrapper gates every push over the full push range (`merge-base(origin/main, HEAD)..HEAD`) — push only on its exit 0, never on eyeballed diffs
 - `Co-Authored-By: <current model from environment>` — auto-detect, never hardcode
 
 ## Top-level anti-patterns (full: [`references/anti-patterns.md`](references/anti-patterns.md))

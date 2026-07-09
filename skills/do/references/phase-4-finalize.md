@@ -41,12 +41,37 @@ Final commit message:
 - Body includes `Ref: {config.issue_tracker.repo}#{N}` if issue tracker configured (use `config.naming.issue.ref_format` for the formatted id)
 - Footer: `Co-Authored-By: <current model from environment> <noreply@anthropic.com>` — **auto-detect from environment, never hardcode**
 
-Secret check (filenames + content) before push. See [`git-rules.md`](git-rules.md).
+### 4.1.2 Push — gated on `secret-scan` (ONE bash block, push only on its exit 0)
 
-### 4.1.2 Push
+The pre-push secret check is **wrapper-owned** (`secret-scan` — globs + content patterns from [`git-rules.md`](git-rules.md) §Secret guard). It scans the **full push range** `merge-base(origin/main, HEAD)..HEAD`, names + per-commit added content — NOT the staged diff: by 4.1 the earlier Phase 2 commits are already in branch history, so a secret committed (or committed-then-deleted) mid-implementation never appears in `--cached` yet every one of those blobs gets pushed. Do NOT eyeball the diff and decide "clean" yourself (anti-pattern [§19g](anti-patterns.md)) — this is the single irreversible skip in the pipeline: a pushed secret is revoke-and-rotate, not revert.
+
+The push lives INSIDE the same block, dispatched on the wrapper's exit code — run as ONE Bash command (fresh-shell model: a scan run in a separate block proves nothing about the block that pushes):
+
+```bash
+# Canonical do-scripts resolver — identical line in every wrapper block; each
+# block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
+DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+
+if [ ! -x "$DO_SCRIPTS/secret-scan" ]; then
+  # FAIL CLOSED — the gate cannot run; pushing unchecked deletes the only
+  # irreversible-skip guard. Fix = re-run install.sh / /plugin install, re-run 4.1.2.
+  SECRET_SCAN_OUT="Phase 4.1: GATE ERROR — secret-scan wrapper not found (do-scripts resolver found no install)"
+  printf '%s\n' "$SECRET_SCAN_OUT" "PUSH WITHHELD — do not push until the wrapper resolves."
+elif SECRET_SCAN_OUT="$("$DO_SCRIPTS/secret-scan" -C "$WORKTREE_PATH" 2>&1)"; then
+  printf '%s\n' "$SECRET_SCAN_OUT"                    # SECRETS PASS + range tell
+  git -C "$WORKTREE_PATH" push -u origin "$EXPECTED"
+else
+  printf '%s\n' "$SECRET_SCAN_OUT"                    # SECRETS BLOCK + finding list, or REJECT
+  echo "PUSH WITHHELD — secret-scan did not pass. NEVER push around this gate (separate block, other cwd, --no-verify)."
+fi
 ```
-git -C "$WORKTREE_PATH" push -u origin "$EXPECTED"
-```
+
+Dispatch on the wrapper's first output line:
+- `Phase 4.1: SECRETS PASS` (exit 0) → the push already ran in the same block. Record for §4.11/§4.13: `gates.secret_scan = { "status": "pass", "details": { "tell": "<the wrapper's verdict line, verbatim>" } }` — the range SHAs + counts in it are the §19g anti-fabrication tell; carry the line from real stdout, never retype from memory.
+- `Phase 4.1: SECRETS BLOCK` (exit 3) → push withheld. **STOP**: alert the user with the finding list (paths + pattern names only — the wrapper never prints the secret text). Remove the secret from branch history or rotate it; do NOT proceed to 4.2. Metrics: `gates.secret_scan = { "status": "block", "details": { "tell": "<verdict line>" } }`, `OUTCOME="blocked"`, `--blocked-reason "secret_scan block"`.
+- `REJECT …` (exit 1) / `GATE ERROR` → fail closed: no push happened. Fix the invocation / install and re-run 4.1.2; a REJECT is never a pass. If the task ends here: `gates.secret_scan = { "status": "fail", "details": { "reason": "<the REJECT/GATE ERROR line>" } }`.
+
+> There is NO spec-copyable pass form for this gate — the verdict line with its range SHAs exists only in wrapper stdout. Proceeding to 4.2 / the §4.13 announce presupposes a real `SECRETS PASS` earlier in this transcript.
 
 ## 4.2 PR / MR creation (Medium / High, if issue tracker configured)
 
