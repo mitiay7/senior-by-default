@@ -200,7 +200,7 @@ If `config.lessons_doc` set:
 
 ## 4.11 Metrics log — **MANDATORY when configured**
 
-**If `config.metrics.log_path` is set, this step is NOT optional.** Skipping it is an [anti-pattern](anti-patterns.md). Phase 4 cannot be considered complete until the JSONL entry is appended AND verified. The final announce (below) MUST include either `Metrics: <count> entries in <path>` or an explicit skip reason (`Metrics: skipped — <reason>`).
+**If `config.metrics.log_path` is set, this step is NOT optional.** Skipping it is an [anti-pattern](anti-patterns.md). Phase 4 cannot be considered complete until the JSONL entry is appended AND verified. The final announce (below) MUST end with a `Metrics:` line in one of the exactly three forms the §4.13 bash flow emits: `Metrics: <count> entries in <path> (pre=<n> gates=<n>)`, `Metrics: APPEND FAILED — <reason>`, or `Metrics: not configured (…)`. This is a CLOSED set — there is no hand-written skip form. A `Metrics: skipped — <reason>` line matches no bash path in this file; it marks the announce as composed by hand (anti-pattern §19a) and the Stop hook blocks it when enabled.
 
 If the field is unset/null → silently skip (no log path = no metrics, no warning).
 
@@ -466,9 +466,19 @@ if [ -n "$LOG_PATH" ]; then
         ${AUTO_MERGE_FLAG:+--auto-merge "$AUTO_MERGE_FLAG"} \
         ${BLOCKED_REASON:+--blocked-reason "$BLOCKED_REASON"} \
         2>&1); then
-    # stdout shape: "OK pre=N post=N+1 path=<log>"
-    POST_COUNT=$(echo "$METRICS_RESULT" | sed -n 's/.*post=\([0-9]*\).*/\1/p')
-    METRICS_LINE="Metrics: $POST_COUNT entries in $LOG_PATH"
+    # stdout shape: "OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|->"
+    # (parse anchored on the ^OK line — $METRICS_RESULT holds 2>&1, so a stderr
+    # "NOTE gate-normalize: …" line may precede it)
+    POST_COUNT=$(echo "$METRICS_RESULT"  | sed -n 's/^OK pre=[0-9]* post=\([0-9]*\) .*/\1/p')
+    PRE_COUNT=$(echo "$METRICS_RESULT"   | sed -n 's/^OK pre=\([0-9]*\) post=.*/\1/p')
+    GATES_COUNT=$(echo "$METRICS_RESULT" | sed -n 's/^OK .* gates=\([0-9]*\) renamed=.*/\1/p')
+    # The (pre= gates=) suffix carries part of the wrapper's anti-fabrication tell
+    # into the user-visible line: pre+1 must equal the entry count and gates= must
+    # match the appended entry — hand-composed lines with an inconsistent (or
+    # guessed) tell are visible bugs, and the Stop hook cross-checks pre+1 == count.
+    # LOCKSTEP: this exact format is parsed by hooks/do-metrics-stop-gate.sh —
+    # change the format and the hook's parsers together, never one side alone.
+    METRICS_LINE="Metrics: $POST_COUNT entries in $LOG_PATH (pre=$PRE_COUNT gates=$GATES_COUNT)"
   else
     # wrapper printed REJECT <reason> or IOFAIL <reason> to stderr (captured via 2>&1)
     METRICS_LINE="Metrics: APPEND FAILED — $METRICS_RESULT"
@@ -511,6 +521,7 @@ The wrapper file (`skills/do/scripts/metrics-append`) lives in the skill and shi
 - Final assistant message ends with PR summary, no `Metrics:` line at the very end → you skipped the bash procedure
 - `Metrics:` line says `APPEND FAILED — REJECT <reason>` → the wrapper rejected your input. The reason is explicit (missing required arg, bad enum, malformed JSON payload). Fix the offending value and re-run the emit. Most common: forgot `--sr-performed/--sr-claimed/--sr-calibration` from Phase 2.5.
 - `Metrics:` line says `APPEND FAILED — IOFAIL <reason>` → file write or count-delta check failed. Diagnose disk/lock/permission.
+- `Metrics:` line is any OTHER form — `Metrics: skipped — <reason>`, a count without the `(pre=… gates=…)` tell, prose — → no bash path above emits it; you composed it by hand. The Stop hook (when enabled) blocks unrecognized forms outright (the legal set is CLOSED) and cross-checks recognized ones: tell consistency (`pre`+1 = count) plus log freshness (last entry's ref in the announce, or mtime ≤ 30 min). A tell-less count is tolerated by the hook only for pre-tell installs — produced from THIS spec it means the flow wasn't run.
 - Announce uses different format than above (free prose) → you composed text instead of running the bash flow
 - Log file gained an entry but `Metrics:` line in announce didn't reference it (or shape doesn't match the wrapper output) → you bypassed the wrapper and wrote directly. The daily-report scanner will surface the bypass in tomorrow's report; don't do this.
 

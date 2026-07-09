@@ -4,22 +4,35 @@
 #
 # Purpose: the wrapper + announce-coupling in Phase 4.11/4.13 make metrics-skip
 # rare but still model-dependent (the orchestrator can write a prose announce and
-# stop). This hook is the harness backstop: the Claude Code runtime runs it on
-# every Stop, and it BLOCKS the stop when a /do finalize turn lacks a valid,
-# file-backed `Metrics:` line — making emission non-bypassable.
+# stop). This hook is the harness-enforced backstop: the Claude Code runtime runs
+# it on every Stop, and it BLOCKS the stop when a /do finalize turn lacks a
+# valid, file-backed, fresh `Metrics:` line. Backstop, not a guarantee — it is
+# opt-in and verifies the announce against the log file, nothing stronger.
 #
 # SELF-SCOPING (critical — this is why it's safe to register globally): the hook
 # is a NO-OP on any turn that doesn't carry the /do final-announce signature
 # (`Complete. Branch:` or `Models: orchestrator=`). Normal Q&A, other skills, and
-# non-/do work never match → never blocked.
+# non-/do work never match → never blocked. A turn that QUOTES the §4.13 spec
+# (docs work on the skill itself) carries UNEXPANDED placeholders
+# (`$EXPECTED`, `${METRICS_LINE}`, …) and is also a no-op — a real announce
+# ships expanded values only. This placeholder guard is deliberately narrower
+# than a cwd-based self-repo guard, which would also disable the backstop for
+# genuine /do runs on this repo.
 #
 # Decision protocol (Claude Code Stop hook): read JSON on stdin, emit
 # {"decision":"block","reason":"..."} on stdout with exit 0 to block the stop;
 # exit 0 with no output to allow it. `stop_hook_active` guards against loops.
 #
-# Graceful degradation: any uncertainty (no last message, unrecognized Metrics
-# form, jq missing) → exit 0 (allow). The hook only ever blocks on a POSITIVE
-# detection of a /do finalize that is missing/contradicted by its metrics claim.
+# Graceful degradation: genuine uncertainty (no last message, jq missing,
+# unreadable mtime) → exit 0 (allow). The hook only ever blocks on a POSITIVE
+# detection: metrics claim missing, outside the closed set of §4.13 forms,
+# contradicted by the file, internally inconsistent, or stale.
+#
+# LOCKSTEP INVARIANT: the parsers below understand exactly the announce forms
+# the §4.13 bash flow emits (references/phase-4-finalize.md). Change the
+# announce format and this hook TOGETHER — drift either false-blocks every
+# legitimate run (a tell appended after the path breaks the path parse) or
+# silently disables verification (a tell inserted before "in" empties it).
 
 set -uo pipefail
 
@@ -51,6 +64,10 @@ fi
 # /do finalize signature. Neither present → not a /do finalize turn → allow.
 printf '%s\n' "$MSG" | grep -qE '^(Complete\. Branch:|Models: orchestrator=)' || exit 0
 
+# Template-quoting guard (false-positive fix): a message carrying unexpanded
+# §4.13 variables is quoting/editing the spec, not announcing a finalize.
+printf '%s' "$MSG" | grep -qE '\$(\{)?(METRICS_LINE|METRICS_RESULT|POST_COUNT|EXPECTED|ORCHESTRATOR_MODEL)' && exit 0
+
 METRICS_LINE=$(printf '%s\n' "$MSG" | grep -E '^Metrics:' | tail -1)
 
 if [ -z "$METRICS_LINE" ]; then
@@ -64,23 +81,71 @@ case "$METRICS_LINE" in
   "Metrics: APPEND FAILED"*)  exit 0 ;;
 esac
 
-# "Metrics: <N> entries in <path>" — verify the claim is backed by the real file
-# (promotes the wrapper's pre/post line-count tell to harness-level enforcement).
-N=$(printf '%s\n' "$METRICS_LINE" | sed -n 's/^Metrics:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*entries.*/\1/p')
-PATHV=$(printf '%s\n' "$METRICS_LINE" | sed -n 's/^Metrics:.*entries in \(.*\)$/\1/p')
-PATHV="${PATHV%.}"; PATHV="${PATHV/#\~/$HOME}"
+# Only one legal form remains (CLOSED set — §4.13 emits exactly three):
+#   "Metrics: <N> entries in <path> (pre=<p> gates=<g>)"   (current spec)
+#   "Metrics: <N> entries in <path>"                       (pre-tell installs)
+# The announce heredoc appends a trailing period; strip one before parsing.
+LINE="${METRICS_LINE%.}"
 
-# Unrecognized Metrics: form → don't risk a false block.
-{ [ -z "$N" ] || [ -z "$PATHV" ]; } && exit 0
+# Optional wrapper tell carried into the announce: " (pre=<p> gates=<g>)".
+PRE=$(printf '%s\n' "$LINE" | sed -n 's/^Metrics:.* (pre=\([0-9][0-9]*\) gates=[0-9][0-9]*)$/\1/p')
+CORE="$LINE"
+[ -n "$PRE" ] && CORE=$(printf '%s\n' "$LINE" | sed 's/ (pre=[0-9][0-9]* gates=[0-9][0-9]*)$//')
+
+N=$(printf '%s\n' "$CORE" | sed -n 's/^Metrics:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*entries in ..*$/\1/p')
+PATHV=$(printf '%s\n' "$CORE" | sed -n 's/^Metrics:[[:space:]]*[0-9][0-9]*[[:space:]]*entries in \(..*\)$/\1/p')
+PATHV="${PATHV/#\~/$HOME}"
+
+# Closed set: an unparseable `Metrics:` line is a POSITIVE detection, not
+# uncertainty — no §4.13 bash path emits any other form. Hand-composed variants
+# ("Metrics: skipped — <reason>", prose restatements) land here; the old
+# fallthrough-allow at this point was a documented bypass.
+if [ -z "$N" ] || [ -z "$PATHV" ]; then
+  jq -n --arg l "$METRICS_LINE" '{decision:"block", reason:("senior-by-default Phase 4.13: `" + $l + "` matches none of the three forms the §4.13 bash flow emits (`Metrics: <N> entries in <path> (pre=<p> gates=<g>)`, `Metrics: APPEND FAILED — <reason>`, `Metrics: not configured …`). No bash path emits this line — it was composed by hand; there is no `Metrics: skipped` form. Run the §4.13 metrics-emit flow verbatim and use its real output. Anti-pattern §19/§19a.")}'
+  exit 0
+fi
+
+# Tell consistency: the wrapper appends exactly one line and verifies the delta,
+# so a genuine tell always satisfies pre + 1 == N. A hand-composed tell copied
+# from a stale `wc -l` typically writes pre == N — caught here.
+if [ -n "$PRE" ] && [ "$((10#$PRE + 1))" -ne "$N" ]; then
+  jq -n --arg l "$METRICS_LINE" '{decision:"block", reason:("senior-by-default Phase 4.13: `" + $l + "` is internally inconsistent — metrics-append guarantees post = pre + 1 for a single append, so this tell was not produced by the wrapper. Re-run the §4.13 emit and use its real OK output. Anti-pattern §19/§19a.")}'
+  exit 0
+fi
 
 if [ ! -f "$PATHV" ]; then
   jq -n --arg l "$METRICS_LINE" --arg p "$PATHV" '{decision:"block", reason:("senior-by-default Phase 4.13: the announce claims `" + $l + "` but the log file " + $p + " does not exist — the Metrics line was composed by hand, metrics-append never ran. Emit via ~/.claude/skills/do/scripts/metrics-append (the §4.13 flow). Anti-pattern §19/§19a.")}'
   exit 0
 fi
 
+# Count check. Deliberately -lt, not -ne: ACTUAL > N is legitimate (a concurrent
+# /do session may append to the same log between this session's emit and Stop).
 ACTUAL=$(wc -l < "$PATHV" 2>/dev/null | tr -d ' '); ACTUAL="${ACTUAL:-0}"
 if [ "$ACTUAL" -lt "$N" ]; then
   jq -n --arg l "$METRICS_LINE" --arg a "$ACTUAL" --arg n "$N" '{decision:"block", reason:("senior-by-default Phase 4.13: the announce claims " + $n + " entries but the log actually has " + $a + " lines — the entry was NOT appended this turn (fabricated or silently-failed Metrics line). Re-run the §4.13 metrics-append emit and use its real OK output.")}'
+  exit 0
+fi
+
+# Freshness cross-check: the count check only proves the file has >= N lines —
+# not that THIS turn appended one (claiming N = the log's current `wc -l` with
+# zero appends was the cheapest bypass). Fresh = the last JSONL entry's ref
+# appears in the announce, OR the file was written within the last 30 minutes
+# (the OR absorbs ref-format variance and concurrent-session appends).
+# Unreadable mtime → allow (uncertainty never blocks).
+FRESH=""
+LAST_REF=$(tail -1 "$PATHV" 2>/dev/null | jq -r '.ref // empty' 2>/dev/null || true)
+[ -n "$LAST_REF" ] && printf '%s' "$MSG" | grep -qF -- "$LAST_REF" && FRESH="ref"
+if [ -z "$FRESH" ]; then
+  MTIME=$(stat -f %m "$PATHV" 2>/dev/null) || MTIME=$(stat -c %Y "$PATHV" 2>/dev/null) || MTIME=""
+  case "$MTIME" in *[!0-9]*) MTIME="" ;; esac   # neither stat dialect → unknown
+  if [ -z "$MTIME" ]; then
+    FRESH="unknown-mtime"
+  elif [ "$(( $(date +%s) - MTIME ))" -le 1800 ]; then
+    FRESH="mtime"
+  fi
+fi
+if [ -z "$FRESH" ]; then
+  jq -n --arg l "$METRICS_LINE" --arg p "$PATHV" '{decision:"block", reason:("senior-by-default Phase 4.13: the announce claims `" + $l + "` but " + $p + " is STALE — its last entry does not reference this task and the file has not been written in over 30 minutes. The line claims the log’s existing count without appending (anti-pattern §19/§19a). Re-run the §4.13 metrics-append emit and use its real OK output.")}'
   exit 0
 fi
 

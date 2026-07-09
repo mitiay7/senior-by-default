@@ -42,6 +42,26 @@ Verified empirically on both platforms. macOS BSD path: canonical timestamp → 
 
 Audit finding #3 (major).
 
+### Fixed — metrics Stop-gate hardened: closed announce set, freshness cross-check, tell carried into the announce (was: defeatable in both directions)
+
+The announce/stop-gate chain was defeatable in both directions, all verified against the live hook. False negatives: the hook blocked only when the log had FEWER lines than claimed, so claiming the log's current `wc -l` with zero appends this turn passed silently — the cheapest move for the exact adversary the hook names; §4.11 sanctioned a `Metrics: skipped — <reason>` form no bash path ever emits (hand-composable, and the hook's unrecognized-form fallthrough allowed it); and §4.13 rebuilt the user-visible line as `Metrics: $POST_COUNT entries in $LOG_PATH`, stripping the wrapper's `pre=/post=/gates=` tell — the whole line was composable verbatim from spec text, unlike `check-caveman` whose canonical strings live only in the wrapper. False positive: a session quoting the §4.13 heredoc template (docs work on phase-4 itself) tripped the no-`Metrics:`-line block.
+
+**Fix**, spec and hook in lockstep:
+
+- **`phase-4-finalize.md` §4.11** — the phantom skip form is deleted (`Metrics: skipped` had zero emitting bash paths repo-wide); the legal `Metrics:` forms are now an explicitly CLOSED set of three: `<count> entries in <path> (pre=<n> gates=<n>)`, `APPEND FAILED — <reason>`, `not configured (…)`. "What broke the procedure" gains the matching bullet.
+- **`phase-4-finalize.md` §4.13** — the announce now carries part of the wrapper's anti-fabrication tell: `(pre=<n> gates=<n>)` parsed from the OK line, anchored on `^OK` because `$METRICS_RESULT` holds `2>&1` and a `NOTE gate-normalize:` stderr line may precede it. LOCKSTEP comment added at the format definition: change the announce format and the hook's parsers together, never one side alone — a tell appended after the path would false-block every legitimate run under the old path parse; one inserted before "in" would empty it and silently disable verification.
+- **`hooks/do-metrics-stop-gate.sh`** — three new positive detections plus a false-positive guard:
+  - **Closed set** — an unrecognized `Metrics:` form (`skipped — <reason>`, prose restatements) now BLOCKS; the old fallthrough-allow at that exact point was the documented bypass. Terminal states (`not configured`, `APPEND FAILED`) still pass; the tell suffix stays optional so pre-tell installs don't false-block.
+  - **Tell consistency** — a carried tell must satisfy `pre`+1 = count (the wrapper guarantees post = pre+1 for a single append); a hand-composed tell copied from a stale `wc -l` typically writes pre = count → block.
+  - **Freshness cross-check** — the count check only proves the file has ≥ N lines, not that THIS turn appended one. Now the last JSONL entry's `ref` must appear in the announce OR the log mtime must be within 30 minutes (BSD/GNU dual-path `stat`; unreadable mtime → allow, uncertainty never blocks). The count comparison stays `<` (not `≠`) deliberately — a concurrent `/do` session appending to the same log between emit and Stop legitimately pushes the count above the claim.
+  - **Template-quoting guard** — a message carrying unexpanded §4.13 placeholders (`$EXPECTED`, `${METRICS_LINE}`, …) is quoting/editing the spec, not finalizing → no-op. Deliberately narrower than a cwd-based self-repo guard (which would disable the backstop for genuine `/do` runs on this repo). "Require both signature lines" was considered and dropped: it trades a false positive for a cheaper false negative (omit the `Models:` line to escape hook scope entirely).
+- **"non-bypassable" → "harness-enforced backstop"** — README hook section + v0.8 status highlight, `hooks.md`, the hook header, and `install.sh` step-6.5 comment/prompt no longer claim the absolute; the hook is opt-in and verifies the announce against the log file, nothing stronger. Historical release notes below keep their original wording.
+- **Docs lockstep** — README troubleshooting and `hooks.md` now show the tell-carrying announce shape; `hooks.md` documents the new block conditions and the lockstep invariant (re-install after changing either side so the deployed `~/.claude` copies match — a new-format spec against an old-format hook false-blocks every run).
+
+Verified with an 18-case probe harness of crafted Stop payloads: legit announces allow (new/old format, fresh log, ref-in-announce with stale mtime, concurrent ACTUAL > N); bypasses block (stale-count claim in both formats, `skipped` form, prose restatement, 99-entry over-claim, missing `Metrics:` line, pre=count tell mismatch, nonexistent path); template-quoting and `stop_hook_active` don't false-block. End-to-end: a genuine `metrics-append` run → §4.13 parse → announce → hook allow, exercising the multi-line NOTE+OK output.
+
+Audit finding #4 (major).
+
 ## [0.8.1] — 2026-05-31
 
 **Patch — version-agnostic model examples.** Doc/comment-only fix; no behavior change.

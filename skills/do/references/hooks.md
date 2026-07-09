@@ -18,14 +18,18 @@ Both hook scripts are **self-locating** (resolve siblings via `$0`) and **degrad
 
 ### `do-metrics-stop-gate.sh` — Stop hook (primary)
 
-Makes Phase 4.11 metrics emission **non-bypassable**. On every `Stop`, the runtime runs it; it:
+The **harness-enforced backstop** for Phase 4.11 metrics emission — a backstop, not a guarantee: it is opt-in and verifies the announce against the log file, nothing stronger (the tier table's "Defeated by" column applies). On every `Stop`, the runtime runs it; it:
 
-1. **Self-scopes**: no-op unless the last assistant message carries the /do final-announce signature (`Complete. Branch:` or `Models: orchestrator=`). Normal Q&A, other skills, non-/do turns → never touched. *This is why it is safe to register globally.*
+1. **Self-scopes**: no-op unless the last assistant message carries the /do final-announce signature (`Complete. Branch:` or `Models: orchestrator=`). Normal Q&A, other skills, non-/do turns → never touched. *This is why it is safe to register globally.* A message carrying **unexpanded §4.13 placeholders** (`$EXPECTED`, `${METRICS_LINE}`, …) is quoting/editing the spec (docs work on the skill itself), not announcing a finalize → also no-op. This is deliberately narrower than a cwd-based self-repo guard, which would disable the backstop for genuine /do runs on this repo.
 2. On a /do finalize turn, **blocks the stop** (`{"decision":"block","reason":...}`) when:
    - there is **no `Metrics:` line** (prose announce was composed instead of running the §4.13 bash flow), OR
-   - the `Metrics: <N> entries in <path>` line is **not backed by the file** — the path doesn't exist, or the file has fewer than `N` lines (fabricated or silently-failed append). This promotes the wrapper's pre/post line-count tell to a runtime-enforced check.
+   - the `Metrics:` line matches **none of the closed set of legal forms** — `Metrics: <N> entries in <path> (pre=<p> gates=<g>)` (the tell suffix is optional for pre-tell installs), `Metrics: APPEND FAILED — …`, `Metrics: not configured …`. A hand-composed variant like `Metrics: skipped — <reason>` is a positive §19a detection, not uncertainty — no bash path emits it, OR
+   - the entries claim is **not backed by the file** — the path doesn't exist, the file has fewer than `N` lines (deliberately `<`, not `≠`: a concurrent session may legitimately push the count above `N`), or the carried tell is internally inconsistent (`pre`+1 ≠ `N`; the wrapper guarantees post = pre+1). This promotes the wrapper's pre/post line-count tell to a runtime-enforced check, OR
+   - the log is **stale** — the last JSONL entry's `ref` doesn't appear in the announce AND the file wasn't written in the last 30 minutes. Catches the cheapest bypass: claiming the log's existing `wc -l` as `<N>` with zero appends this turn.
 3. Valid terminal states (`Metrics: not configured`, `Metrics: APPEND FAILED — …`) are **not** re-blocked — the failure is already surfaced.
 4. `stop_hook_active` loop-guard: if it already blocked this turn, it allows the stop (Claude Code also hard-overrides Stop hooks after 8 consecutive blocks).
+
+> **Lockstep invariant.** The hook's parsers understand exactly the announce forms the §4.13 bash flow emits. Change `phase-4-finalize.md` §4.13's `METRICS_LINE` format and `do-metrics-stop-gate.sh` **together** — drift either false-blocks every legitimate run or silently disables verification. After changing either, re-install so the deployed copies match.
 
 Covers anti-patterns [§19 / §19a](anti-patterns.md) at the runtime level.
 

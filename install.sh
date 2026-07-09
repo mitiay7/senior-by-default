@@ -236,14 +236,15 @@ fi
 
 # --- Step 6.5: optional enforcement hooks (OPT-IN, default No) --------------
 
-# Tier-3 enforcement (see skills/do/references/hooks.md): a Stop hook that makes
-# Phase 4.11 metrics emission non-bypassable, and a PreToolUse hook that surfaces
+# Tier-3 enforcement (see skills/do/references/hooks.md): a Stop hook that
+# backstops Phase 4.11 metrics emission at the runtime level (harness-enforced
+# backstop — opt-in, so not a guarantee), and a PreToolUse hook that surfaces
 # the plan-size verdict at spawn time. NOT enabled unless the user opts in; merged
 # idempotently into ~/.claude/settings.json with a backup. Default No.
 
 HOOKS_DIR_INSTALLED="$SYMLINK_PATH/hooks"
 SETTINGS_JSON="$HOME/.claude/settings.json"
-ENABLE_HOOKS=$(prompt "Enable opt-in enforcement hooks? (Stop=metrics non-bypassable, PreToolUse=plan-size) — merges into $SETTINGS_JSON" "N" "ENABLE_HOOKS")
+ENABLE_HOOKS=$(prompt "Enable opt-in enforcement hooks? (Stop=metrics backstop, PreToolUse=plan-size) — merges into $SETTINGS_JSON" "N" "ENABLE_HOOKS")
 
 if [[ "$ENABLE_HOOKS" =~ ^[Yy] ]]; then
   if [ ! -f "$HOOKS_DIR_INSTALLED/do-metrics-stop-gate.sh" ]; then
