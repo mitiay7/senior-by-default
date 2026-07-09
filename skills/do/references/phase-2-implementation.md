@@ -229,7 +229,7 @@ These apply to **whoever is currently executing this skill flow** — whether yo
 
 2. **Phase 4.13 (final announce) is a single bash procedure, structurally coupled with Phase 4.11 metrics emission** via shared `$METRICS_LINE` shell variable. Run the bash verbatim from [`phase-4-finalize.md`](phase-4-finalize.md) §4.13. You CANNOT produce the announce text without running the emit (variable doesn't exist otherwise). If your final user-visible message ends with PR-summary prose and no `Metrics: ...` line at the very end — you composed prose announce instead of running the bash flow. That's the bug. [Anti-pattern §19a](anti-patterns.md).
 
-3. **Append verification is wrapper-owned — check the OK line, don't recount**: `metrics-append` counts `$LOG_PATH` lines before and after the write internally and emits `OK pre=N post=N+1 …` only when the delta is exactly 1 (silent write failure → `IOFAIL append silent-fail: pre=… post=… delta=… expected=1`). AFTER the §4.13 bash flow runs, verify the captured wrapper output starts with `OK ` and `post = pre + 1`; any other result surfaces verbatim as `Metrics: APPEND FAILED — <reason>` in the announce. Don't re-implement the count with hand-run `wc -l`, and don't gloss over a non-OK result.
+3. **Append verification is wrapper-owned — check the OK line, don't recount**: `metrics-append` serializes the write under the log's mkdir lock and verifies by CONTENT (the exact entry present as a full line) before emitting `OK pre=N post=N+1 …`; a silent write failure → `IOFAIL append verify failed: …` (the pre/post counts on the OK line are informational — audit #18). AFTER the §4.13 bash flow runs, verify the captured wrapper output starts with `OK `; any other result surfaces verbatim as `Metrics: APPEND FAILED — <reason>` in the announce. Don't re-implement the check with hand-run `wc -l`/`grep`, and don't gloss over a non-OK result.
 
 These three are NOT optional and NOT ceremony. They're the fail-fast contract that makes the skill self-verifying — if you skip them, downstream metrics-driven skill iteration breaks silently.
 
@@ -346,6 +346,14 @@ Pick from `config.specialists.{backend_plan|frontend_plan}` based on scope:
 - Fullstack: 1-2 backend + 1 frontend
 
 **If `config.specialists` not set**: fallback — Opus reviews the plan inline (no parallel agents). Note this in announcement.
+
+**If a configured specialist is UNAVAILABLE at spawn time** (the Task tool rejects the `subagent_type` — plugin uninstalled since the config was written, or the config names a plugin that was never installed): announce per seat, then run that seat's review as **Opus inline** with the same inputs and the same approve/block authority:
+
+```
+Specialist {subagent_type}: NOT AVAILABLE — Opus inline fallback for {backend_plan|frontend_plan}
+```
+
+The fallback model for a missing specialist is ALWAYS Opus — the same model that reviews when `specialists` is unset. NEVER substitute Sonnet (or any implementer-tier model), never skip the seat silently, and never edit the config mid-task to hide the gap — surface it, finish the review at full strength, and let the user fix the config afterward (the announce names the missing plugin). Origin: a phantom `frontend-excellence` reference propagated from an example config surfaced at runtime as "Specialists not available — falling back to Sonnet" — an H-tier plan silently reviewed by the implementer's own tier, the exact independence the specialist stage exists to add (audit #9). Auto-init now verifies the preset against installed plugins ([`phase-0-setup.md`](phase-0-setup.md) Step 4), but hand-edited configs and post-init uninstalls still reach this rule.
 
 All specialists APPROVE → **re-run §2.0 on the approved plan's per-file line deltas** (H's second, post-approval run — the first artifact with real per-file scope; SPLIT-REQUIRED here means split, not implement), then → Step 3.
 Max 3 iterations.

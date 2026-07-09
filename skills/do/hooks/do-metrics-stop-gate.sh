@@ -119,11 +119,14 @@ if [ -z "$N" ] || [ -z "$PATHV" ]; then
   exit 0
 fi
 
-# Tell consistency: the wrapper appends exactly one line and verifies the delta,
-# so a genuine tell always satisfies pre + 1 == N. A hand-composed tell copied
-# from a stale `wc -l` typically writes pre == N — caught here.
-if [ -n "$PRE" ] && [ "$((10#$PRE + 1))" -ne "$N" ]; then
-  jq -n --arg l "$METRICS_LINE" '{decision:"block", reason:("senior-by-default Phase 4.13: `" + $l + "` is internally inconsistent — metrics-append guarantees post = pre + 1 for a single append, so this tell was not produced by the wrapper. Re-run the §4.13 emit and use its real OK output. Anti-pattern §19/§19a.")}'
+# Tell consistency: under the wrapper's log lock a single append yields
+# post = pre + 1; since audit #18 the delta is informational (content verify is
+# authoritative), so tolerate N > pre + 1 — a non-wrapper writer inside the
+# window, rare and already flagged on the wrapper's stderr. N < pre + 1 stays a
+# POSITIVE detection: a hand-composed tell copied from a stale `wc -l`
+# typically writes pre == N — caught here.
+if [ -n "$PRE" ] && [ "$((10#$PRE + 1))" -gt "$N" ]; then
+  jq -n --arg l "$METRICS_LINE" '{decision:"block", reason:("senior-by-default Phase 4.13: `" + $l + "` is internally inconsistent — metrics-append guarantees post >= pre + 1 for a single append, so this tell was not produced by the wrapper (a genuine run never reports a count at or below its own pre). Re-run the §4.13 emit and use its real OK output. Anti-pattern §19/§19a.")}'
   exit 0
 fi
 

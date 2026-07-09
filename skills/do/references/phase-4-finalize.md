@@ -262,6 +262,9 @@ If the field is unset/null → silently skip (no log path = no metrics, no warni
 ### Step 1: prepare path
 ```bash
 LOG_PATH="<resolved log_path>"        # placeholders like {repo_slug} substituted by you
+case "$LOG_PATH" in "~/"*) LOG_PATH="$HOME/${LOG_PATH#\~/}" ;; esac   # config paths are DATA — a leading ~ never
+                                      # saw shell expansion; expand explicitly or this mkdir creates a literal
+                                      # ./~ directory (audit #18c; metrics-append expands its --log the same way)
 mkdir -p "$(dirname "$LOG_PATH")"
 ```
 
@@ -310,7 +313,13 @@ The wrapper enforces:
   INSIDE the wrapper from the raw inputs (see "Self-review calibration logic" below);
   hand-passed `--sr-calibration*` flags are optional cross-checks that REJECT on
   contradiction
-- Atomic append with pre/post line-count delta verification
+- **Write integrity** (audit #18) — the append is serialized under a `<log>.lock`
+  mkdir lock (concurrent /do runs on the shared per-repo log no longer race),
+  a missing trailing newline on the log is repaired BEFORE appending (no fused
+  entries), and success is verified by CONTENT (the exact entry present as a
+  full line — `grep -qxF`); the pre/post line-count delta is informational only
+  (a surprise delta flags a non-wrapper writer on stderr instead of
+  false-failing a successful append into a duplicate-entry retry)
 - Exit code 0 on success (stdout:
   `OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|-> cal=<c>/<d>/<s>`
   — `cal=` echoes the wrapper-computed calibration verdicts), 1 on schema
@@ -544,8 +553,8 @@ PHASE_DURATIONS_JSON="$(jq -c --arg end "$ENDED_AT" '
 DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
 
 # Phase 4.11 emit — invoke the wrapper. METRICS_LINE is set ONLY by capturing its result.
-# The wrapper does schema validation, atomic append, and pre/post line-count delta verify
-# internally. We never compose JSON here; we never `>>` to the log file here.
+# The wrapper does schema validation, lock-serialized append, and content-based post-write
+# verify internally. We never compose JSON here; we never `>>` to the log file here.
 if [ -n "$LOG_PATH" ] && [ ! -x "$DO_SCRIPTS/metrics-append" ]; then
   # FAIL CLOSED — never hand-append to the log. APPEND FAILED is a legal
   # terminal form (the Stop hook does not re-block it) and names the fix.
@@ -630,7 +639,7 @@ Three enforcement layers, each addressing a failure mode the previous one missed
 
 2. **Announce↔emit bash coupling** (v0.3–v0.5) — `$METRICS_LINE` set only by the emit block, no emit → can't compose announce. Fixed the "stops without emitting" failure. Still let sub-agents compose JSON freely inside the emit block, producing 100+ distinct field names across runs and `self_review` block missing in 0 of 37 entries (v0.6 audit).
 
-3. **External wrapper with named-args CLI** (current) — the wrapper is the only path to a valid append. Unknown flags reject, missing required flags reject, bad enums reject. Sub-agent cannot invent a new shape without making the announce print `Metrics: APPEND FAILED — REJECT <reason>`, which is visible. Pre/post line-count delta verification lives inside the wrapper too, so a `>>` that returns exit 0 without actually writing (disk full, lock) is still caught.
+3. **External wrapper with named-args CLI** (current) — the wrapper is the only path to a valid append. Unknown flags reject, missing required flags reject, bad enums reject. Sub-agent cannot invent a new shape without making the announce print `Metrics: APPEND FAILED — REJECT <reason>`, which is visible. Content-based append verification lives inside the wrapper too (the exact entry must be present as a full line after the lock-serialized write), so a `>>` that returns exit 0 without actually writing (disk full) is still caught.
 
 The wrapper file (`skills/do/scripts/metrics-append`) lives in the skill and ships with the install. The §4.13 bash block above invokes it and captures stdout into `$METRICS_LINE`. If `config.metrics.log_path` is unset, the wrapper isn't called and METRICS_LINE = "not configured" — announce still works, only the file write is skipped.
 

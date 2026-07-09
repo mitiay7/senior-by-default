@@ -220,7 +220,7 @@ Sonnet reads it before exploring. `sections` = name → number-or-anchor map. `r
 Each enables the corresponding Phase 3 gate. Omit → gate skipped.
 
 #### `specialists`
-`subagent_type` lists for parallel review. Omit → Opus inline review fallback.
+`subagent_type` lists for parallel review. Omit → Opus inline review fallback. A CONFIGURED entry whose plugin is unavailable at spawn time also falls back to Opus inline — per seat, announced, never Sonnet (audit #9; [`phase-2-implementation.md`](phase-2-implementation.md) Plan Review, [`phase-3-review.md`](phase-3-review.md) §3.6). Auto-init writes only entries verified against `~/.claude/plugins/installed_plugins.json` ([`phase-0-setup.md`](phase-0-setup.md) Step 4).
 
 #### `naming`
 Branch/worktree/ref formats. Defaults match `i{N}` convention. Override for Linear / Jira / etc.

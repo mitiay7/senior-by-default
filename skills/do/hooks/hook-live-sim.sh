@@ -192,8 +192,15 @@ else failc "M3" "rc=$RC out=$(head -c200 "$OUTF")"; fi
 run_hook "$STOP_HOOK" "$(stop_payload "$ANNOUNCE_HEAD
 Metrics: 4 entries in $LOG_OK (pre=4 gates=6)." false)"
 if jq -e '.decision == "block"' "$OUTF" >/dev/null 2>&1 && grep -q 'internally inconsistent' "$OUTF"; then
-  okc "M4 tell pre+1 != N → block"
+  okc "M4 tell pre+1 > N (stale-wc signature) → block"
 else failc "M4" "rc=$RC out=$(head -c200 "$OUTF")"; fi
+
+# Since audit #18 the wrapper's delta is informational (content verify is
+# authoritative), so N above pre+1 = concurrent growth → allowed, not blocked.
+run_hook "$STOP_HOOK" "$(stop_payload "$ANNOUNCE_HEAD
+Metrics: 4 entries in $LOG_OK (pre=2 gates=6)." false)"
+if [ "$RC" -eq 0 ] && [ ! -s "$OUTF" ]; then okc "M4b tell N > pre+1 (concurrent growth) → allow"
+else failc "M4b" "rc=$RC out=$(head -c200 "$OUTF")"; fi
 
 run_hook "$STOP_HOOK" "$(stop_payload "$ANNOUNCE_HEAD
 Metrics: 4 entries in $SB/nope.jsonl (pre=3 gates=6)." false)"

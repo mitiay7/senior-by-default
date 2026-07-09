@@ -21,7 +21,11 @@
 #     --tracker-repo owner/repo \
 #     [--stack "Python (FastAPI)"] \
 #     [--issue-locale en] \
-#     [--specialists default|none]   (default: default — emits recommended preset)
+#     [--specialists default|none]   (default: default — emits the recommended
+#                                     preset VERIFIED against
+#                                     ~/.claude/plugins/installed_plugins.json:
+#                                     missing plugins dropped, empty groups
+#                                     omitted — see "Specialists:" stdout line)
 #     [--metrics default|none]       (default: default — emits tier-1 metrics preset)
 #
 # Exit codes:
@@ -36,6 +40,13 @@
 #        _meta.tracker_degraded_from records the intended type. The OK form's
 #        version + account are runtime-probed (anti-fabrication tell, §19c);
 #        the DEGRADED form is an honest degraded state, copyable on purpose.
+#      — for --specialists default (the default), a FURTHER stdout line
+#        follows (specialists preset verdict): "Specialists: PRESET VERIFIED
+#        (N/M plugins installed: <name@version, …>)" | "Specialists: PRESET
+#        FILTERED (…)" | "Specialists: PRESET EMPTY (…)" | "Specialists:
+#        UNVERIFIED (…)". The name@version list is read at runtime from
+#        ~/.claude/plugins/installed_plugins.json — not composable from spec
+#        text (§19c tell standard).
 #   1  rejected (missing/invalid arg, file exists, refused context, schema fail); stderr: "REJECT <reason>"
 #   2  I/O failure (could not write); stderr: "IOFAIL <reason>"
 
@@ -66,6 +77,15 @@ while [ $# -gt 0 ]; do
 done
 
 # --- arg validation ---------------------------------------------------------
+
+# Tilde expansion (audit #18): a QUOTED '~' in --repo-root never reaches the
+# shell's expansion — pre-fix it failed the -d check with a misleading message
+# (or resolved against a literal ./~ directory if one existed).
+# shellcheck disable=SC2088  # matching the LITERAL quoted tilde is the point
+case "$REPO_ROOT" in
+  "~")   REPO_ROOT="$HOME" ;;
+  "~/"*) REPO_ROOT="$HOME/${REPO_ROOT#\~/}" ;;
+esac
 
 [ -n "$REPO_ROOT" ] || die "--repo-root required"
 [ -d "$REPO_ROOT" ] || die "--repo-root not a directory: $REPO_ROOT"
@@ -172,13 +192,28 @@ fi
 
 # Default specialists preset — references plugins from the two recommended
 # marketplaces (anthropics/claude-plugins-official + wshobson/agents).
-# If user hasn't installed them, /do falls back to Opus inline review per
-# specialist group (no error). Setup notes below tell user how to install.
+# VERIFIED against ~/.claude/plugins/installed_plugins.json before writing
+# (audit #9): pre-fix the preset was written blind, so every new-machine setup
+# got all 6 plugin references regardless of what's installed — re-arming the
+# phantom-plugin incident class (a configured-but-absent specialist surfaced
+# at runtime as an improvised fallback to the WRONG model: "Specialists not
+# available — falling back to Sonnet"). Now:
+#   - manifest readable (version-2 shape: {plugins: {"<name>@<marketplace>":
+#     [{version, …}]}}) → entries whose plugin is missing are DROPPED, groups
+#     that become empty are OMITTED, and a "Specialists:" stdout line reports
+#     both lists. Plugin versions in the line come from the manifest —
+#     runtime-probed, not composable from spec text (§19c tell standard).
+#   - manifest unreadable → full preset with an honest UNVERIFIED line. Either
+#     way the spawn-time rule holds: a configured-but-unavailable specialist
+#     falls back to Opus inline review, NEVER Sonnet (phase-2-implementation.md
+#     "Plan Review" / phase-3-review.md §3.6).
+PLUGINS_MANIFEST="$HOME/.claude/plugins/installed_plugins.json"
+SPECIALISTS_LINE=""
 if [ "$SPECIALISTS" = "none" ]; then
   SPECIALISTS_BLOCK="null"
   SPECIALISTS_NOTE=""
 else
-  SPECIALISTS_BLOCK="$(jq -n '{
+  PRESET_FULL="$(jq -n '{
     backend_plan: [
       "backend-development:backend-architect",
       "backend-development:security-auditor",
@@ -204,7 +239,49 @@ else
       "database-design:database-architect"
     ]
   }')"
-  SPECIALISTS_NOTE=" The specialists block references plugins from two marketplaces — install once via Claude Code: \`/plugin marketplace add anthropics/claude-plugins-official\` + \`/plugin marketplace add wshobson/agents\`, then \`/plugin install backend-development@claude-code-workflows\` (also: code-refactoring, database-design, ui-design, javascript-typescript — all @claude-code-workflows; plus pr-review-toolkit@claude-plugins-official). If any plugin isn't installed, /do falls back to Opus inline review for that specialist group (no error)."
+  INSTALL_NOTE=" The specialists block references plugins from two marketplaces — install once via Claude Code: \`/plugin marketplace add anthropics/claude-plugins-official\` + \`/plugin marketplace add wshobson/agents\`, then \`/plugin install backend-development@claude-code-workflows\` (also: code-refactoring, database-design, ui-design, javascript-typescript — all @claude-code-workflows; plus pr-review-toolkit@claude-plugins-official). If a configured plugin is missing at spawn time, /do falls back to Opus inline review for that specialist seat (never Sonnet, no error)."
+  if [ -r "$PLUGINS_MANIFEST" ] && SPEC_VERIFY="$(jq -c --argjson preset "$PRESET_FULL" '
+        (.plugins // {}) as $map
+        | ($map | keys) as $keys
+        | ($preset | [to_entries[].value[] | split(":")[0]] | unique) as $wanted
+        | ($wanted | map(. as $p | select(any($keys[]; startswith($p + "@"))))) as $present
+        | ($wanted - $present) as $missing
+        | ($preset | to_entries
+            | map(.value |= map(select((split(":")[0]) as $p | ($present | index($p)) != null)))) as $ents
+        | {
+            filtered:     ($ents | map(select((.value | length) > 0)) | from_entries),
+            omitted:      ($ents | map(select((.value | length) == 0) | .key)),
+            present_ver:  ($present | map(. as $p
+              | (($keys | map(select(startswith($p + "@"))))[0]) as $k
+              | $p + "@" + ((try ($map[$k][0].version) catch null) // "?"))),
+            missing:      $missing,
+            install_cmds: ({"pr-review-toolkit": "claude-plugins-official"} as $mkt
+              | $missing | map("/plugin install " + . + "@" + ($mkt[.] // "claude-code-workflows"))),
+            n_wanted:     ($wanted | length),
+            n_present:    ($present | length)
+          }' "$PLUGINS_MANIFEST" 2>/dev/null)"; then
+    SPECIALISTS_BLOCK="$(printf '%s' "$SPEC_VERIFY" | jq -c 'if (.filtered | length) == 0 then null else .filtered end')"
+    N_PRESENT="$(printf '%s' "$SPEC_VERIFY" | jq -r '.n_present')"
+    N_WANTED="$(printf '%s' "$SPEC_VERIFY" | jq -r '.n_wanted')"
+    PRESENT_VER="$(printf '%s' "$SPEC_VERIFY" | jq -r '.present_ver | join(", ")')"
+    MISSING_LIST="$(printf '%s' "$SPEC_VERIFY" | jq -r '.missing | join(", ")')"
+    OMITTED_LIST="$(printf '%s' "$SPEC_VERIFY" | jq -r '.omitted | join(", ")')"
+    INSTALL_LIST="$(printf '%s' "$SPEC_VERIFY" | jq -r '.install_cmds | join("; ")')"
+    if [ "$N_PRESENT" -eq "$N_WANTED" ]; then
+      SPECIALISTS_LINE="Specialists: PRESET VERIFIED ($N_PRESENT/$N_WANTED plugins installed: $PRESENT_VER)"
+      SPECIALISTS_NOTE="$INSTALL_NOTE"
+    elif [ "$N_PRESENT" -eq 0 ]; then
+      SPECIALISTS_LINE="Specialists: PRESET EMPTY (0/$N_WANTED preset plugins installed — specialists block OMITTED; missing: $MISSING_LIST; to enable: $INSTALL_LIST, then re-init or add the block per examples/)"
+      SPECIALISTS_NOTE=" Specialists preset OMITTED at init: none of the $N_WANTED preset plugins were installed (missing: $MISSING_LIST). To enable specialist review: $INSTALL_LIST, then add the specialists block (see examples/ in the senior-by-default repo)."
+    else
+      SPECIALISTS_LINE="Specialists: PRESET FILTERED ($N_PRESENT/$N_WANTED plugins installed: $PRESENT_VER; MISSING: $MISSING_LIST — entries dropped${OMITTED_LIST:+, groups omitted: $OMITTED_LIST}; to restore: $INSTALL_LIST, then re-add)"
+      SPECIALISTS_NOTE="$INSTALL_NOTE Preset FILTERED at init: dropped entries for missing plugin(s) $MISSING_LIST${OMITTED_LIST:+ (groups omitted: $OMITTED_LIST)}; restore: $INSTALL_LIST, then re-add the dropped entries."
+    fi
+  else
+    SPECIALISTS_BLOCK="$PRESET_FULL"
+    SPECIALISTS_LINE="Specialists: UNVERIFIED (no readable ~/.claude/plugins/installed_plugins.json — full preset written; a configured-but-missing plugin falls back to Opus inline review at spawn time, never Sonnet)"
+    SPECIALISTS_NOTE="$INSTALL_NOTE"
+  fi
 fi
 
 # Default metrics preset — matches config-schema.md documented defaults.
@@ -292,12 +369,32 @@ mkdir -p "$OUT_DIR" || iofail "could not create $OUT_DIR"
 TMP="${OUT_PATH}.tmp.$$"
 trap 'rm -f "$TMP"' EXIT
 printf '%s\n' "$CONFIG_JSON" > "$TMP" || iofail "could not write $TMP"
-mv -- "$TMP" "$OUT_PATH" || iofail "could not rename $TMP → $OUT_PATH"
+# Atomic fail-if-exists commit (audit #18d): the early -e check above is a
+# fast-path courtesy only — between it and this write, a PARALLEL auto-init
+# (documented real workflow: N /do agents on one repo) can land its own
+# config, and `mv` would silently clobber it despite the never-overwrite
+# guarantee. ln(2) is atomic and FAILS when the target exists: the first init
+# wins, the loser dies loudly instead of overwriting.
+if ! ln "$TMP" "$OUT_PATH" 2>/dev/null; then
+  if [ -e "$OUT_PATH" ]; then
+    die "already exists: $OUT_PATH (lost an init race — a parallel auto-init committed first; re-read that file, do not retry)"
+  fi
+  iofail "could not link $TMP → $OUT_PATH"
+fi
+rm -f "$TMP"
 trap - EXIT
+# Content-based post-write verify (audit #18): the committed file must parse —
+# catches truncated/partial writes behind the success announce.
+jq -e . "$OUT_PATH" >/dev/null 2>&1 \
+  || iofail "post-write verify failed: $OUT_PATH is not parseable JSON (truncated write?)"
 
 echo "Config: AUTO-GENERATED → $OUT_PATH$SCHEMA_GATE_SUFFIX"
-# Tracker preflight verdict rides second so phase-0's "Config: AUTO-GENERATED"*
-# prefix glob keeps matching the captured stdout.
+# Tracker preflight + specialists preset verdicts ride as extra lines so
+# phase-0's "Config: AUTO-GENERATED"* prefix glob keeps matching the captured
+# stdout; phase-0 carries every line into the announce verbatim.
 if [ -n "$TRACKER_LINE" ]; then
   echo "$TRACKER_LINE"
+fi
+if [ -n "$SPECIALISTS_LINE" ]; then
+  echo "$SPECIALISTS_LINE"
 fi

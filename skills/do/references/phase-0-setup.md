@@ -195,7 +195,12 @@ esac
 
 # Specialists preset: by default emit the recommended `specialists` block
 # (references the 6 plugins from anthropics/claude-plugins-official +
-# wshobson/agents — see README). Opt-out: --no-specialists in $ARGUMENTS.
+# wshobson/agents — see README). config-init VERIFIES the preset against
+# ~/.claude/plugins/installed_plugins.json and DROPS missing plugins —
+# reported on a wrapper-emitted "Specialists: …" stdout line (part of
+# $CONFIG_LINE; see "Specialists preset verification" below). Do NOT
+# pre-probe the manifest here — the wrapper owns the verdict.
+# Opt-out: --no-specialists in $ARGUMENTS.
 case "$ARGUMENTS" in
   *--no-specialists*) SPECIALISTS="none" ;;
   *)                  SPECIALISTS="default" ;;
@@ -260,7 +265,9 @@ Locale detection rationale: keeps the wrapper as the single source of truth for 
 
 **Tracker preflight (wrapper-side, fires only on github/gitlab detections)**: before writing `type: github|gitlab`, config-init probes `command -v gh|glab` + `gh|glab auth status`. Probe fails → the wrapper DEGRADES the written config to `type: "none"` (records `_meta.tracker_degraded_from` / `tracker_degraded_reason` + the remedy in `_setup_notes`) and appends a second stdout line after the `Config:` line: `Tracker: DEGRADED to none (<tool> missing|unauthenticated — <fix>)`. Probe passes → `Tracker: github|gitlab OK (<tool version>; auth account: <login>)` — version + account are runtime probes, not composable from spec text (the anti-fabrication tell; [anti-patterns §19c](anti-patterns.md)). Both forms are part of `$CONFIG_LINE` (full stdout capture) and ride into the announce verbatim. DEGRADED is an honest state, not an error: Phase 1 is skipped **with an explicit announce** (see [`phase-1-issue.md`](phase-1-issue.md)), the rest of the pipeline runs trackerless. Do NOT hand-flip the type back to github/gitlab without a working CLI — the next run's Phase 1 dies at the first `{Tracker.list_open}`. Pre-fix, auto-init trusted the remote URL alone; the fresh-machine state (git present, gh absent) committed the pipeline to a tracker it couldn't talk to, surfacing as a raw `gh: command not found` mid-pipeline (audit #13).
 
-The generated file contains: `version + _meta + issue_tracker + issue_locale + specialists` (unless `--no-specialists` passed). The specialists preset references plugins from the two recommended marketplaces (`anthropics/claude-plugins-official` + `wshobson/agents` — see [README](../../../README.md#recommended-claude-code-plugins-for-phase-3-specialist-review)). If user hasn't installed them, /do falls back to Opus inline review for that specialist group — no error. `_meta._setup_notes` in the generated file lists the exact install commands.
+**Specialists preset verification (wrapper-side, fires when the preset is requested — the default)**: config-init no longer writes the preset blind. It reads `~/.claude/plugins/installed_plugins.json` (the machine-readable install manifest), DROPS every preset entry whose plugin isn't installed, OMITS groups that become empty, and appends a further stdout line after the `Config:`/`Tracker:` lines: `Specialists: PRESET VERIFIED (N/M plugins installed: <name@version, …>)` | `PRESET FILTERED (… MISSING: … — entries dropped, groups omitted: …)` | `PRESET EMPTY (… specialists block OMITTED …)` | `UNVERIFIED (no readable manifest — full preset written)`. The `name@version` list is read from the manifest at runtime — not composable from spec text (the [§19c](anti-patterns.md) tell standard). All forms ride inside `$CONFIG_LINE` verbatim. Pre-fix, every new-machine auto-init wrote all 6 plugin references regardless of what's installed — re-arming the phantom-plugin incident class, where a configured-but-absent specialist surfaced at runtime as an improvised fallback to the WRONG model ("falling back to Sonnet", audit #9). The runtime half of that fix lives in [`phase-2-implementation.md`](phase-2-implementation.md) (Plan Review) and [`phase-3-review.md`](phase-3-review.md) §3.6: a configured specialist unavailable at spawn time → announced Opus inline fallback, NEVER Sonnet.
+
+The generated file contains: `version + _meta + issue_tracker + issue_locale + specialists` (unless `--no-specialists` passed, or the verified preset came back empty). The specialists preset references plugins from the two recommended marketplaces (`anthropics/claude-plugins-official` + `wshobson/agents` — see [README](../../../README.md#recommended-claude-code-plugins-for-phase-3-specialist-review)). `_meta._setup_notes` in the generated file lists the exact install commands, including per-missing-plugin restore commands when the preset was filtered.
 
 Other config sections (`context_doc`, `workspace.repos`, `ui_gate`, `acceptance_extensions`, `naming` overrides) are left for the user to add by extending the file. The file is left unstaged — user reviews and commits when ready. Subsequent `/do` runs re-read it on each Phase 0, so no reload needed after extension.
 
@@ -338,7 +345,7 @@ After all 6 steps pass:
   Models: orchestrator=opus | implementer={haiku|sonnet|opus per complexity, or override}
   Started: {STARTED_AT — the exact value echoed by the preflight task-clock capture, verbatim; Phase 4.11 reads the same value back from $CLOCK_FILE and cross-checks against this line}
   {$CAVEMAN_LINE — output of Step 2 bash, verbatim — DO NOT compose}
-  {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose; auto-init github/gitlab detections carry a SECOND line (`Tracker: … OK (…)` | `Tracker: DEGRADED to none (…)`) — keep both lines, same verbatim rule}
+  {$CONFIG_LINE — output of Step 1 (LOADED) or Step 4 auto-init bash (AUTO-GENERATED | AUTO-INIT SKIPPED | NONE), verbatim — DO NOT compose; auto-init carries EXTRA wrapper lines — `Tracker: … OK (…)` | `Tracker: DEGRADED to none (…)` on github/gitlab detections, and `Specialists: PRESET VERIFIED|FILTERED|EMPTY|UNVERIFIED (…)` when the preset was requested — keep ALL lines, same verbatim rule}
   {$METRICS_CONFIG_LINE — output of Step 1 config-ensure-metrics or Step 4 mirror (ALREADY CONFIGURED | EXPLICIT OPT-OUT | AUTO-ADDED | INCLUDED in auto-init | SKIPPED | PATCH SKIPPED | N/A), verbatim — DO NOT compose; the three wrapper forms carry a runtime `(cfg=…)` fingerprint (§19i) — a wrapper form without it was composed by hand}
   WIP: {n}/{limit} | Affected-graph: {nx/turbo/none}
   [+ if assumptions recorded → "Assumptions: {short list}"]

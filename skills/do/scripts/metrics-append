@@ -71,14 +71,24 @@
 # normalized automatically. Unknown keys are PRESERVED (not rejected) but
 # counted in the OK-line tell. Statuses coerce to pass|warn|fail|block|skipped.
 #
+# Write integrity (audit #18): the append runs under a mkdir-based lock
+# (`<log>.lock/` — atomic on every POSIX FS; flock(1) absent on stock macOS),
+# repairs a missing trailing newline BEFORE appending (an interrupted prior
+# write would otherwise fuse two entries into one corrupt line), and verifies
+# by CONTENT (the exact entry present as a full line) — the pre/post
+# line-count delta is informational only. A leading '~' in --log is expanded
+# to $HOME at arg-parse (a quoted tilde otherwise lands in a literal ./~
+# directory while the Stop hook reads the $HOME-expanded path).
+#
 # Exit codes:
-#   0   appended successfully; stdout:
+#   0   appended successfully (content-verified under the log lock); stdout:
 #         "OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|-> cal=<c>/<d>/<s>"
 #       (cal= echoes the three WRAPPER-COMPUTED calibration verdicts —
 #       legacy/defect/size — part of the anti-fabrication tell)
 #   1   rejected (missing/invalid arg, calibration contradiction, or
 #       schema-gate failed); stderr: "REJECT <reason>"
-#   2   I/O failure (couldn't write to log, file lock, etc.)
+#   2   I/O failure (couldn't write to log, lock not acquirable, content
+#       verify failed after write)
 
 set -euo pipefail
 
@@ -159,7 +169,7 @@ while [ $# -gt 0 ]; do
     --orchestrator)              ORCHESTRATOR="$2";              shift 2 ;;
     --complexity-rebumped-from)  COMPLEXITY_REBUMPED_FROM="$2";  shift 2 ;;
     -h|--help)
-      sed -n '4,81p' "$0"
+      sed -n '4,91p' "$0"
       exit 0
       ;;
     *) die "unknown arg: $1" ;;
@@ -168,6 +178,15 @@ done
 
 # --- Verify required ---
 [ -n "$LOG_PATH" ]       || die "--log required"
+# Tilde expansion (audit #18c): a QUOTED '~' in --log never reaches the
+# shell's expansion — pre-fix the wrapper appended to a literal ./~ directory
+# (an rm-baiting trap) while the Stop hook expanded the same configured path
+# against $HOME and read a DIFFERENT file → lost telemetry + spurious block.
+# shellcheck disable=SC2088  # matching the LITERAL quoted tilde is the point
+case "$LOG_PATH" in
+  "~")   LOG_PATH="$HOME" ;;
+  "~/"*) LOG_PATH="$HOME/${LOG_PATH#\~/}" ;;
+esac
 [ -n "$REF" ]            || die "--ref required"
 [ -n "$COMPLEXITY" ]     || die "--complexity required (T|L|M|H)"
 [ -n "$IMPLEMENTER" ]    || die "--implementer required (haiku|sonnet|opus)"
@@ -532,24 +551,71 @@ echo "$JSON_ENTRY" | jq -e '
   (.self_review.calibration_size   | test("^(accurate|false_positive|false_negative|skipped|n_a)$"))
 ' >/dev/null || die "schema gate failed (internal — please report)"
 
-# --- Append + verify ---
+# --- Append + verify (lock-serialized, content-verified; audit #18) ---
 mkdir -p "$(dirname "$LOG_PATH")" || iofail "cannot mkdir $(dirname "$LOG_PATH")"
 
+# mkdir-based lock — atomic on every POSIX FS; flock(1) doesn't ship on stock
+# macOS. Serializes concurrent appends to the deliberately-SHARED per-repo log
+# (documented real workflow: N parallel /do agents, one repo slug). Pre-fix
+# the pre/post wc -l delta raced those writers → spurious IOFAIL after a
+# SUCCESSFUL append → the spec-instructed retry duplicated the entry,
+# corrupting the telemetry this wrapper exists to keep honest. Stale-lock
+# break: an append takes well under 1s, so a lock held past the wait window
+# whose mtime is ≥60s old is a crashed holder — removed and retried.
+LOCK_DIR="$LOG_PATH.lock"
+LOCK_WAITED=0
+until mkdir "$LOCK_DIR" 2>/dev/null; do
+  if [ "$LOCK_WAITED" -ge 100 ]; then   # ~10s of 0.1s sleeps
+    # BSD/GNU dual-path stat as SEPARATE assignments — GNU `stat -f %m` prints
+    # a filesystem-status block to stdout before failing, so an `a || b` chain
+    # inside ONE substitution would capture garbage + epoch concatenated.
+    LOCK_MTIME=$(stat -f %m "$LOCK_DIR" 2>/dev/null) \
+      || LOCK_MTIME=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) \
+      || LOCK_MTIME=0
+    case "$LOCK_MTIME" in *[!0-9]*|"") LOCK_MTIME=0 ;; esac
+    if [ "$(( $(date +%s) - LOCK_MTIME ))" -ge 60 ]; then
+      echo "NOTE lock: breaking stale lock $LOCK_DIR (mtime ≥60s old — holder crashed)" >&2
+      rmdir "$LOCK_DIR" 2>/dev/null || true
+      continue
+    fi
+    iofail "could not acquire lock $LOCK_DIR after 10s (a live metrics-append holds it; if no writer is running, rmdir it)"
+  fi
+  LOCK_WAITED=$((LOCK_WAITED + 1))
+  sleep 0.1
+done
+trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+
 if [ -f "$LOG_PATH" ]; then
+  # Terminator repair (audit #18b): a log whose last write lost its trailing
+  # newline (SIGKILL, full disk) FUSES the next append into the corrupt last
+  # line — one unparseable record, two lost entries — while the old
+  # line-count delta still PASSed (wc -l counts newlines: pre missed the
+  # partial line, post counted it → delta=1). Probe the last byte; repair
+  # BEFORE counting and appending.
+  if [ -s "$LOG_PATH" ] && [ "$(tail -c 1 "$LOG_PATH")" != "" ]; then
+    printf '\n' >> "$LOG_PATH" || iofail "terminator repair write to $LOG_PATH failed"
+    echo "NOTE terminator-repair: $LOG_PATH did not end in a newline (interrupted prior write) — repaired before appending" >&2
+  fi
   PRE_COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
 else
   PRE_COUNT=0
 fi
 
-if ! echo "$JSON_ENTRY" >> "$LOG_PATH"; then
-  iofail "write to $LOG_PATH failed (exit $?)"
-fi
+printf '%s\n' "$JSON_ENTRY" >> "$LOG_PATH" || iofail "write to $LOG_PATH failed"
+
+# Content-based verify — AUTHORITATIVE (audit #18a): the appended entry must
+# be present verbatim as a full line. The pre/post line-count delta below is
+# INFORMATIONAL only: under the lock it is 1 for wrapper writers, and an
+# unexpected value now points at a non-wrapper writer (anti-pattern §19a)
+# instead of false-failing a successful append into the duplicate-entry retry.
+grep -qxF -- "$JSON_ENTRY" "$LOG_PATH" \
+  || iofail "append verify failed: entry not found as a full line in $LOG_PATH after write"
 
 POST_COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
 DELTA=$((POST_COUNT - PRE_COUNT))
 
 if [ "$DELTA" -ne 1 ]; then
-  iofail "append silent-fail: pre=$PRE_COUNT post=$POST_COUNT delta=$DELTA expected=1"
+  echo "NOTE append-delta: pre=$PRE_COUNT post=$POST_COUNT delta=$DELTA (expected 1; content verify PASSED — a concurrent NON-wrapper writer touched the log inside the lock window; direct appends are anti-pattern §19a)" >&2
 fi
 
 # cal= echoes the wrapper-computed calibration verdicts (legacy/defect/size) —

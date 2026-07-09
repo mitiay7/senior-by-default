@@ -267,6 +267,8 @@ Before invoking, announce the roster (visible to user — makes it clear which m
   - {subagent_type_3}
 ```
 
+**Configured-but-unavailable auditor** (the Task tool rejects the `subagent_type` — plugin uninstalled since the config was written, or never installed): announce per seat — `Specialist {subagent_type}: NOT AVAILABLE — Opus inline fallback for {backend_audit|frontend_audit|migration_audit}` — and run that seat inline as **Opus** with the same inputs and the same checklist obligations (a migration seat still MUST apply the [`zero-downtime-migrations.md`](zero-downtime-migrations.md) checklist). The seat counts toward the roster `{K}` and its findings carry full blocking authority. NEVER substitute Sonnet, never drop the seat silently (audit #9 — the phantom-plugin incident surfaced downstream as "falling back to Sonnet"; auto-init now filters the preset against installed plugins, but hand-edited configs and post-init uninstalls still reach this rule).
+
 Run in parallel.
 
 **Plan fidelity**: reviewers verify (1) all planned files present in diff, (2) architectural patterns match plan + ADR, (3) endpoints/routes match, (4) data model matches.

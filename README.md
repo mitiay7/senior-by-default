@@ -119,7 +119,7 @@ SKILL_NAME=do TRIGGER=+++ INSTALL_DIR=~/.local/share/senior-by-default \
 
 - `issue_tracker.{type,repo}` from `git remote get-url origin` (github/gitlab/none, owner/repo auto-extracted) — gated by a CLI preflight: `gh`/`glab` missing or unauthenticated → the config degrades to `type: "none"` (issue phase skipped, announced — never a mid-pipeline `gh: command not found`) with the remedy recorded in `_meta`
 - `issue_locale` from `$ARGUMENTS` script (Cyrillic → `ru`, Hiragana/Katakana/CJK → `ja`, Hangul → `ko`, else `en`; explicit `--issue-locale=<code>` wins)
-- recommended `specialists` preset wiring the 6 Phase-3-audit plugins listed below
+- recommended `specialists` preset wiring the 6 Phase-3-audit plugins listed below — **verified against `~/.claude/plugins/installed_plugins.json`**: entries for missing plugins are dropped, groups that become empty are omitted, and the config only ever references specialists that can actually spawn (no manifest → full preset, honestly marked UNVERIFIED)
 - documented tier-1 `metrics` preset (`~/.claude/do/metrics/{repo_slug}.jsonl` — cross-project, scannable by a single daily report)
 - `_meta._setup_notes` listing exact `/plugin install` commands so the file is self-contained
 
@@ -127,10 +127,13 @@ The Phase 0 announce shows what was written verbatim — no parsing needed:
 ```
 Config: AUTO-GENERATED → /path/to/repo/.claude/do/config.json
 Tracker: github OK (gh version 2.62.0 (2026-01-15); auth account: alice)
+Specialists: PRESET VERIFIED (6/6 plugins installed: backend-development@1.3.1, code-refactoring@1.2.0, …)
 Metrics config: INCLUDED in auto-init
 ```
 
 The `Tracker:` line is the wrapper's CLI preflight verdict (github/gitlab detections only). On a fresh machine without `gh` (or unauthenticated) it reads `Tracker: DEGRADED to none (gh missing — install gh …, then run 'gh auth login')` — the config is written with `issue_tracker.type: "none"`, Phase 1 is skipped with an explicit announce, and everything else runs. The OK form's tool version + account are probed at runtime (anti-fabrication tell, anti-patterns §19c).
+
+The `Specialists:` line is the preset-verification verdict. With missing plugins it reads `Specialists: PRESET FILTERED (3/6 plugins installed: …; MISSING: ui-design, … — entries dropped, groups omitted: frontend_plan; to restore: /plugin install ui-design@claude-code-workflows; …, then re-add)`; with none installed the block is omitted entirely (`PRESET EMPTY`). The `name@version` list comes from the install manifest at runtime — same tell standard as the tracker line.
 
 On hosts without python3-jsonschema the wrapper writes the file unvalidated and says so — the success line carries a ` (schema gate SKIPPED — jsonschema unavailable)` suffix (never a silent skip); `pip install jsonschema` restores the gate.
 
@@ -291,7 +294,7 @@ The skill uses `subagent_type` strings from these plugins for parallel specialis
 | `javascript-typescript` | wshobson | `typescript-pro`, `javascript-pro` |
 | `pr-review-toolkit` | anthropic-official | `silent-failure-hunter` |
 
-If a referenced plugin isn't installed, the skill falls back gracefully (no error, just no parallel specialist for that scope — Opus does inline review).
+If a referenced plugin isn't installed, the skill falls back gracefully — and to the RIGHT model. Two layers (audit #9): at **config time**, auto-init verifies the preset against `~/.claude/plugins/installed_plugins.json` and drops missing plugins with a `Specialists: PRESET FILTERED/EMPTY` announce (see [Configure your project](#configure-your-project)); at **spawn time**, a configured-but-unavailable `subagent_type` (hand-edited config, plugin uninstalled later) is announced per seat — `Specialist {type}: NOT AVAILABLE — Opus inline fallback for {group}` — and Opus reviews that seat inline with full blocking authority. Never a silent downgrade to Sonnet, never a dropped seat.
 
 > **Historical note:** earlier versions of this README listed `frontend-excellence:react-specialist|component-architect|frontend-optimizer`, but no public marketplace actually ships that plugin (it was an aspirational placeholder). The closest functional substitute is `ui-design` (wshobson) for design-system/UX/a11y review + `javascript-typescript` for TS-pro coverage on Next.js/React stacks. Example configs and CHANGELOG were updated accordingly.
 
@@ -362,7 +365,7 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 
 **`STOP: not inside a git repo`** → `/do` runs from inside a project repo (Phase 0 Step 3 halts before any side effects otherwise). `cd` into the repo, pass `--repo=NAME` (needs `config.workspace.repos`), or `git init` first.
 
-**Phase 0 announce says "Specialists not available — falling back to Sonnet"** → That string isn't actually emitted by the skill; sub-agents say it when `Agent(subagent_type=<plugin>:<agent>)` fails because the plugin isn't installed. Check `config.specialists.*` against installed plugins (`claude plugin list`). Either install the missing plugin (see [Recommended Claude Code plugins](#recommended-claude-code-plugins-for-phase-3-specialist-review)) or remove the reference from your config — Opus inline review takes over per group.
+**Announce says "Specialists not available — falling back to Sonnet"** → That string isn't emitted by the skill — and since audit #9 the spec explicitly forbids the behavior it describes: a configured-but-unavailable specialist MUST be announced (`Specialist {type}: NOT AVAILABLE — Opus inline fallback for {group}`) and reviewed inline by **Opus**, never Sonnet. If you see the Sonnet variant, the orchestrator violated phase-2/phase-3 — re-run, and check `config.specialists.*` against installed plugins (`claude plugin list`). Fresh configs shouldn't reference phantom plugins at all: auto-init filters the preset against `~/.claude/plugins/installed_plugins.json` and says so in the `Specialists:` announce line. Either install the missing plugin (see [Recommended Claude Code plugins](#recommended-claude-code-plugins-for-phase-3-specialist-review)) or remove the reference from your config.
 
 **Branch is `claude/funny-leakey-...` instead of `feat/i42-...`** → Phase 4.0's `branch-normalize` wrapper detects and renames before PR creation (verdict line carries a `head=<sha>` tell; the final announce reads the branch back live from git); metrics record the rename as a Phase 2 spec violation. If it keeps happening, your Opus instance is using `Agent(isolation: "worktree")` — see anti-pattern 13 in [`skills/do/references/anti-patterns.md`](skills/do/references/anti-patterns.md).
 
