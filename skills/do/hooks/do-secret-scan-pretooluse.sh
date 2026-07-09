@@ -10,7 +10,7 @@
 # Bash command that performs a `git push` gets the same scan first.
 #
 # SELF-SCOPING: no-op on any Bash command that is not a `git push` (`git stash
-# push` excluded). Unlike the other two shipped hooks this one is deliberately
+# push` excluded). Unlike the metrics/plan-size hooks this one is deliberately
 # NOT /do-specific — a pushed secret is equally unrecoverable outside /do, and
 # the rule it enforces (git-rules.md §Secret guard) is unconditional. It still
 # never disturbs non-push work.

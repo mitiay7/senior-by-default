@@ -239,14 +239,16 @@ fi
 # Tier-3 enforcement (see skills/do/references/hooks.md): a Stop hook that
 # backstops Phase 4.11 metrics emission at the runtime level (harness-enforced
 # backstop — opt-in, so not a guarantee), a PreToolUse hook that surfaces
-# the plan-size verdict at spawn time, and a PreToolUse hook on Bash that
+# the plan-size verdict at spawn time, a PreToolUse hook on Bash that
 # re-runs the pre-push secret scan before any `git push` (blocks only on a
-# confirmed match). NOT enabled unless the user opts in; merged idempotently
-# into ~/.claude/settings.json with a backup. Default No.
+# confirmed match), and a PreToolUse hook on Bash that re-runs the PR-size
+# gate before any `gh pr create` / `glab mr create` (denies a non-draft PR
+# over the block cap). NOT enabled unless the user opts in; merged
+# idempotently into ~/.claude/settings.json with a backup. Default No.
 
 HOOKS_DIR_INSTALLED="$SYMLINK_PATH/hooks"
 SETTINGS_JSON="$HOME/.claude/settings.json"
-ENABLE_HOOKS=$(prompt "Enable opt-in enforcement hooks? (Stop=metrics backstop, PreToolUse=plan-size + pre-push secret scan) — merges into $SETTINGS_JSON" "N" "ENABLE_HOOKS")
+ENABLE_HOOKS=$(prompt "Enable opt-in enforcement hooks? (Stop=metrics backstop, PreToolUse=plan-size + pre-push secret scan + PR-size) — merges into $SETTINGS_JSON" "N" "ENABLE_HOOKS")
 
 if [[ "$ENABLE_HOOKS" =~ ^[Yy] ]]; then
   if [ ! -f "$HOOKS_DIR_INSTALLED/do-metrics-stop-gate.sh" ]; then
@@ -260,11 +262,13 @@ if [[ "$ENABLE_HOOKS" =~ ^[Yy] ]]; then
     STOP_CMD="$HOOKS_DIR_INSTALLED/do-metrics-stop-gate.sh"
     PRE_CMD="$HOOKS_DIR_INSTALLED/do-plan-size-pretooluse.sh"
     SECRET_CMD="$HOOKS_DIR_INSTALLED/do-secret-scan-pretooluse.sh"
-    if SETTINGS_JSON="$SETTINGS_JSON" STOP_CMD="$STOP_CMD" PRE_CMD="$PRE_CMD" SECRET_CMD="$SECRET_CMD" python3 - <<'PY'
+    PRSIZE_CMD="$HOOKS_DIR_INSTALLED/do-pr-size-pretooluse.sh"
+    if SETTINGS_JSON="$SETTINGS_JSON" STOP_CMD="$STOP_CMD" PRE_CMD="$PRE_CMD" SECRET_CMD="$SECRET_CMD" PRSIZE_CMD="$PRSIZE_CMD" python3 - <<'PY'
 import json, os, sys
 p = os.environ["SETTINGS_JSON"]
 stop_cmd, pre_cmd = os.environ["STOP_CMD"], os.environ["PRE_CMD"]
 secret_cmd = os.environ["SECRET_CMD"]
+prsize_cmd = os.environ["PRSIZE_CMD"]
 try:
     data = json.load(open(p)) if os.path.exists(p) else {}
 except Exception as e:
@@ -282,10 +286,11 @@ if not present("PreToolUse", pre_cmd):
     hooks.setdefault("PreToolUse", []).append(
         {"matcher": "Task", "hooks": [{"type": "command", "command": pre_cmd}]})
     changed = True
-if not present("PreToolUse", secret_cmd):
-    hooks.setdefault("PreToolUse", []).append(
-        {"matcher": "Bash", "hooks": [{"type": "command", "command": secret_cmd}]})
-    changed = True
+for bash_cmd in (secret_cmd, prsize_cmd):
+    if not present("PreToolUse", bash_cmd):
+        hooks.setdefault("PreToolUse", []).append(
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": bash_cmd}]})
+        changed = True
 if changed:
     with open(p, "w") as f:
         json.dump(data, f, indent=2)

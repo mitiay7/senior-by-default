@@ -232,13 +232,14 @@ See [`skills/do/references/config-schema.md`](skills/do/references/config-schema
 
 The skill's default enforcement is **structural-coupling wrappers** — each side-effect runs through a `scripts/*` wrapper that owns the decision + an anti-fabrication tell, so a skipped or faked check shows up as a visible bug. That's strong but still *model-dependent*: if the orchestrator never invokes a wrapper, it can't fire.
 
-For the three checks that **must** happen every task, you can opt into **Claude Code hooks** — scripts the runtime executes itself, independent of the model:
+For the four checks that **must** happen every task, you can opt into **Claude Code hooks** — scripts the runtime executes itself, independent of the model:
 
 - **Stop hook** (`do-metrics-stop-gate.sh`) — blocks the turn from ending when a `/do` finalize lacks a valid, file-backed, fresh `Metrics:` line (closed set of legal forms; tell + freshness cross-checked against the log). The harness-enforced backstop for metrics emission — a backstop, not a guarantee: it's opt-in and verifies the announce against the log file, nothing stronger. Self-scopes to `/do` runs (no-op on normal turns), so it's safe to register globally.
 - **PreToolUse hook** (`do-plan-size-pretooluse.sh`, matcher `Task`) — surfaces the Phase 2.0 plan-size verdict at implementer-spawn time. Non-blocking (injects context, never denies).
 - **PreToolUse hook** (`do-secret-scan-pretooluse.sh`, matcher `Bash`) — re-runs the Phase 4.1.2 pre-push `secret-scan` before any Bash command performing a `git push`, and **blocks the push on a confirmed secret match** (the one skip that can't be recovered — a pushed secret is revoke-and-rotate, not revert). Fail-open on everything else (missing wrapper, wrapper errors, non-push commands → allow); deliberately guards non-/do pushes too, since the no-secrets rule is unconditional.
+- **PreToolUse hook** (`do-pr-size-pretooluse.sh`, matcher `Bash`) — re-runs the Phase 3.0 `pr-size-check` against the repo's **real diff** before any `gh pr create` / `glab mr create`, and **denies a non-draft PR over the block cap** (default 2000 lines / 50 files; honors `config.pr_size.*`). A `--draft` creation is always allowed — that IS §3.0's sanctioned BLOCK path (draft + `blocked` label + split issues) — and PASS/WARN verdicts are injected as context so `gates.pr_size` gets a genuine wrapper line even if §3.0 was skipped. Fail-open on any uncertainty.
 
-These are **opt-in and off by default** — the skill works identically without them (it degrades to the wrapper tier). Enable by merging [`skills/do/hooks/settings.with-hooks.json`](skills/do/hooks/settings.with-hooks.json) into your `~/.claude/settings.json` (or per-project `.claude/settings.json`), or let `install.sh` do it when it prompts (default No). Full rationale + the three enforcement tiers: [`skills/do/references/hooks.md`](skills/do/references/hooks.md).
+These are **opt-in and off by default** — the skill works identically without them (it degrades to the wrapper tier). Enable by merging [`skills/do/hooks/settings.with-hooks.json`](skills/do/hooks/settings.with-hooks.json) into your `~/.claude/settings.json` (or per-project `.claude/settings.json`), or let `install.sh` do it when it prompts (default No). All four hooks are live-sim verified — registration through the real `install.sh` + documented Stop/PreToolUse payloads, 37 cases on BSD+GNU (`skills/do/hooks/hook-live-sim.sh`, a release gate; see [`hooks.md`](skills/do/references/hooks.md) §Verified 2026-07-09). Full rationale + the three enforcement tiers: [`skills/do/references/hooks.md`](skills/do/references/hooks.md).
 
 ## Recommended companion: caveman (install FIRST)
 
@@ -396,7 +397,7 @@ Tier-1 metrics schema is stable; new fields added strictly via enum extension (t
 ~/.local/share/senior-by-default/uninstall.sh
 ```
 
-Removes the symlink, the trigger block from `~/.claude/CLAUDE.md` (if added by the installer), the opt-in enforcement hook entries from `~/.claude/settings.json` (jq-based, timestamped backup kept; only the three `do-*` entries are touched — without this step every Stop, Task spawn, and Bash call would error against the removed hook scripts), and optionally the install dir, cache, and metrics. If `jq` is missing the hook entries are left in place and the script prints manual removal instructions instead. See [`uninstall.sh`](uninstall.sh).
+Removes the symlink, the trigger block from `~/.claude/CLAUDE.md` (if added by the installer), the opt-in enforcement hook entries from `~/.claude/settings.json` (jq-based, timestamped backup kept; only the four `do-*` entries are touched — without this step every Stop, Task spawn, and Bash call would error against the removed hook scripts), and optionally the install dir, cache, and metrics. If `jq` is missing the hook entries are left in place and the script prints manual removal instructions instead. See [`uninstall.sh`](uninstall.sh).
 
 ## License
 

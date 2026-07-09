@@ -28,6 +28,15 @@
             "command": "$HOME/.claude/skills/do/hooks/do-secret-scan-pretooluse.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/skills/do/hooks/do-pr-size-pretooluse.sh"
+          }
+        ]
       }
     ]
   }

@@ -78,6 +78,15 @@ There's no automated functional test suite — the skill runs through Claude. Sm
    docker run --rm -v "$PWD":/w -w /w debian:stable-slim bash -c \
      'apt-get -qq update && apt-get -qq install -y jq >/dev/null && bash -n skills/do/scripts/* && <your invocation here>'
    ```
+7. **RELEASE GATE — hook live-sim must pass** (both platforms) if your change touches `hooks/`, the §4.13 announce format, `install.sh`'s hook merge, or `uninstall.sh`'s hook removal. The v0.8.0 hooks shipped validated with mock stdin only and had never been live-registered — a wrong payload-field assumption would have made the tier-3 backstop silently no-op forever (audit finding #16). Never again:
+
+   ```bash
+   ./skills/do/hooks/hook-live-sim.sh   # macOS/BSD — 37 cases, sandboxed (never touches your real ~/.claude)
+   docker run --rm -v "$PWD":/w -w /w debian:stable-slim bash -c \
+     'apt-get -qq update && apt-get -qq install -y jq git python3 >/dev/null 2>&1 && ./skills/do/hooks/hook-live-sim.sh'
+   ```
+
+   It registers the hooks through the real `install.sh` into a sandbox HOME and drives every allow/block/inject path with documented Stop/PreToolUse payloads (shapes recorded in `references/hooks.md` §Verified 2026-07-09). If you changed the announce format, update the sim's fixtures and the Stop hook TOGETHER (lockstep invariant).
 
 ## Adding a new tracker
 
