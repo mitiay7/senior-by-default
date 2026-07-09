@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "senior-by-default",
+  "description": "Self-marketplace for senior-by-default — a multi-actor implementation pipeline skill for Claude Code (Opus architects & reviews, Sonnet implements, Haiku handles trivial changes; gated quality checks; tracker + PR automation).",
+  "owner": {
+    "name": "Dmitry Bychkov",
+    "url": "https://github.com/mitiay7"
+  },
+  "plugins": [
+    {
+      "name": "senior-by-default",
+      "description": "Multi-actor implementation pipeline: routes coding tasks by complexity, creates tracker issues, implements in isolated worktrees, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PRs with optional CI gate and auto-merge.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

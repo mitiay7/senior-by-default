@@ -76,10 +76,19 @@ Before constructing the Sonnet prompt, re-verify the Phase 0 routing against the
 PLANNED_FILES=<count of files in the approved plan>
 PLANNED_LINES_EST=<sum of per-file estimated line deltas in the approved plan>
 
-PLAN_SIZE_LINE="$(~/.claude/skills/do/scripts/plan-size-check \
-  --current-complexity "$COMPLEXITY" \
-  --planned-files "$PLANNED_FILES" \
-  --planned-lines "$PLANNED_LINES_EST")"
+# Canonical do-scripts resolver — identical line in every wrapper block; each
+# block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
+DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+
+if [ -x "$DO_SCRIPTS/plan-size-check" ]; then
+  PLAN_SIZE_LINE="$("$DO_SCRIPTS/plan-size-check" \
+    --current-complexity "$COMPLEXITY" \
+    --planned-files "$PLANNED_FILES" \
+    --planned-lines "$PLANNED_LINES_EST")"
+else
+  # FAIL CLOSED — explicit token so the case below has a matching arm.
+  PLAN_SIZE_LINE="Phase 2.0: GATE ERROR — plan-size-check wrapper not found (do-scripts resolver found no install)"
+fi
 echo "$PLAN_SIZE_LINE"
 
 case "$PLAN_SIZE_LINE" in
@@ -102,6 +111,13 @@ case "$PLAN_SIZE_LINE" in
     # 4. Re-run /do per sub-issue. This branch now actually fires (v0.7.0 gave H a
     # real 25/1500 ceiling — it was 999/99999 before, so SPLIT-REQUIRED was dead code
     # and 3000–4000-line H PRs sailed through to an unreviewable Phase 3).
+    ;;
+  "Phase 2.0: GATE ERROR"*)
+    # FAIL CLOSED — the wrapper is unreachable, which means the install is
+    # broken (all six wrappers ship in the same scripts/ dir). Do NOT spawn
+    # the implementer, do NOT eyeball the thresholds yourself (§19d — that is
+    # the exact fabrication path the wrapper closed). Surface the line to the
+    # user, STOP; fix = re-run install.sh or /plugin install, then retry.
     ;;
 esac
 ```

@@ -51,14 +51,23 @@ Measure the actual diff, then run the wrapper. Do NOT eyeball the numbers and de
 DIFF_LINES=$(git -C "$WORKTREE_PATH" diff main...HEAD --numstat | awk '{a+=$1; d+=$2} END {print a+d+0}')   # total churn (added+deleted)
 DIFF_FILES=$(git -C "$WORKTREE_PATH" diff main...HEAD --name-only | wc -l | tr -d ' ')
 
+# Canonical do-scripts resolver — identical line in every wrapper block; each
+# block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
+DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+
 # Pass config.pr_size.* ONLY when the project overrides the defaults; the wrapper
 # bakes in the config-schema.md defaults (warn 800/20, block 2000/50) otherwise.
-PR_SIZE_LINE="$(~/.claude/skills/do/scripts/pr-size-check \
-  --lines "$DIFF_LINES" --files "$DIFF_FILES" \
-  ${CFG_WARN_LINES:+--warn-lines "$CFG_WARN_LINES"} \
-  ${CFG_WARN_FILES:+--warn-files "$CFG_WARN_FILES"} \
-  ${CFG_BLOCK_LINES:+--block-lines "$CFG_BLOCK_LINES"} \
-  ${CFG_BLOCK_FILES:+--block-files "$CFG_BLOCK_FILES"})" && PR_SIZE_RC=0 || PR_SIZE_RC=$?
+if [ -x "$DO_SCRIPTS/pr-size-check" ]; then
+  PR_SIZE_LINE="$("$DO_SCRIPTS/pr-size-check" \
+    --lines "$DIFF_LINES" --files "$DIFF_FILES" \
+    ${CFG_WARN_LINES:+--warn-lines "$CFG_WARN_LINES"} \
+    ${CFG_WARN_FILES:+--warn-files "$CFG_WARN_FILES"} \
+    ${CFG_BLOCK_LINES:+--block-lines "$CFG_BLOCK_LINES"} \
+    ${CFG_BLOCK_FILES:+--block-files "$CFG_BLOCK_FILES"})" && PR_SIZE_RC=0 || PR_SIZE_RC=$?
+else
+  # FAIL CLOSED — explicit token so the case below has a matching arm.
+  PR_SIZE_LINE="Phase 3.0: GATE ERROR — pr-size-check wrapper not found (do-scripts resolver found no install)"; PR_SIZE_RC=127
+fi
 echo "$PR_SIZE_LINE"
 
 case "$PR_SIZE_LINE" in
@@ -72,6 +81,15 @@ case "$PR_SIZE_LINE" in
     #   3. Apply the `blocked` label; comment the split proposal on the issue
     #   4. Phase 4.11 metrics: gates.pr_size.status = "block"; OUTCOME = "blocked"
     #   5. Tell user: "PR-size BLOCK: {PR_SIZE_LINE}. Draft PR: {url}. Split before merge."
+    ;;
+  "Phase 3.0: GATE ERROR"*)                                                # FAIL CLOSED
+    GATE_PR_SIZE_STATUS=fail
+    # The wrapper is unreachable — the size gate CANNOT run. Treat like BLOCK,
+    # never like pass: proceeding unchecked deletes the only hard PR-size halt
+    # (the exact silent-vanish this resolver exists to prevent). Do NOT eyeball
+    # the thresholds yourself (§19f). STOP: surface the line to the user; fix =
+    # re-run install.sh or /plugin install, then re-run Phase 3. Metrics:
+    # gates.pr_size = { "status": "fail", "details": { "reason": "wrapper not found" } }.
     ;;
 esac
 ```

@@ -61,8 +61,25 @@ Walk CWD upward for `.claude/do/config.json`. First match wins. Defaults defined
 
   Then — **ensure telemetry settings**. If `--no-metrics` not in `$ARGUMENTS`, **run this bash verbatim** (do not Edit the file by hand, do not compose `$METRICS_CONFIG_LINE` yourself — see [anti-patterns §19c](anti-patterns.md)):
   ```bash
-  METRICS_CONFIG_LINE="$(~/.claude/skills/do/scripts/config-ensure-metrics --config "$CONFIG_PATH" 2>&1)" \
-    || METRICS_CONFIG_LINE="Metrics config: PATCH SKIPPED — $METRICS_CONFIG_LINE"
+  # Canonical do-scripts resolver — REPEATED VERBATIM in every wrapper block
+  # (fresh shell per block: a variable resolved in one phase does NOT exist in
+  # the next — same shell model as the task clock above; files and re-run
+  # probes are the only durable carriers). NEVER invoke a wrapper via a
+  # literal ~/.claude/skills/do/scripts/ path: that dir exists only for the
+  # default-name symlink install — plugin installs and renamed SKILL_NAMEs
+  # have no such path, and the literal killed the whole wrapper tier there
+  # (audit finding #2). Probe order: plugin root → ~/.claude/skills/<any
+  # name>/scripts → plugin cache → default manual clone dir. metrics-append
+  # is the sentinel file; all six wrappers ship in the same scripts/ dir.
+  DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+
+  if [ -x "$DO_SCRIPTS/config-ensure-metrics" ]; then
+    METRICS_CONFIG_LINE="$("$DO_SCRIPTS/config-ensure-metrics" --config "$CONFIG_PATH" 2>&1)" \
+      || METRICS_CONFIG_LINE="Metrics config: PATCH SKIPPED — $METRICS_CONFIG_LINE"
+  else
+    # FAIL CLOSED — explicit token, never an empty variable (see §19c).
+    METRICS_CONFIG_LINE="Metrics config: PATCH SKIPPED — do-scripts resolver found no install (probed plugin root, ~/.claude/skills/*/scripts, plugin cache, ~/.local/share/senior-by-default)"
+  fi
   echo "$METRICS_CONFIG_LINE"
   ```
   Wrapper is idempotent — 3 outcomes, all via wrapper stdout, never composed:
@@ -82,17 +99,26 @@ Walk CWD upward for `.claude/do/config.json`. First match wins. Defaults defined
 Skip if `--no-caveman` in `$ARGUMENTS` (set `CAVEMAN_LINE=""` — announce will omit the line). Otherwise — **invoke the wrapper verbatim** (do not paraphrase, do not "check mentally", do not compose the announce line yourself — see [anti-patterns §19b](anti-patterns.md)):
 
 ```bash
-CAVEMAN_LINE="$(~/.claude/skills/do/scripts/check-caveman)"
+# Canonical do-scripts resolver — same line as Step 1, re-run here (fresh shell per block).
+DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+
+if [ -x "$DO_SCRIPTS/check-caveman" ]; then
+  CAVEMAN_LINE="$("$DO_SCRIPTS/check-caveman")"
+else
+  # FAIL CLOSED — explicit token, never an empty variable.
+  CAVEMAN_LINE="Caveman: CHECK SKIPPED — do-scripts resolver found no install (probed plugin root, ~/.claude/skills/*/scripts, plugin cache, ~/.local/share/senior-by-default)"
+fi
 echo "$CAVEMAN_LINE"
 ```
 
 **The wrapper is the single source of truth for the line.** Possible outputs (the spec deliberately does NOT spell out the templates — they live only in the wrapper script):
 - **ACTIVE form** — includes the resolved install path. Different per machine; orchestrator cannot guess between `~/.claude/skills/caveman`, `~/.agents/skills/caveman`, etc.
 - **NOT INSTALLED form** — includes a `(probed: <P1>, <P2>, <P3>, <P4>)` suffix listing every path the wrapper actually checked. This suffix is the **anti-fabrication tell**: the path list is built from the wrapper's internal array, never written in the spec, so orchestrator skipping the wrapper cannot include it without inventing path names (which is a detectable visible-bug).
+- **CHECK SKIPPED form** — the spec-side fail-closed fallback (the `else` branch above), fires only when the resolver finds no install at all. The one form that IS copyable from the spec — acceptable because it is an honest degraded state the user will chase (broken install), not a plausible-looking success.
 
 Why a wrapper (not inline bash like v1/v2): both prior versions had the announce-line template visible in the bash literal inside the spec. Orchestrators systematically read the template and copy-pasted it into the announce **without running the bash** (production-confirmed 2026-05-17, lea-web run: announced `Caveman: NOT INSTALLED — install: curl ...` while caveman was installed at path #1). Moving the strings into a wrapper script and adding a runtime-only tell (probed-paths list) is the structural fix.
 
-If the announce contains a `Caveman:` line that lacks the `(path: ...)` suffix for ACTIVE OR the `(probed: ...)` suffix for NOT INSTALLED — orchestrator skipped the wrapper. Re-run, paste actual wrapper output.
+If the announce contains a `Caveman:` line that lacks the `(path: ...)` suffix for ACTIVE, the `(probed: ...)` suffix for NOT INSTALLED, and is not the exact CHECK SKIPPED fallback — orchestrator skipped the wrapper. Re-run, paste actual wrapper output.
 
 When the wrapper returns the ACTIVE form, Sub-Agent prompts get the caveman-style directive (see [`phase-2-implementation.md`](phase-2-implementation.md) Rules section). Caveman is **passive** (SessionStart hook); once active, all assistant output flows through compression. No runtime wrapping needed — only the prompt directive.
 
@@ -166,6 +192,9 @@ case "$ARGUMENTS" in
   *)              METRICS="default" ;;
 esac
 
+# Canonical do-scripts resolver — same line as Step 1, re-run here (fresh shell per block).
+DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+
 # Call the wrapper. Captures full stdout/stderr into CONFIG_LINE — the wrapper
 # itself emits the canonical line on success ("Config: AUTO-GENERATED → …"),
 # and "REJECT …" / "IOFAIL …" on the skip paths (already exists, refused
@@ -174,12 +203,15 @@ esac
 # line may already end in " (schema gate SKIPPED — jsonschema unavailable)" —
 # that suffix is WRAPPER-emitted (file written unvalidated), not an agent
 # annotation: keep it verbatim, never strip it to "clean up" the line.
-if [ "$TRACKER" = "none" ]; then
-  CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
+if [ ! -x "$DO_SCRIPTS/config-init" ]; then
+  # FAIL CLOSED — explicit token, never an empty variable (see §19c).
+  CONFIG_LINE="Config: AUTO-INIT SKIPPED — do-scripts resolver found no install (probed plugin root, ~/.claude/skills/*/scripts, plugin cache, ~/.local/share/senior-by-default)"
+elif [ "$TRACKER" = "none" ]; then
+  CONFIG_LINE="$("$DO_SCRIPTS/config-init" \
     --repo-root "$REPO" --tracker none --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" --metrics "$METRICS" 2>&1)" \
     || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
 else
-  CONFIG_LINE="$(~/.claude/skills/do/scripts/config-init \
+  CONFIG_LINE="$("$DO_SCRIPTS/config-init" \
     --repo-root "$REPO" --tracker "$TRACKER" --tracker-repo "$TRACKER_REPO" --stack "$STACK" --issue-locale "$ISSUE_LOCALE" --specialists "$SPECIALISTS" --metrics "$METRICS" 2>&1)" \
     || CONFIG_LINE="Config: AUTO-INIT SKIPPED — $CONFIG_LINE"
 fi

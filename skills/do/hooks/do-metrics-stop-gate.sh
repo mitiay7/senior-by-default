@@ -39,6 +39,17 @@ set -uo pipefail
 INPUT=$(cat 2>/dev/null || true)
 command -v jq >/dev/null 2>&1 || exit 0   # no jq → cannot evaluate → allow
 
+# Self-locate the sibling metrics-append for the remediation messages (same $0
+# pattern as do-plan-size-pretooluse.sh) — NEVER a hardcoded install path:
+# plugin installs and renamed SKILL_NAMEs have no ~/.claude/skills/do/, and a
+# wrong remediation path would send the orchestrator to a nonexistent wrapper.
+SCRIPTS_DIR=$(cd "$(dirname "$0")/../scripts" 2>/dev/null && pwd -P || echo "")
+if [ -n "$SCRIPTS_DIR" ]; then
+  METRICS_APPEND="$SCRIPTS_DIR/metrics-append"
+else
+  METRICS_APPEND="the metrics-append wrapper (sibling scripts/ dir of this hook)"
+fi
+
 jqr() { printf '%s' "$INPUT" | jq -r "$1" 2>/dev/null || true; }
 
 # Loop guard: if we already blocked this turn, allow the stop now.
@@ -71,7 +82,7 @@ printf '%s' "$MSG" | grep -qE '\$(\{)?(METRICS_LINE|METRICS_RESULT|POST_COUNT|EX
 METRICS_LINE=$(printf '%s\n' "$MSG" | grep -E '^Metrics:' | tail -1)
 
 if [ -z "$METRICS_LINE" ]; then
-  jq -n '{decision:"block", reason:"senior-by-default Phase 4.13: this is a /do finalize turn (announce present) but there is NO `Metrics:` line at the end. Do NOT compose a prose announce — run the §4.13 metrics-emit bash flow verbatim (it sets and prints $METRICS_LINE via ~/.claude/skills/do/scripts/metrics-append). See references/phase-4-finalize.md and anti-pattern §19."}'
+  jq -n --arg w "$METRICS_APPEND" '{decision:"block", reason:("senior-by-default Phase 4.13: this is a /do finalize turn (announce present) but there is NO `Metrics:` line at the end. Do NOT compose a prose announce — run the §4.13 metrics-emit bash flow verbatim (it sets and prints $METRICS_LINE via " + $w + "). See references/phase-4-finalize.md and anti-pattern §19.")}'
   exit 0
 fi
 
@@ -114,7 +125,7 @@ if [ -n "$PRE" ] && [ "$((10#$PRE + 1))" -ne "$N" ]; then
 fi
 
 if [ ! -f "$PATHV" ]; then
-  jq -n --arg l "$METRICS_LINE" --arg p "$PATHV" '{decision:"block", reason:("senior-by-default Phase 4.13: the announce claims `" + $l + "` but the log file " + $p + " does not exist — the Metrics line was composed by hand, metrics-append never ran. Emit via ~/.claude/skills/do/scripts/metrics-append (the §4.13 flow). Anti-pattern §19/§19a.")}'
+  jq -n --arg l "$METRICS_LINE" --arg p "$PATHV" --arg w "$METRICS_APPEND" '{decision:"block", reason:("senior-by-default Phase 4.13: the announce claims `" + $l + "` but the log file " + $p + " does not exist — the Metrics line was composed by hand, metrics-append never ran. Emit via " + $w + " (the §4.13 flow). Anti-pattern §19/§19a.")}'
   exit 0
 fi
 

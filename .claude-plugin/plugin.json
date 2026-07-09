@@ -6,6 +6,7 @@
     "name": "Dmitry Bychkov",
     "url": "https://github.com/mitiay7"
   },
+  "skills": "./skills/",
   "license": "MIT",
   "homepage": "https://github.com/mitiay7/senior-by-default",
   "repository": {

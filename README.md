@@ -60,13 +60,14 @@ The two install paths invoke the skill with **different slash-commands** because
 
 ### Recommended — Claude Code plugin install
 
-Once `senior-by-default` is listed in a marketplace you've added (or you point Claude Code at this repo as a marketplace):
+The repo is its own marketplace (ships `.claude-plugin/marketplace.json`). Two commands:
 
 ```
-/plugin install senior-by-default@mitiay7/senior-by-default
+/plugin marketplace add mitiay7/senior-by-default
+/plugin install senior-by-default@senior-by-default
 ```
 
-After install, run tasks with the **plugin-namespaced command**:
+(The `@senior-by-default` suffix is the marketplace name from `marketplace.json`, not the GitHub path.) After install, run tasks with the **plugin-namespaced command**:
 
 ```
 /senior-by-default:do add user avatars to settings page
@@ -82,7 +83,7 @@ When a user message starts with `+++`, treat everything after `+++` as the argum
 <!-- senior-by-default:trigger:end -->
 ```
 
-> **Known limitation (interim, until v0.9.0):** the tier-2 enforcement wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, `plan-size-check`, `pr-size-check`, `metrics-append`) are invoked by the spec at the literal path `~/.claude/skills/do/scripts/` — a path that only exists after the **manual symlink install at the default skill name `do`**. Under plugin install (or a custom `SKILL_NAME`) the wrapper calls fail and the skill degrades to prose-level enforcement — exactly the fabrication class the wrappers were built to prevent. If you want the wrapper tier active today, use the manual symlink install below with the default name. Dynamic wrapper-path resolution is planned for v0.9.0.
+> **Wrapper-path resolution — all install layouts get the full wrapper tier.** The six tier-2 enforcement wrappers (`check-caveman`, `config-init`, `config-ensure-metrics`, `plan-size-check`, `pr-size-check`, `metrics-append`) are located at runtime by a canonical resolver repeated in every spec bash block — probe order: `$CLAUDE_PLUGIN_ROOT` → `~/.claude/skills/<any name>/scripts` (default or renamed `SKILL_NAME`) → plugin cache → `~/.local/share/senior-by-default`. Plugin install, default symlink, and custom `SKILL_NAME` all resolve; there is no hardcoded `~/.claude/skills/do/` literal in the live spec. If no install is found the affected gate **fails closed** with an explicit `SKIPPED` / `GATE ERROR` token in the announce instead of silently degrading to prose-level enforcement. (Earlier versions hardcoded the default-name path — that limitation is fixed; see CHANGELOG.)
 
 ### Manual — clone + symlink
 

@@ -230,9 +230,12 @@ All captured strings truncated to `config.metrics.max_string_length` (default 50
 
 ### Step 3: emit the entry — **ONLY via the `metrics-append` wrapper**
 
-There is exactly one supported way to write to the metrics log: the wrapper script at
-`~/.claude/skills/do/scripts/metrics-append` (resolves to the same path inside the installed
-skill). Direct `echo ... >> "$LOG_PATH"`, calling `python3 -c '...' >> "$LOG_PATH"`, or using
+There is exactly one supported way to write to the metrics log: the `metrics-append` wrapper
+in the installed skill's `scripts/` dir, located at runtime by the canonical do-scripts
+resolver (`"$DO_SCRIPTS/metrics-append"` — the §4.13 block resolves it; never a hardcoded
+`~/.claude/skills/do/...` literal, which exists only for the default-name symlink install —
+plugin installs and renamed SKILL_NAMEs have no such path).
+Direct `echo ... >> "$LOG_PATH"`, calling `python3 -c '...' >> "$LOG_PATH"`, or using
 the `Write` tool against the log path are all an [anti-pattern](anti-patterns.md) — past
 production runs proved sub-agents systematically compose free-form JSON when an in-doc template
 is "suggested", producing 100+ distinct field names across a few dozen entries and emitting the
@@ -319,7 +322,8 @@ Canonical invocation (executed by the §4.13 announce block; do NOT run it stand
 announce coupling depends on capturing its stdout into `$METRICS_LINE`):
 
 ```bash
-~/.claude/skills/do/scripts/metrics-append \
+# $DO_SCRIPTS comes from the canonical do-scripts resolver (the §4.13 block runs it).
+"$DO_SCRIPTS/metrics-append" \
   --log              "$LOG_PATH" \
   --ref              "$REF" \
   --complexity       "$COMPLEXITY" \
@@ -458,11 +462,19 @@ PHASE_DURATIONS_JSON="$(jq -c --arg end "$ENDED_AT" '
         value: ((if . + 1 < ($e | length) then $e[. + 1].t else ($end | fromdateiso8601) end) - $e[.].t)}]
   | from_entries' "$CLOCK_FILE" 2>/dev/null)" || PHASE_DURATIONS_JSON=""
 
+# Canonical do-scripts resolver — identical line in every wrapper block; each
+# block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
+DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
+
 # Phase 4.11 emit — invoke the wrapper. METRICS_LINE is set ONLY by capturing its result.
 # The wrapper does schema validation, atomic append, and pre/post line-count delta verify
 # internally. We never compose JSON here; we never `>>` to the log file here.
-if [ -n "$LOG_PATH" ]; then
-  if METRICS_RESULT=$(~/.claude/skills/do/scripts/metrics-append \
+if [ -n "$LOG_PATH" ] && [ ! -x "$DO_SCRIPTS/metrics-append" ]; then
+  # FAIL CLOSED — never hand-append to the log. APPEND FAILED is a legal
+  # terminal form (the Stop hook does not re-block it) and names the fix.
+  METRICS_LINE="Metrics: APPEND FAILED — metrics-append wrapper not found (do-scripts resolver found no install)"
+elif [ -n "$LOG_PATH" ]; then
+  if METRICS_RESULT=$("$DO_SCRIPTS/metrics-append" \
         --log              "$LOG_PATH" \
         --ref              "$REF" \
         --complexity       "$COMPLEXITY" \
