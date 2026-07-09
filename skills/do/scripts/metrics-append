@@ -8,8 +8,9 @@
 # the required flags, and unknown flags are rejected.
 #
 # Direct `echo ... >> $LOG_PATH` from sub-agents is an anti-pattern
-# (see anti-patterns.md). The daily-report scanner flags entries that
-# don't match the canonical shape, so bypasses are visible too.
+# (see anti-patterns.md). The shipped metrics-report CLI (sibling script)
+# flags entries that don't match the canonical shape in its SCHEMA BYPASS
+# section, so bypasses are visible too.
 #
 # Usage:
 #   metrics-append \
@@ -289,7 +290,7 @@ done
 # `type_check`/`type-check`/`lint_typecheck`, `dep_vuln`/`dep_vuln_go`/`dep_vuln_pnpm`.
 # Same fabrication class as the outcome-enum drift fixed in v0.6.0 — when the
 # vocabulary is uncontrolled, each synonym splits a gate's stats across buckets
-# and the daily-report's "gate failure rate" is meaningless. Gate STATUS was
+# and metrics-report's "gate failure rate" is meaningless. Gate STATUS was
 # equally drifty (`skip`/`n/a`/`n-a`/`na`/`n_a`, scalar `pass`/`true`/`ok`/`clean`).
 #
 # Policy — gate keys are an OPEN set (legit task-specific checks exist, e.g.

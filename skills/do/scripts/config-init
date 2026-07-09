@@ -287,7 +287,7 @@ fi
 # Default metrics preset — matches config-schema.md documented defaults.
 # `log_path` uses {repo_slug} placeholder resolved by Phase 4.11 at write time.
 # Writes to ~/.claude/do/metrics/ (cross-project home location) so a single
-# daily-report scanner sees all repos' telemetry.
+# metrics-report run sees all repos' telemetry.
 if [ "$METRICS" = "none" ]; then
   METRICS_BLOCK="null"
   METRICS_NOTE=""

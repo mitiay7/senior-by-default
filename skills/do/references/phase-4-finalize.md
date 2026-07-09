@@ -424,10 +424,18 @@ announce coupling depends on capturing its stdout into `$METRICS_LINE`):
 
 #### Defense in depth
 
-A daily report script (`~/.claude/do/metrics/daily-report.sh`, separate from the skill)
-scans logs for schema-invalid entries and surfaces them in a dedicated section. So even if
-a sub-agent bypasses the wrapper, the bypass shows up in the next morning's report rather
-than silently polluting the analysis. Don't rely on this — it's a tripwire, not a fix.
+The shipped `metrics-report` CLI (`"$DO_SCRIPTS/metrics-report"`, same resolver as
+`metrics-append`) scans logs for schema-invalid entries and surfaces them in a SCHEMA
+BYPASS section, excluded from aggregates. So even if a sub-agent bypasses the wrapper,
+the bypass shows up the next time anyone runs the report rather than silently polluting
+the analysis. Don't rely on this — it's a tripwire, not a fix. (Operators may
+additionally wire it into a cron/launchd daily report; that wiring is optional and
+outside the skill.)
+
+Analyze accumulated telemetry any time: `"$DO_SCRIPTS/metrics-report"` — per-tier
+counts, gate pass/fail rates, rebump rate, calibration accuracy, top failing gates;
+`--since <date>`, `--repo <slug>`, `--json`. Read-only; NOT a phase step — never run it
+as part of the pipeline, it's the human feedback loop.
 
 ### Self-review calibration logic — COMPUTED INSIDE `metrics-append`, not by you
 
@@ -650,7 +658,7 @@ The wrapper file (`skills/do/scripts/metrics-append`) lives in the skill and shi
 - `Metrics:` line says `APPEND FAILED — IOFAIL <reason>` → file write or count-delta check failed. Diagnose disk/lock/permission.
 - `Metrics:` line is any OTHER form — `Metrics: skipped — <reason>`, a count without the `(pre=… gates=…)` tell, prose — → no bash path above emits it; you composed it by hand. The Stop hook (when enabled) blocks unrecognized forms outright (the legal set is CLOSED) and cross-checks recognized ones: tell consistency (`pre`+1 = count) plus log freshness (last entry's ref in the announce, or mtime ≤ 30 min). A tell-less count is tolerated by the hook only for pre-tell installs — produced from THIS spec it means the flow wasn't run.
 - Announce uses different format than above (free prose) → you composed text instead of running the bash flow
-- Log file gained an entry but `Metrics:` line in announce didn't reference it (or shape doesn't match the wrapper output) → you bypassed the wrapper and wrote directly. The daily-report scanner will surface the bypass in tomorrow's report; don't do this.
+- Log file gained an entry but `Metrics:` line in announce didn't reference it (or shape doesn't match the wrapper output) → you bypassed the wrapper and wrote directly. The shipped `metrics-report` CLI surfaces the bypass in its SCHEMA BYPASS section on the next run; don't do this.
 
 For the spawned-agent execution model (agent runs everything start-to-finish and returns to a parent), this matters extra: the agent's final message is the only thing the parent sees. If diagnostic ends up there, parent flags it; if announce is plain prose, parent thinks success.
 

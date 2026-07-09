@@ -1,0 +1,322 @@
+#!/bin/bash
+# metrics-report — the shipped consumer for do-metrics telemetry: on-demand
+# aggregates over the JSONL log(s) that `metrics-append` writes.
+#
+# Why shipped (audit #15): every doc that justified the telemetry cost pointed
+# at an operator-side `daily-report.sh` that existed only on the author's
+# machine. For every other install the metrics tier was write-only — entries
+# accumulated with zero payoff, and the §19a "bypasses are visible in the
+# report" detection claim rested on a scanner adopters could not obtain. This
+# CLI closes the loop for everyone: run it whenever you want the numbers.
+# Read-only — it never writes to the log; no announce token, no tell (it is a
+# consumer, not an enforcement wrapper).
+#
+# Usage:
+#   metrics-report [--log <path>] [--repo <slug>] [--since <date>] [--json]
+#
+# Log resolution (first match wins):
+#   1. --log <path>                explicit file (leading ~ expanded)
+#   2. ./.claude/do/config.json    .metrics.log_path from the CURRENT dir's
+#                                  config, {repo_slug} resolved from $PWD the
+#                                  same way Phase 4.11 does
+#   3. ~/.claude/do/metrics/*.jsonl  the documented tier-1 preset location —
+#                                  ALL repos aggregated; --repo <slug> narrows
+#                                  to <slug>.jsonl
+#
+# Flags:
+#   --since <date>   only entries with started_at >= date (YYYY-MM-DD or full
+#                    ISO-8601 UTC; lexicographic compare — valid for ISO)
+#   --repo <slug>    with default-dir resolution: read only <slug>.jsonl
+#   --json           machine-readable aggregate JSON on stdout instead of the
+#                    terminal tables
+#
+# Report: per-complexity-tier counts (with outcome split), rebump rate +
+# transitions, self-review calibration accuracy (3 dimensions), per-gate
+# pass/fail table, top failing gates, and a SCHEMA BYPASS section — parseable
+# entries missing canonical fields (ref/started_at/ended_at/complexity/
+# outcome/self_review) are the §19a direct-write signature and are listed by
+# ref, excluded from aggregates. Malformed (non-JSON) lines are SKIPPED with a
+# stderr WARN, never fatal — one corrupt line must not kill the whole report.
+#
+# Exit codes:
+#   0  report produced (including the "no entries yet" helpful message)
+#   1  rejected (bad flag/value, explicit --log or --repo file missing,
+#      jq absent); stderr: "REJECT <reason>"
+
+set -euo pipefail
+
+die() { echo "REJECT $*" >&2; exit 1; }
+
+command -v jq >/dev/null 2>&1 || die "jq is required (metrics-append already depends on it; install jq)"
+
+LOG_PATH=""
+REPO=""
+SINCE=""
+AS_JSON="false"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --log)   [ $# -ge 2 ] || die "--log needs a value";   LOG_PATH="$2"; shift 2 ;;
+    --repo)  [ $# -ge 2 ] || die "--repo needs a value";  REPO="$2";     shift 2 ;;
+    --since) [ $# -ge 2 ] || die "--since needs a value"; SINCE="$2";    shift 2 ;;
+    --json)  AS_JSON="true"; shift ;;
+    -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
+    *) die "unknown flag: $1" ;;
+  esac
+done
+
+if [ -n "$SINCE" ]; then
+  [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$ ]] \
+    || die "--since must be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, got: $SINCE"
+fi
+
+# Tilde expansion — same rule as metrics-append --log (config paths are data;
+# a quoted leading ~ never saw shell expansion).
+expand_tilde() {
+  case "$1" in
+    "~")   printf '%s' "$HOME" ;;
+    "~/"*) printf '%s' "$HOME/${1#\~/}" ;;
+    *)     printf '%s' "$1" ;;
+  esac
+}
+
+DEFAULT_DIR="$HOME/.claude/do/metrics"
+FILES=()
+
+if [ -n "$LOG_PATH" ]; then
+  LOG_PATH="$(expand_tilde "$LOG_PATH")"
+  [ -f "$LOG_PATH" ] || die "--log $LOG_PATH: no such file"
+  FILES=("$LOG_PATH")
+elif [ -z "$REPO" ] && [ -f ".claude/do/config.json" ] \
+  && CFG_LOG=$(jq -re '.metrics.log_path // empty' .claude/do/config.json 2>/dev/null) \
+  && [ -n "$CFG_LOG" ]; then
+  # {repo_slug} resolution — identical to phase-4-finalize.md §4.11:
+  # [^a-zA-Z0-9]+ → '-', strip leading/trailing '-'.
+  SLUG=$(printf '%s' "$PWD" | sed -E 's/[^a-zA-Z0-9]+/-/g; s/^-+//; s/-+$//')
+  CFG_LOG="${CFG_LOG//\{repo_slug\}/$SLUG}"
+  CFG_LOG="$(expand_tilde "$CFG_LOG")"
+  [ -f "$CFG_LOG" ] && FILES=("$CFG_LOG")
+  RESOLVED_FROM="config (.claude/do/config.json → $CFG_LOG)"
+elif [ -n "$REPO" ]; then
+  [ -f "$DEFAULT_DIR/$REPO.jsonl" ] \
+    || die "--repo $REPO: $DEFAULT_DIR/$REPO.jsonl not found. Available: $(cd "$DEFAULT_DIR" 2>/dev/null && ls -- *.jsonl 2>/dev/null | sed 's/\.jsonl$//' | tr '\n' ' ' || echo '(none)')"
+  FILES=("$DEFAULT_DIR/$REPO.jsonl")
+else
+  for f in "$DEFAULT_DIR"/*.jsonl; do
+    [ -f "$f" ] && FILES+=("$f")
+  done
+fi
+
+if [ "${#FILES[@]}" -eq 0 ]; then
+  echo "No metrics logs found (looked at: ${RESOLVED_FROM:-$DEFAULT_DIR/*.jsonl})."
+  echo "The log fills as /do tasks finish — Phase 4.11 appends one JSONL entry per task via metrics-append."
+  echo "Check config.metrics.log_path (tier-1 preset: ~/.claude/do/metrics/{repo_slug}.jsonl) or pass --log <path>."
+  exit 0
+fi
+
+# --- Parse: collect valid JSON objects, count + warn on malformed lines ---
+TMP_ENTRIES=$(mktemp)
+trap 'rm -f "$TMP_ENTRIES"' EXIT
+
+MALFORMED_TOTAL=0
+for f in "${FILES[@]}"; do
+  NONBLANK=$(grep -c '[^[:space:]]' "$f" 2>/dev/null || true)
+  PRE=$(wc -l < "$TMP_ENTRIES" | tr -d ' ')
+  # fromjson? swallows unparseable lines instead of aborting the run — a
+  # single corrupt line must not kill the report (probe-pinned behavior).
+  jq -c -R 'fromjson? | select(type=="object")' "$f" >> "$TMP_ENTRIES" 2>/dev/null || true
+  POST=$(wc -l < "$TMP_ENTRIES" | tr -d ' ')
+  BAD=$((NONBLANK - (POST - PRE)))
+  if [ "$BAD" -gt 0 ]; then
+    echo "WARN $f: skipped $BAD malformed line(s) — not valid JSON objects; run 'jq .' over the file to locate them" >&2
+    MALFORMED_TOTAL=$((MALFORMED_TOTAL + BAD))
+  fi
+done
+
+FILES_JSON=$(printf '%s\n' "${FILES[@]}" | jq -R . | jq -sc .)
+
+# --- Aggregate (single jq pass over the parsed entries) ---
+REPORT=$(jq -s \
+  --arg since "$SINCE" \
+  --argjson malformed "$MALFORMED_TOTAL" \
+  --argjson files "$FILES_JSON" '
+  def caldim($vals):
+    { accurate:       ($vals | map(select(. == "accurate"))       | length),
+      false_positive: ($vals | map(select(. == "false_positive")) | length),
+      false_negative: ($vals | map(select(. == "false_negative")) | length),
+      skipped:        ($vals | map(select(. == "skipped"))        | length),
+      n_a:            ($vals | map(select(. == "n_a"))            | length) }
+    | .scored = (.accurate + .false_positive + .false_negative)
+    | .accuracy_pct = (if .scored > 0 then ((.accurate * 100 / .scored) | round) else null end);
+
+  . as $all
+  # Canonical = has the 5 fields + self_review the wrapper always writes;
+  # anything else parsed but incomplete is the §19a direct-write signature.
+  | ($all | map(select(
+      (.ref?         | type == "string") and
+      (.started_at?  | type == "string") and
+      (.ended_at?    | type == "string") and
+      (.complexity?  | type == "string") and
+      (.outcome?     | type == "string") and
+      (.self_review? | type == "object")
+    ))) as $canon
+  | ($all - $canon) as $bypass
+  | (if $since == "" then $canon
+     else ($canon | map(select(.started_at >= $since))) end) as $sel
+
+  | (["T","L","M","H"] | map(. as $t
+      | ($sel | map(select(.complexity == $t))) as $e
+      | { tier: $t,
+          count:            ($e | length),
+          merged:           ($e | map(select(.outcome == "merged"))           | length),
+          ready_for_review: ($e | map(select(.outcome == "ready_for_review")) | length),
+          blocked:          ($e | map(select(.outcome == "blocked"))          | length) }
+    )) as $cx
+
+  | ($sel | map(select(.complexity_rebumped_from? != null))) as $rb
+  | ($rb | group_by(.complexity_rebumped_from + "→" + .complexity)
+         | map({key: (.[0].complexity_rebumped_from + "→" + .[0].complexity), value: length})
+         | from_entries) as $rbt
+
+  | ([$sel[] | (.gates // {}) | to_entries[]
+      | { gate: .key,
+          status: ((.value | if type == "object" then (.status // "pass") else . end)
+                   | tostring | ascii_downcase) }]) as $gs
+  | ($gs | group_by(.gate) | map(. as $g
+      | { gate:    $g[0].gate,
+          total:   ($g | length),
+          pass:    ($g | map(select(.status == "pass"))    | length),
+          warn:    ($g | map(select(.status == "warn"))    | length),
+          fail:    ($g | map(select(.status == "fail"))    | length),
+          block:   ($g | map(select(.status == "block"))   | length),
+          skipped: ($g | map(select(.status == "skipped")) | length) }
+      | .other  = (.total - .pass - .warn - .fail - .block - .skipped)
+      | .runs   = (.total - .skipped)
+      | .failed = (.fail + .block)
+      | .fail_rate_pct = (if .runs > 0 then ((.failed * 100 / .runs) | round) else 0 end)
+    ) | sort_by([-.runs, .gate])) as $gates
+
+  | {
+      generated_at: (now | todate),
+      log_files: $files,
+      since: (if $since == "" then null else $since end),
+      entries: {
+        parsed:    ($all | length),
+        canonical: ($canon | length),
+        bypass:    (($all | length) - ($canon | length)),
+        malformed_skipped: $malformed,
+        selected:  ($sel | length)
+      },
+      complexity: $cx,
+      outcomes: {
+        merged:           ($sel | map(select(.outcome == "merged"))           | length),
+        ready_for_review: ($sel | map(select(.outcome == "ready_for_review")) | length),
+        blocked:          ($sel | map(select(.outcome == "blocked"))          | length)
+      },
+      rebump: {
+        count: ($rb | length),
+        total: ($sel | length),
+        rate_pct: (if ($sel | length) > 0 then (($rb | length) * 100 / ($sel | length) | round) else 0 end),
+        transitions: $rbt
+      },
+      calibration: {
+        legacy: caldim([$sel[] | .self_review.calibration?        // empty]),
+        defect: caldim([$sel[] | .self_review.calibration_defect? // empty]),
+        size:   caldim([$sel[] | .self_review.calibration_size?   // empty])
+      },
+      gates: $gates,
+      top_failing_gates: ($gates | map(select(.failed > 0))
+                                 | sort_by([-.failed, -.fail_rate_pct, .gate]) | .[0:5]),
+      bypass_refs: ($bypass | map(.ref? // "(no ref)"))
+    }
+' "$TMP_ENTRIES") || die "aggregation failed (internal — please report)"
+
+if [ "$AS_JSON" = "true" ]; then
+  echo "$REPORT" | jq .
+  exit 0
+fi
+
+# --- Terminal rendering ---
+PARSED=$(echo "$REPORT" | jq -r '.entries.parsed')
+if [ "$PARSED" -eq 0 ]; then
+  echo "No metrics entries yet in: $(echo "$REPORT" | jq -r '.log_files | join(", ")')"
+  echo "The log fills as /do tasks finish — Phase 4.11 appends one JSONL entry per task via metrics-append."
+  echo "Check config.metrics.log_path (tier-1 preset: ~/.claude/do/metrics/{repo_slug}.jsonl) or pass --log <path>."
+  exit 0
+fi
+
+echo "do-metrics report — generated $(echo "$REPORT" | jq -r '.generated_at')"
+echo "logs:    $(echo "$REPORT" | jq -r '.log_files | join(", ")')"
+echo "$REPORT" | jq -r '.entries |
+  "entries: \(.canonical) canonical of \(.parsed) parsed"
+  + (if .bypass > 0 then " (\(.bypass) schema-bypass)" else "" end)
+  + (if .malformed_skipped > 0 then " · \(.malformed_skipped) malformed line(s) skipped" else "" end)'
+if [ -n "$SINCE" ]; then
+  echo "$REPORT" | jq -r '"since:   \(.since) → \(.entries.selected) of \(.entries.canonical) canonical entries selected"'
+fi
+
+SELECTED=$(echo "$REPORT" | jq -r '.entries.selected')
+if [ "$SELECTED" -eq 0 ]; then
+  echo
+  echo "No entries match the filter — nothing to aggregate."
+  exit 0
+fi
+
+echo
+echo "COMPLEXITY ROUTING"
+printf '  %-6s %7s %8s %8s %8s\n' "tier" "tasks" "merged" "ready" "blocked"
+echo "$REPORT" | jq -r '.complexity[] | select(.count > 0) |
+  [.tier, .count, .merged, .ready_for_review, .blocked] | @tsv' \
+| while IFS=$'\t' read -r t c m r b; do
+    printf '  %-6s %7s %8s %8s %8s\n' "$t" "$c" "$m" "$r" "$b"
+  done
+echo "$REPORT" | jq -r '[.entries.selected, .outcomes.merged, .outcomes.ready_for_review, .outcomes.blocked] | @tsv' \
+| while IFS=$'\t' read -r c m r b; do
+    printf '  %-6s %7s %8s %8s %8s\n' "all" "$c" "$m" "$r" "$b"
+  done
+
+echo
+echo "PLAN-SIZE REBUMPS"
+echo "$REPORT" | jq -r '.rebump |
+  if .count == 0 then "  none recorded (\(.total) tasks)"
+  else "  \(.count) of \(.total) tasks re-routed (\(.rate_pct)%) — "
+       + (.transitions | to_entries | map("\(.key) ×\(.value)") | join(", "))
+  end'
+
+echo
+echo "SELF-REVIEW CALIBRATION (accuracy = accurate / scored)"
+printf '  %-9s %9s %9s %10s %10s %8s %5s\n' "dimension" "accuracy" "accurate" "false_pos" "false_neg" "skipped" "n_a"
+echo "$REPORT" | jq -r '.calibration | to_entries[] |
+  [.key, (.value.accuracy_pct | if . == null then "-" else "\(.)%" end),
+   .value.accurate, .value.false_positive, .value.false_negative,
+   .value.skipped, .value.n_a] | @tsv' \
+| while IFS=$'\t' read -r d a ac fp fn sk na; do
+    printf '  %-9s %9s %9s %10s %10s %8s %5s\n' "$d" "$a" "$ac" "$fp" "$fn" "$sk" "$na"
+  done
+
+echo
+echo "GATES"
+printf '  %-20s %5s %5s %5s %5s %6s %5s %6s\n' "gate" "runs" "pass" "warn" "fail" "block" "skip" "fail%"
+echo "$REPORT" | jq -r '.gates[] |
+  [.gate, .runs, .pass, .warn, .fail, .block, .skipped, "\(.fail_rate_pct)%"] | @tsv' \
+| while IFS=$'\t' read -r g r p w f b s fr; do
+    printf '  %-20s %5s %5s %5s %5s %6s %5s %6s\n' "$g" "$r" "$p" "$w" "$f" "$b" "$s" "$fr"
+  done
+
+echo
+echo "TOP FAILING GATES"
+TOPN=$(echo "$REPORT" | jq -r '.top_failing_gates | length')
+if [ "$TOPN" -eq 0 ]; then
+  echo "  none — no gate failures recorded"
+else
+  echo "$REPORT" | jq -r '.top_failing_gates | to_entries[] |
+    "  \(.key + 1). \(.value.gate) — \(.value.failed) fail+block / \(.value.runs) runs (\(.value.fail_rate_pct)%)"'
+fi
+
+BYPASS=$(echo "$REPORT" | jq -r '.entries.bypass')
+if [ "$BYPASS" -gt 0 ]; then
+  echo
+  echo "SCHEMA BYPASS (anti-pattern §19a — entries missing canonical fields; excluded from aggregates above)"
+  echo "$REPORT" | jq -r '"  \(.entries.bypass) entr\(if .entries.bypass == 1 then "y" else "ies" end): \(.bypass_refs | join(", "))"'
+  echo "  Re-emit via metrics-append — direct writes to the log are forbidden (anti-patterns.md §19a)."
+fi

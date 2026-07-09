@@ -120,7 +120,7 @@ SKILL_NAME=do TRIGGER=+++ INSTALL_DIR=~/.local/share/senior-by-default \
 - `issue_tracker.{type,repo}` from `git remote get-url origin` (github/gitlab/none, owner/repo auto-extracted) — gated by a CLI preflight: `gh`/`glab` missing or unauthenticated → the config degrades to `type: "none"` (issue phase skipped, announced — never a mid-pipeline `gh: command not found`) with the remedy recorded in `_meta`
 - `issue_locale` from `$ARGUMENTS` script (Cyrillic → `ru`, Hiragana/Katakana/CJK → `ja`, Hangul → `ko`, else `en`; explicit `--issue-locale=<code>` wins)
 - recommended `specialists` preset wiring the 6 Phase-3-audit plugins listed below — **verified against `~/.claude/plugins/installed_plugins.json`**: entries for missing plugins are dropped, groups that become empty are omitted, and the config only ever references specialists that can actually spawn (no manifest → full preset, honestly marked UNVERIFIED)
-- documented tier-1 `metrics` preset (`~/.claude/do/metrics/{repo_slug}.jsonl` — cross-project, scannable by a single daily report)
+- documented tier-1 `metrics` preset (`~/.claude/do/metrics/{repo_slug}.jsonl` — cross-project; one run of the shipped [`metrics-report`](skills/do/scripts/metrics-report) CLI sees every repo)
 - `_meta._setup_notes` listing exact `/plugin install` commands so the file is self-contained
 
 The Phase 0 announce shows what was written verbatim — no parsing needed:
@@ -230,9 +230,22 @@ Three Claude models with hard role boundaries — see [`skills/do/SKILL.md`](ski
 | CI wait + auto-merge | `ci.required: true` + `auto_merge.enabled: true` | Phase 4 waits for green CI, then `gh pr merge --auto`. Explicit `ci.required: true` is the auto-merge precondition — `auto_merge.enabled` without it (false OR unset) → per-run confirmation prompt, else `await_review` (phase-4 §4.2.6, the single source) |
 | Slack/Teams notifications | `notifications.slack_webhook` | Phase 1/4 broadcast task lifecycle |
 | PR-size ceiling | `pr_size.{warn_lines, block_lines, ...}` (on by default: warn 800/20, block 2000/50) | Phase 3.0 `pr-size-check` wrapper: ≤warn PASS, >warn WARN (note in PR), >block **BLOCK** (hard halt → draft PR + `blocked` label, exit 3). Plan-time sibling: Phase 2.0 `plan-size-check` H ceiling (values owned by the wrapper, scrubbed from spec prose) → SPLIT-REQUIRED |
-| Metrics for skill iteration | `metrics.log_path` + `tier: 1` | JSONL append per task; self-review calibration tracked in 3 dimensions (`calibration` + de-confounded `calibration_defect` / `calibration_size`); gate keys normalized to a controlled vocabulary |
+| Metrics for skill iteration | `metrics.log_path` + `tier: 1` | JSONL append per task; self-review calibration tracked in 3 dimensions (`calibration` + de-confounded `calibration_defect` / `calibration_size`); gate keys normalized to a controlled vocabulary; consume with the shipped `metrics-report` CLI (below) |
 
 See [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md) for the full schema and [`examples/`](examples/) for ready-to-adapt configs.
+
+### Reading the telemetry — `metrics-report`
+
+The consumer ships with the skill — [`skills/do/scripts/metrics-report`](skills/do/scripts/metrics-report), a read-only CLI over the JSONL log(s):
+
+```bash
+skills/do/scripts/metrics-report                    # current repo's config, else all of ~/.claude/do/metrics/*.jsonl
+skills/do/scripts/metrics-report --since 2026-06-01 # date-range filter (started_at >= date)
+skills/do/scripts/metrics-report --repo <slug>      # one repo from the default dir
+skills/do/scripts/metrics-report --json             # machine-readable aggregates
+```
+
+It reports per-complexity-tier counts (with outcome split), plan-size rebump rate + transitions, self-review calibration accuracy across all 3 dimensions, a per-gate pass/fail table, and the top failing gates. It is also the detection tier for wrapper bypasses: parseable entries missing the canonical fields (`ref`/`started_at`/`ended_at`/`complexity`/`outcome`/`self_review` — the §19a direct-write signature) are listed in a **SCHEMA BYPASS** section and excluded from aggregates; malformed lines are skipped with a warning, never fatal. (Optional operator wiring — cron/launchd, HTML rendering — is left to you; the CLI is the shipped, supported core.)
 
 ## Optional: harness-level enforcement hooks
 
@@ -386,12 +399,12 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 `v0.8.1` released (2026-05-31). Architecture stable. v0.8 closed the **enforcement loop** with opt-in tier-3 harness hooks; v0.8.1 is a patch making the `--orchestrator` / Co-Authored-By model examples version-agnostic (`opus-<version>` placeholder, never a hardcoded build). v0.8 highlights:
 
 - **Three enforcement tiers, now explicit** — soft instruction → structural-coupling wrapper (default) → **opt-in Claude Code hook** (runtime-enforced, model-independent). A **Stop hook** is the harness-enforced backstop for metrics emission (blocks a `/do` finalize lacking a file-backed `Metrics:` line; self-scopes so normal turns are untouched); a **PreToolUse hook** surfaces the plan-size verdict at spawn time. Off by default — see [`skills/do/references/hooks.md`](skills/do/references/hooks.md).
-- **No dead gates** — the five "never-failing" gates were investigated and kept: `0 fails` was a measurement artifact (Phase 3 records the resolved state); all fire via `fix_cycle` (`opus_review` 16/125, `test` 5/130, …). The daily report now shows a `Fired*` column.
+- **No dead gates** — the five "never-failing" gates were investigated and kept: `0 fails` was a measurement artifact (Phase 3 records the resolved state); all fire via `fix_cycle` (`opus_review` 16/125, `test` 5/130, …). (Measured with the operator-side daily report, since superseded by the shipped `metrics-report` CLI.)
 - **Leaner anti-patterns** — the 7-entry §19 fabrication family consolidated to one principle + a table; wrapper boilerplate assessed and intentionally left self-contained.
 
 The v0.7 cycle (folded below) acted on a 225→254-entry telemetry audit (May 14–24) — **measurement integrity + a PR-size ceiling that actually blocks**:
 
-- **Controlled vocabulary for `gates`** — `metrics-append` normalizes gate keys (alias map → 19 canonical names) and statuses (→ `pass|warn|fail|block|skipped`), preserving unknown task-specific keys with a `noncanon=` tell. The audit found ~110 distinct keys for ~19 real gates; the daily report now buckets cleanly (60 → 19 + a few one-offs).
+- **Controlled vocabulary for `gates`** — `metrics-append` normalizes gate keys (alias map → 19 canonical names) and statuses (→ `pass|warn|fail|block|skipped`), preserving unknown task-specific keys with a `noncanon=` tell. The audit found ~110 distinct keys for ~19 real gates; gate reports now bucket cleanly (60 → 19 + a few one-offs — see the shipped `metrics-report` CLI).
 - **Split self-review calibration** — `calibration_defect` (real code defect missed) vs `calibration_size` (diff-size prediction), de-confounding the FP rate that 39% of historical "false positives" were just `pr_size=warn` noise inflating.
 - **PR-size ceiling** — `plan-size-check` H bucket got a real file/line ceiling (was effectively unbounded; the values live only in the wrapper), so `SPLIT-REQUIRED` fires at plan time. New `pr-size-check` wrapper owns the Phase 3.0 PASS/WARN/**BLOCK** decision and **exits 3 on block** (hard halt → draft PR + `blocked`), so the 8 historical >2000-line PRs that shipped as `warn` would now block.
 

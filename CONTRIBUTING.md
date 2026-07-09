@@ -70,7 +70,7 @@ There's no automated functional test suite — the skill runs through Claude. Sm
    - Phase you changed actually fires the new behavior
 2. If your change touches stack detection, test with at least 2 stacks (e.g. pure Go + JS monorepo).
 3. If your change touches a gate, force a failure case + a pass case to verify both paths.
-4. Inspect last metrics entry: `tail -1 ~/.claude/do/metrics/<repo-slug>.jsonl | jq` — does it have the data you expected?
+4. Inspect last metrics entry: `tail -1 ~/.claude/do/metrics/<repo-slug>.jsonl | jq` — does it have the data you expected? Then run `skills/do/scripts/metrics-report --repo <repo-slug>` — your entry must aggregate cleanly (no malformed-line WARN, not listed under SCHEMA BYPASS). If your change touches the metrics schema or `metrics-append`, also run the report against a crafted log covering every enum value plus one malformed line + one field-incomplete entry: the malformed line must be skipped with a WARN (never fatal), the incomplete entry must land in SCHEMA BYPASS, and an empty log must produce the helpful "no entries yet" message.
 5. Check: did anything regress? Re-run a previously-working task type.
 6. If your change touches `scripts/` or `hooks/`, run the touched script once on GNU/Linux too — BSD (macOS) and GNU coreutils disagree on flags (`date -j -u -f` vs `date -u -d` burned metrics emission on every Linux host once already). Docker one-liner from the repo root:
 
