@@ -189,10 +189,33 @@ fi
 # where sub-agents fill --ended-at with the moment of writing the entry but
 # --started-at with a back-computed earlier time using wrong tz, producing
 # negative cycle times (36% of pre-fix entries had this).
-STARTED_EPOCH=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$STARTED_AT" "+%s" 2>/dev/null) \
+#
+# Shape gate FIRST, strict regex, before any date(1) call. GNU `date -d` is
+# lenient — it accepts "2026-05-21", "tomorrow", "@0" — so without this gate
+# the GNU fallback below would silently weaken validation on exactly the
+# platform it exists to fix. The regex is the validator; date(1) only
+# converts to epoch.
+TS_SHAPE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+[[ "$STARTED_AT" =~ $TS_SHAPE ]] \
   || die "--started-at not ISO-8601 UTC like 2026-05-21T08:30:00Z, got: $STARTED_AT"
-ENDED_EPOCH=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$ENDED_AT" "+%s" 2>/dev/null) \
+[[ "$ENDED_AT" =~ $TS_SHAPE ]] \
   || die "--ended-at not ISO-8601 UTC like 2026-05-21T08:30:00Z, got: $ENDED_AT"
+# Epoch conversion, BSD/GNU dual-path. `date -j -u -f` is BSD-only (macOS);
+# GNU coreutils wants `date -u -d`. Each side rejects the other's flags
+# cleanly (GNU: "invalid option -- 'j'"; BSD: "illegal option -- d"; both
+# exit 1), so `|| die` still fires when neither path works. busybox/musl
+# date supports neither form — not a supported emission platform.
+# Origin: pre-fix the BSD-only call REJECTed every valid timestamp on Linux
+# with the misleading "not ISO-8601 UTC" message — total telemetry loss for
+# the platform, and a wrapper that always fails on the critical path
+# pressures the orchestrator into the direct-write bypass it exists to
+# prevent (anti-patterns §19a).
+STARTED_EPOCH=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$STARTED_AT" "+%s" 2>/dev/null \
+             || date -u -d "$STARTED_AT" "+%s" 2>/dev/null) \
+  || die "--started-at epoch conversion failed (out-of-range field, or date(1) is neither BSD nor GNU on this host), got: $STARTED_AT"
+ENDED_EPOCH=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$ENDED_AT" "+%s" 2>/dev/null \
+           || date -u -d "$ENDED_AT" "+%s" 2>/dev/null) \
+  || die "--ended-at epoch conversion failed (out-of-range field, or date(1) is neither BSD nor GNU on this host), got: $ENDED_AT"
 [ "$ENDED_EPOCH" -ge "$STARTED_EPOCH" ] \
   || die "--ended-at ($ENDED_AT) is before --started-at ($STARTED_AT) — negative cycle time. Most common cause: writing both timestamps near task END using wrong tz or back-computing started_at incorrectly. Fix: capture STARTED_AT at the moment task begins (Phase 0), not retroactively at Phase 4.13."
 

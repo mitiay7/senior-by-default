@@ -72,6 +72,12 @@ There's no automated functional test suite — the skill runs through Claude. Sm
 3. If your change touches a gate, force a failure case + a pass case to verify both paths.
 4. Inspect last metrics entry: `tail -1 ~/.claude/do/metrics/<repo-slug>.jsonl | jq` — does it have the data you expected?
 5. Check: did anything regress? Re-run a previously-working task type.
+6. If your change touches `scripts/` or `hooks/`, run the touched script once on GNU/Linux too — BSD (macOS) and GNU coreutils disagree on flags (`date -j -u -f` vs `date -u -d` burned metrics emission on every Linux host once already). Docker one-liner from the repo root:
+
+   ```bash
+   docker run --rm -v "$PWD":/w -w /w debian:stable-slim bash -c \
+     'apt-get -qq update && apt-get -qq install -y jq >/dev/null && bash -n skills/do/scripts/* && <your invocation here>'
+   ```
 
 ## Adding a new tracker
 

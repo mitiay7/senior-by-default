@@ -28,6 +28,20 @@ The Phase 1 issue template opened with the locale prologue, violating the global
 
 Audit finding #12 (major).
 
+### Fixed — `metrics-append` timestamp parsing portable across BSD/GNU (was: hard-fail on every Linux host)
+
+`scripts/metrics-append` converted `--started-at`/`--ended-at` to epochs via `date -j -u -f` — BSD-only. On GNU/Linux both calls fail (`invalid option -- 'j'`) with stderr suppressed, so every valid ISO-8601 timestamp died with the misleading `REJECT … not ISO-8601 UTC`. Total telemetry loss for the whole platform on "the ONLY supported way" to emit — and with `hooks/do-metrics-stop-gate.sh` blocking finalize until a genuine wrapper run is evidenced, a Linux orchestrator was wedged between an always-failing wrapper and a blocking hook: exactly the §19a direct-write bypass pressure the wrapper exists to remove.
+
+**Fix** (`scripts/metrics-append` timestamp block), three layers:
+
+- **Strict shape regex FIRST** — `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$` gates both timestamps before any `date(1)` call. The ordering is load-bearing: GNU `date -d` is lenient (accepts `2026-05-21`, `tomorrow`, `@0`), so without the regex the GNU fallback would silently *weaken* validation on exactly the platform being fixed. The regex is the validator; `date` only converts.
+- **BSD/GNU dual-path epoch conversion** — `date -j -u -f … || date -u -d …` with `|| die` when both fail. Each side rejects the other's flags cleanly (GNU: `invalid option -- 'j'`; BSD: `illegal option -- d`; both exit 1), so die-on-malformed is preserved on both platforms. busybox/musl `date` supports neither form — documented in the script as not a supported emission platform.
+- **Honest die message** — the epoch-conversion failure no longer claims "not ISO-8601 UTC" (shape is proven by the time it fires); it names the real causes (out-of-range field, or `date(1)` neither BSD nor GNU).
+
+Verified empirically on both platforms. macOS BSD path: canonical timestamp → epoch `1779352200`; BSD `date -d` exits 1 so the fallback chain still dies; shape-valid out-of-range `2026-13-45T99:99:99Z` rejected; negative-cycle ordering check fires; equal timestamps accepted. Debian GNU via docker: same epoch `1779352200` (identical cross-platform math); valid entry now appends `OK pre=0 post=1` where pre-fix was total loss; `2026-05-21` / `tomorrow` / `@0` all REJECT via the regex; negative-cycle check fires. `CONTRIBUTING.md` test checklist gained item 6: any change touching `scripts/`/`hooks/` gets one GNU/Linux run (docker one-liner provided) — this exact flag-divergence class is what it catches.
+
+Audit finding #3 (major).
+
 ## [0.8.1] — 2026-05-31
 
 **Patch — version-agnostic model examples.** Doc/comment-only fix; no behavior change.
