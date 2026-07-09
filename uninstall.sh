@@ -92,6 +92,69 @@ else
   log "No trigger block found in $CLAUDE_MD (or file doesn't exist) — skipping"
 fi
 
+# --- Step 2.5: remove enforcement hook entries from ~/.claude/settings.json --
+
+# Reverses install.sh Step 6.5 (opt-in hooks merge). Step 1 removed the symlink
+# those hook commands resolve through — leaving the entries behind means
+# missing-script hook errors on every Stop and every Task spawn, in every
+# project, with nothing attributing them to this skill. Matched by script
+# basename (do-metrics-stop-gate.sh / do-plan-size-pretooluse.sh), so
+# custom-skill-name installs and manual settings.with-hooks.json merges are
+# covered too. Fail-open: an un-editable settings.json warns and never aborts
+# the rest of the uninstall.
+
+SETTINGS_JSON="$HOME/.claude/settings.json"
+HOOK_RE='do-(metrics-stop-gate|plan-size-pretooluse)\.sh'
+HOOKS_SUMMARY="No /do enforcement hook entries in $SETTINGS_JSON — nothing to remove"
+
+if [ -f "$SETTINGS_JSON" ] && grep -qE "$HOOK_RE" "$SETTINGS_JSON" 2>/dev/null; then
+  if command -v jq >/dev/null 2>&1; then
+    log "Removing /do enforcement hook entries from $SETTINGS_JSON"
+    backup="$SETTINGS_JSON.bak.$(date +%s)"
+    tmp=$(mktemp)
+    if jq --arg re "$HOOK_RE" '
+        if (.hooks | type) == "object" then
+          .hooks |= (
+            with_entries(
+              if (.value | type) == "array" then
+                .value |= (
+                  map(if (.hooks | type) == "array"
+                      then .hooks |= map(select((.command // "") | test($re) | not))
+                      else . end)
+                  | map(select((.hooks | type) != "array" or (.hooks | length) > 0))
+                )
+              else . end
+            )
+            | with_entries(select((.value | type) != "array" or (.value | length) > 0))
+          )
+          | if (.hooks | length) == 0 then del(.hooks) else . end
+        else . end
+      ' "$SETTINGS_JSON" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+      cp "$SETTINGS_JSON" "$backup"
+      mv "$tmp" "$SETTINGS_JSON"
+      ok "Hook entries removed (backup: $backup)"
+      HOOKS_SUMMARY="Removed /do enforcement hook entries from $SETTINGS_JSON (backup: $backup)"
+    else
+      rm -f "$tmp"
+      warn "Could not edit $SETTINGS_JSON (invalid JSON?) — left untouched."
+      warn "Remove the Stop/PreToolUse entries whose command ends in"
+      warn "do-metrics-stop-gate.sh / do-plan-size-pretooluse.sh manually, then"
+      warn "run /hooks in Claude Code to confirm they're gone."
+      HOOKS_SUMMARY="LEFT IN PLACE: /do hook entries in $SETTINGS_JSON (file un-editable) — remove manually"
+    fi
+  else
+    warn "jq not found — cannot remove /do enforcement hook entries from $SETTINGS_JSON."
+    warn "Without removal, Claude Code errors on every Stop and Task spawn (the"
+    warn "hook scripts no longer exist). Remove manually: open $SETTINGS_JSON and"
+    warn "delete the Stop/PreToolUse entries whose command ends in"
+    warn "do-metrics-stop-gate.sh / do-plan-size-pretooluse.sh, then run /hooks"
+    warn "in Claude Code to confirm they're gone."
+    HOOKS_SUMMARY="LEFT IN PLACE: /do hook entries in $SETTINGS_JSON (jq missing) — remove manually"
+  fi
+else
+  log "No /do enforcement hook entries in $SETTINGS_JSON — skipping"
+fi
+
 # --- Step 3: optional purges ------------------------------------------------
 
 PURGE_INSTALL=${PURGE_INSTALL_DIR:-}
@@ -134,11 +197,13 @@ cat <<EOF
 What was touched:
   • Removed any symlinks in $CLAUDE_SKILLS_DIR pointing at $INSTALL_DIR
   • Stripped the begin/end-marked trigger block from $CLAUDE_MD (if present)
+  • $HOOKS_SUMMARY
   • Optionally purged: cache, metrics, install dir (per your answers)
 
 What was NOT touched:
   • Project-level configs (.claude/do/config.json in your repos)
   • The rest of ~/.claude/CLAUDE.md
+  • Everything else in $SETTINGS_JSON (only /do hook entries are ever removed)
   • Any project-side worktrees or branches
 
 Re-install any time:

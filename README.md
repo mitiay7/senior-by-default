@@ -388,7 +388,7 @@ Tier-1 metrics schema is stable; new fields added strictly via enum extension (t
 ~/.local/share/senior-by-default/uninstall.sh
 ```
 
-Removes the symlink, the trigger block from `~/.claude/CLAUDE.md` (if added by the installer), and optionally the install dir, cache, and metrics. See [`uninstall.sh`](uninstall.sh).
+Removes the symlink, the trigger block from `~/.claude/CLAUDE.md` (if added by the installer), the opt-in enforcement hook entries from `~/.claude/settings.json` (jq-based, timestamped backup kept; only the two `do-*` entries are touched — without this step every Stop and Task spawn would error against the removed hook scripts), and optionally the install dir, cache, and metrics. If `jq` is missing the hook entries are left in place and the script prints manual removal instructions instead. See [`uninstall.sh`](uninstall.sh).
 
 ## License
 

@@ -97,6 +97,21 @@ Gates, all green: the fixed schema self-checks against draft 2020-12; all 4 `exa
 
 Audit finding #8 (major) — three verification adjustments applied (custom-branch-only `required:["type"]`; existing CI `json-validate` job already covers examples positively, the gap was negative/documented-scenario probes — run as commit gates here; announce-suffix confirmed glob- and §19c-safe). The fixture-test-file wiring into CI is deliberately left to the tests follow-up.
 
+### Fixed — `uninstall.sh` reverses the hooks merge (was: stranded `settings.json` entries → hook errors on every Stop/Task spawn after uninstall)
+
+`install.sh` Step 6.5 (v0.8.0) merges the opt-in `Stop`/`PreToolUse` hook commands — paths through the `~/.claude/skills/<name>` symlink — into `~/.claude/settings.json`. `uninstall.sh` removed that symlink, never touched `settings.json`, and claimed "✓ uninstalled": a user who had opted in got missing-script hook errors on every Stop event and every Task spawn, in **every** project, with nothing attributing the breakage to senior-by-default. Found independently by 2 of 8 audit analyses.
+
+**Fix — uninstall Step 2.5 mirrors the install merge in reverse** (`uninstall.sh`):
+
+- **jq-based removal, matched by script basename** (`do-metrics-stop-gate.sh` / `do-plan-size-pretooluse.sh`) — covers install-written symlink paths, custom-skill-name installs (the directory changes, the basenames don't), and manual `settings.with-hooks.json` merges alike. Emptied hook groups and event arrays are dropped; a `hooks` object left empty is deleted; everything else in the file round-trips untouched.
+- **Timestamped `.bak.<epoch>` backup** (same style as the install-side merge) taken only when an edit actually lands — a no-op or failed run never litters backups.
+- **Fail-open on every degraded path**: `jq` absent → entries left in place, manual removal instructions printed (delete the two entries, confirm via `/hooks`); `settings.json` invalid JSON → warn, file left byte-identical; no entries present → skip. None of these aborts the rest of the uninstall (`set -e`-safe), and the final "What was touched" summary reports the hook-removal outcome honestly per branch (`Removed … (backup: …)` / `LEFT IN PLACE … — remove manually` / `nothing to remove`).
+- **Docs**: README §Uninstall names the settings.json step + the jq-missing fallback; `hooks.md` gains a "Disabling / uninstalling" section documenting the reverse-merge, the basename matcher, and why the step is load-bearing.
+
+Probed in a sandbox HOME (real `uninstall.sh`, no mocks): install-shaped merged settings → both `do-*` entries gone, unrelated Stop hook + `permissions`/`model`/`env` keys byte-intact, emptied `PreToolUse` cleaned, exactly one backup carrying the pre-edit content, symlink and trigger block also removed; second run is idempotent (skip, no second backup); jq-absent run (restricted PATH) leaves the file untouched, prints the manual instructions, exits 0; invalid-JSON settings likewise untouched with no backup.
+
+Audit finding #10 (major).
+
 ## [0.8.1] — 2026-05-31
 
 **Patch — version-agnostic model examples.** Doc/comment-only fix; no behavior change.

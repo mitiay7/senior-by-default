@@ -58,3 +58,7 @@ The shipped example uses `$HOME/.claude/skills/do/hooks/...` (default skill name
 ## Graceful degradation
 
 Without hooks the skill behaves exactly as it does today — tiers 1+2 only. The hooks add a runtime safety net for the two must-happen checks (metrics emission, plan-size verdict); they do not change any Phase 0–4 behavior. Removing the `hooks` block from settings fully disables them. The hook scripts themselves are inert unless the Claude Code runtime invokes them on the corresponding event.
+
+## Disabling / uninstalling
+
+`uninstall.sh` reverses the install-time merge (Step 2.5): it strips the `Stop`/`PreToolUse` entries whose command ends in `do-metrics-stop-gate.sh` / `do-plan-size-pretooluse.sh` from `~/.claude/settings.json` — matched by basename, so custom skill names and manual `settings.with-hooks.json` merges are covered — with a timestamped `.bak` of the file kept and everything else untouched. This step is load-bearing: the uninstall removes the symlink the hook commands resolve through, so stranded entries would error on **every** Stop and Task spawn in every project, with nothing attributing the failure to this skill. Requires `jq`; if absent (or the file is not valid JSON) the entries are left in place and the script prints manual removal instructions — delete the two entries yourself, then run `/hooks` in Claude Code to confirm they're gone. To disable without uninstalling, remove the same entries by hand (hooks stay opt-in either way).
