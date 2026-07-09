@@ -176,6 +176,8 @@ When the skill detects a string-form command containing `{title}`/`{labels}`: va
 
 All seven keys recommended (six commands + `close_keyword`). Missing keys → that operation is skipped (e.g., no `comment` template → no completion comment posted; warn user).
 
+**Line-1 execute callout on custom trackers.** Issue bodies are tracker-agnostic except line 1: the execute callout (see [`phase-1-issue.md`](phase-1-issue.md) §Execute callout) stays the literal first line on every tracker. If the tracker doesn't render markdown blockquotes/backticks, adapt the syntax but keep the semantics — one visually-distinct first line containing the literal `+++` invocation, with the tracker's native issue ref (e.g. `ENG-123`) or the issue URL after `+++`.
+
 ## Per-command override
 Any tracker type accepts `commands` overrides. Useful for:
 - Adding labels to default `gh` calls (`--assignee @me`, custom `--milestone`)

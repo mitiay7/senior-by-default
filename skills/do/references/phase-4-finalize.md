@@ -134,7 +134,7 @@ git -C {repo} diff main...{branch}
 ## 4.4 Tech-debt accumulation
 New tech-debt items found during the task:
 - If `config.tech_debt_doc` set → append to "Batched deferred" section
-- Else if `config.issue_tracker` set → create new issue with label `tech-debt`
+- Else if `config.issue_tracker` set → create new issue with label `tech-debt` (body starts with the line-1 execute callout, same as Phase 1 — see [`phase-1-issue.md`](phase-1-issue.md) §Execute callout)
 - Else → write to `config.memory_path` (or `auto`-resolved memory path)
 
 Skip if no items.

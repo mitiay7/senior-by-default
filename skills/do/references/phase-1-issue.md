@@ -23,7 +23,7 @@ Issue body needs the issue number for the worktree-setup block; create returns t
 
 1. Write body to temp file with literal `{ISSUE_NUM}` placeholder
 2. Run `{Tracker.create}` — capture id from stdout (URL trailing integer for github/gitlab)
-3. Substitute `{ISSUE_NUM}` → actual id
+3. Substitute `{ISSUE_NUM}` → actual id (ALL occurrences — the line-1 execute callout and the worktree-setup block both carry it)
 4. Run `{Tracker.edit_body}` with updated file
 
 Verify: `{Tracker.view_body} | grep -c ISSUE_NUM` → `0`. Persistent placeholder → retry once → on second failure: alert user, do NOT proceed to Phase 2.
@@ -49,9 +49,13 @@ This list feeds Phase 0.3 concurrent-edit check AND Phase 4.2 CODEOWNERS reviewe
 
 Conditional markers `[+ if X → "..."]` mean: include only if X is true; remove markers in final output.
 
-Locale: `config.issue_locale`. Below shows `en` as canonical; for `ru` use the Russian prologue.
+Locale: `config.issue_locale`. Below shows `en` as canonical; for `ru` use the Russian callout and prologue.
+
+**Line 1 is the execute callout — the literal first line of the body.** No heading above it, no preamble, never inside `<details>`. Trackers truncate the body to the first ~150 chars in list views — the callout must surface in list previews, email notifications, and Slack link unfurls. Locale variants and tracker adaptations: see [Locale-specific callout & prologues](#locale-specific-callout--prologues).
 
 ```
+> 🚀 **Execute:** `+++ #{ISSUE_NUM}` — runs the `/do` skill (routes by complexity, plans, implements, gates, opens PR). Or paste this issue URL after `+++`.
+
 {Prologue — locale-dependent}
 
 [+ if context_doc → "Before starting, read `{context_doc.path}` — it has the project structure, conventions, current state, and open work. Do not re-explore the repos."
@@ -141,7 +145,29 @@ With `{N}` = ISSUE_NUM and `{slug}` derived from $ARGUMENTS.
    ```
 ```
 
-## Locale-specific prologues
+## Locale-specific callout & prologues
+
+### Execute callout (line 1) — MANDATORY
+
+**en** (default):
+```
+> 🚀 **Execute:** `+++ #{ISSUE_NUM}` — runs the `/do` skill (routes by complexity, plans, implements, gates, opens PR). Or paste this issue URL after `+++`.
+```
+
+**ru**:
+```
+> 🚀 **Выполнить:** `+++ #{ISSUE_NUM}` — запускает скилл `/do` (маршрутизация по сложности, план, реализация, гейты, PR). Или вставь URL этого issue после `+++`.
+```
+
+Rules (both locales):
+- Literal line 1 of the body — no heading above it, no preamble, never wrapped in `<details>` (defeats list-preview visibility).
+- `{ISSUE_NUM}` rides the existing two-step substitution; the `grep -c ISSUE_NUM` → `0` verify already covers it.
+- github/gitlab: markdown as-is. Custom trackers (Linear, Jira, …): adapt syntax if blockquote/backticks don't render, keep the semantics — one visually-distinct first line containing the literal `+++` invocation. Reference the issue by the tracker's native id (`#{ISSUE_NUM}` → e.g. `ENG-123`) or point at the URL form (`+++ <issue URL>`). See [`trackers.md`](trackers.md).
+- Applies to EVERY issue this skill creates — Phase 1 bodies AND Phase 4.4 tech-debt issues.
+
+Origin: global rule 2026-05-19, revised same day from "a section anywhere in the body" → "first-line callout" — the section version sank under acceptance-criteria scrolling and never surfaced in tracker list previews, email notifications, or Slack unfurls.
+
+### Prologue (line 3, after the blank line)
 
 **en** (default):
 ```

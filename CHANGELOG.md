@@ -18,6 +18,16 @@ The skill taught next-free-integer migration allocation at four points — Phase
 
 Mixing with existing sequential migrations is fine — every common migration tool sorts numerically (`000036` < `20260509073812`), so new timestamp files come after the legacy ones; history is never renumbered. No script parses migration numbers (verified), so the placeholder sweep is display-only. Aligns the skill with the global collision-proof migration-naming rule written after the same incident.
 
+### Fixed — issue bodies open with the line-1 `+++` execute callout (global rule compliance)
+
+The Phase 1 issue template opened with the locale prologue, violating the global first-line execute-callout rule (2026-05-19 — revised same day from "a section anywhere in the body" to "literal first line" precisely because trackers truncate list previews to ~150 chars; a buried callout never surfaces in list views, email notifications, or Slack unfurls). Every M/H issue `/do` created was non-compliant, as were Phase 4.4 tech-debt issues. Fired on 100% of M/H tasks.
+
+- **`phase-1-issue.md`** — template line 1 is now the canonical callout blockquote ("🚀 **Execute:** `+++ #{ISSUE_NUM}` — runs the `/do` skill … Or paste this issue URL after `+++`."), blank line, then the prologue. Placement invariant spelled out above the template: no heading above it, no preamble, never inside `<details>`. `{ISSUE_NUM}` rides the existing two-step substitution — step 3 now says "ALL occurrences" and the `grep -c ISSUE_NUM` → `0` verify already guards the new occurrence. "Locale-specific prologues" section renamed to "Locale-specific callout & prologues"; **ru** callout variant added beside the ru prologue; Origin note recorded.
+- **`trackers.md`** — custom trackers (Linear, Jira, …): adapt syntax if blockquote/backticks don't render, keep the semantics — one visually-distinct first line with the literal `+++` invocation, tracker-native issue ref (e.g. `ENG-123`) or issue URL after `+++`.
+- **`phase-4-finalize.md` §4.4** — tech-debt issues created in the tracker start with the same callout (the global rule covers every agent-created issue, not just Phase 1).
+
+Audit finding #12 (major).
+
 ## [0.8.1] — 2026-05-31
 
 **Patch — version-agnostic model examples.** Doc/comment-only fix; no behavior change.
