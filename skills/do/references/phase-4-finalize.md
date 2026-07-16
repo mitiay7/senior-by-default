@@ -15,13 +15,20 @@ The very first step of Phase 4. **Runs before commit, push, or PR creation**, so
 # block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
 DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME/.claude/skills" "$HOME/.claude/plugins/cache" "$HOME/.local/share/senior-by-default/skills" -maxdepth 7 -type f -name metrics-append -path '*/scripts/*' 2>/dev/null | head -1)"; DO_SCRIPTS="${DO_SCRIPTS%/metrics-append}"
 
+# Optional flags go through an ARRAY, never `${VAR:+--flag "$VAR"}` — see §4.11's
+# note: that idiom needs shell word-splitting, which bash does and **zsh does not**,
+# collapsing flag+value into one argv token the wrapper rejects.
+# --branch-template only when config.naming overrides the defaults
+# (low: feat/{slug}; issue: feat/i{N}-{slug} — the wrapper knows both).
+BRANCH_ARGS=()
+add_opt() { [ -n "${2:-}" ] && BRANCH_ARGS+=("$1" "$2"); return 0; }
+add_opt --issue-number    "${N:-}"
+add_opt --branch-template "${BRANCH_TEMPLATE:-}"
+
 if [ -x "$DO_SCRIPTS/branch-normalize" ]; then
-  # --branch-template only when config.naming overrides the defaults
-  # (low: feat/{slug}; issue: feat/i{N}-{slug} — the wrapper knows both).
   BRANCH_LINE="$("$DO_SCRIPTS/branch-normalize" -C "$WORKTREE_PATH" \
       --complexity "$COMPLEXITY" --slug "$SLUG" \
-      ${N:+--issue-number "$N"} \
-      ${BRANCH_TEMPLATE:+--branch-template "$BRANCH_TEMPLATE"} 2>&1)" \
+      ${BRANCH_ARGS[@]+"${BRANCH_ARGS[@]}"} 2>&1)" \
     || BRANCH_LINE="Phase 4.0: NORMALIZE FAILED — $BRANCH_LINE"
 else
   # FAIL CLOSED — explicit token, never an empty variable.
@@ -576,6 +583,30 @@ DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME
 # Phase 4.11 emit — invoke the wrapper. METRICS_LINE is set ONLY by capturing its result.
 # The wrapper does schema validation, lock-serialized append, and content-based post-write
 # verify internally. We never compose JSON here; we never `>>` to the log file here.
+# Optional flags go through an ARRAY. Do NOT use `${VAR:+--flag "$VAR"}` here: that
+# idiom depends on the shell word-splitting the expansion, which **bash does and zsh
+# does NOT**. Under zsh each one collapses into a SINGLE argv token
+# (`--notes some long text`), and metrics-append rejects it — the announce then reads
+# `Metrics: APPEND FAILED — REJECT unknown arg: --notes …`. add_opt behaves identically
+# under bash and zsh, drops unset/empty values, and keeps multi-word values (--notes,
+# --title, the JSON payloads) intact. Long JSON is safest passed via a file
+# (`--gates-json "$(jq -c . /tmp/gates.json)"`): a shell variable holding an
+# em-dash-laden JSON blob has bitten this flow before.
+METRICS_ARGS=()
+add_opt() { [ -n "${2:-}" ] && METRICS_ARGS+=("$1" "$2"); return 0; }
+add_opt --complexity-rebumped-from "${COMPLEXITY_REBUMPED_FROM:-}"
+add_opt --orchestrator             "${ORCHESTRATOR:-}"
+add_opt --sr-size-assessment       "${SR_SIZE_ASSESSMENT:-}"
+add_opt --title                    "${TITLE:-}"
+add_opt --scope                    "${SCOPE:-}"
+add_opt --notes                    "${NOTES:-}"
+add_opt --gates-json               "${GATES_JSON:-}"
+add_opt --phase-durations-json     "${PHASE_DURATIONS_JSON:-}"
+add_opt --review-cycles            "${REVIEW_CYCLES:-}"
+add_opt --ci-status                "${CI_STATUS:-}"
+add_opt --auto-merge               "${AUTO_MERGE_FLAG:-}"
+add_opt --blocked-reason           "${BLOCKED_REASON:-}"
+
 if [ -n "$LOG_PATH" ] && [ ! -x "$DO_SCRIPTS/metrics-append" ]; then
   # FAIL CLOSED — never hand-append to the log. APPEND FAILED is a legal
   # terminal form (the Stop hook does not re-block it) and names the fix.
@@ -585,8 +616,6 @@ elif [ -n "$LOG_PATH" ]; then
         --log              "$LOG_PATH" \
         --ref              "$REF" \
         --complexity       "$COMPLEXITY" \
-        ${COMPLEXITY_REBUMPED_FROM:+--complexity-rebumped-from "$COMPLEXITY_REBUMPED_FROM"} \
-        ${ORCHESTRATOR:+--orchestrator "$ORCHESTRATOR"} \
         --implementer      "$IMPLEMENTER" \
         --outcome          "$OUTCOME" \
         --started-at       "$STARTED_AT" \
@@ -596,16 +625,7 @@ elif [ -n "$LOG_PATH" ]; then
         --lines-deleted    "$LINES_DELETED" \
         --sr-performed     "$SR_PERFORMED" \
         --sr-claimed       "$SR_CLAIMED_STATUS" \
-        ${SR_SIZE_ASSESSMENT:+--sr-size-assessment "$SR_SIZE_ASSESSMENT"} \
-        ${TITLE:+--title              "$TITLE"} \
-        ${SCOPE:+--scope              "$SCOPE"} \
-        ${NOTES:+--notes              "$NOTES"} \
-        ${GATES_JSON:+--gates-json    "$GATES_JSON"} \
-        ${PHASE_DURATIONS_JSON:+--phase-durations-json "$PHASE_DURATIONS_JSON"} \
-        ${REVIEW_CYCLES:+--review-cycles "$REVIEW_CYCLES"} \
-        ${CI_STATUS:+--ci-status      "$CI_STATUS"} \
-        ${AUTO_MERGE_FLAG:+--auto-merge "$AUTO_MERGE_FLAG"} \
-        ${BLOCKED_REASON:+--blocked-reason "$BLOCKED_REASON"} \
+        ${METRICS_ARGS[@]+"${METRICS_ARGS[@]}"} \
         2>&1); then
     # stdout shape: "OK pre=N post=N+1 path=<log> gates=<C> renamed=<R> noncanon=<list|->"
     # (parse anchored on the ^OK line — $METRICS_RESULT holds 2>&1, so a stderr

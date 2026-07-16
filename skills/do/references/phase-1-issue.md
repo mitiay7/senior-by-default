@@ -58,12 +58,24 @@ This list feeds the concurrent-edit check (next section) AND Phase 4.2 CODEOWNER
 Run immediately after the planned-files list above exists — moved here from Phase 0 Step 5, where it was circularly sequenced (it needs Phase 1's planned files; audit #19):
 
 ```bash
+# PLANNED_FILES is an ARRAY, and the pathspec is expanded quoted. An unquoted
+# scalar (`-- $PLANNED_FILES`) relies on the shell word-splitting it — bash does,
+# **zsh does not**. Under zsh the whole list collapses into ONE pathspec with
+# spaces in it, which matches nothing, so git prints no commits and exits 0 — the
+# gate reports "no concurrent edits" for every multi-file task and the failure is
+# SILENT (production: an entire session ran with this gate permanently green).
+# Quoted array expansion behaves identically under bash and zsh, and survives
+# paths containing spaces.
+PLANNED_FILES=(internal/foo/service.go internal/foo/repository.go)   # from the Est deltas list
+
 # REQUIRED: refresh origin/main first — otherwise reads stale ref, misses recent activity
 git -C "$REPO" fetch origin main --quiet
-git -C "$REPO" log --since="${LOOKBACK_DAYS} days ago" --name-only --pretty="%h %an" origin/main -- $PLANNED_FILES
+git -C "$REPO" log --since="${LOOKBACK_DAYS} days ago" --name-only --pretty="%h %an" origin/main -- "${PLANNED_FILES[@]}"
 ```
 
 `LOOKBACK_DAYS` = `config.concurrent_edit_check.lookback_days` (default 7). Recent commits on planned files → WARN with author+SHA list; proceed. The warning rides in two places: the issue body's Implementation Hints (template below) and the Phase 1 announce.
+
+**Empty output is a verdict, not a pass — sanity-check it.** This gate's failure mode is silence, so an empty result on a repo with any history deserves one probe before you believe it: re-run with a single known-touched path and confirm you get commits back. A gate that cannot fail is not a gate ([anti-patterns §25](anti-patterns.md)).
 
 ## Issue body template
 

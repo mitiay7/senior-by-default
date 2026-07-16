@@ -4,6 +4,30 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-07-16
+
+Shell-portability release. The orchestrator's shell is frequently **zsh**, which does not word-split unquoted expansions; two spec idioms assumed bash and misbehaved there. One of them made a gate incapable of failing. Found by running the skill against a real repo for a full session (lea-api, 4 issues shipped) and noticing a gate that was green in a state where it could not have been.
+
+### Fixed — Phase 1 concurrent-edit gate reported "no concurrent edits" for every multi-file task under zsh (silent false all-clear)
+
+`git log … -- $PLANNED_FILES` relied on the shell splitting the scalar into one pathspec per file. bash does; **zsh does not** — the whole list arrives as a single pathspec containing spaces, matches nothing, and `git log` prints no commits and exits 0. The gate therefore reported a clean result for every task touching more than one file, and the failure was indistinguishable from a genuine pass. Confirmed in production: an entire session ran with this gate permanently green while `service.go` had 10 commits in the lookback window.
+
+`PLANNED_FILES` is now an array expanded as `-- "${PLANNED_FILES[@]}"` — identical under bash and zsh, and it survives paths containing spaces. The section also states the rule the failure taught: an empty result from a check whose pass is indistinguishable from "matched nothing" is a claim requiring evidence, not a pass ([anti-patterns §25](skills/do/references/anti-patterns.md)).
+
+### Fixed — `${VAR:+--flag "$VAR"}` collapsed flag and value into one argv token under zsh, so wrappers rejected the call (18 sites)
+
+Same root cause, louder symptom: under zsh the expansion is a SINGLE word, so `metrics-append` received `--notes some long text` as one argument and answered `REJECT unknown arg`, surfacing as `Metrics: APPEND FAILED` in the final announce. All 18 occurrences (4 in `pr-size-check`, 2 in `branch-normalize`, 12 in `metrics-append`) now build an args array via a small `add_opt` helper and expand it guarded (`${ARGS[@]+"${ARGS[@]}"}`, which keeps an empty array safe under `set -u`). Verified byte-identical output under bash 3.2 and zsh 5.9, including multi-word values and empty-value omission.
+
+Deliberately unchanged: the do-scripts resolver's `${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"}`. That expansion yields a single word, which is exactly what both shells produce — the defect is specific to expansions that must split into several words. Verified rather than swept.
+
+### Fixed — `skills/do/SKILL.md` still declared `version: 0.8.1` after the 0.9.0 release
+
+The 0.9.0 release bumped `plugin.json` and the README status line but missed the SKILL.md frontmatter, so the skill advertised a version it had not been for a release. Now `0.9.1` in all three places.
+
+### Added — anti-patterns §25: assuming bash word-splitting; "a gate that cannot fail is not a gate"
+
+Documents both idioms, the portable array fix, the safe single-word case, and the general rule the incident produced. The same class bit the operator's own verification script during the session (`go test $PKGS` collapsed to one argument and printed an empty failing-test set that read as "0 regressions") — a reviewer's tooling is not exempt from the anti-patterns it enforces.
+
 ## [0.9.0] — 2026-07-09
 
 Enforcement-integrity release. Two audit tiers (26-finding, 17-agent audit of 2026-07-09): the now-tier (9 fixes: timestamp migrations, `+++` first-line issue callout, portable metrics-append, stop-gate bypass closure, STARTED_AT task clock, schema fixes, uninstall hook reversal, stale-ref sweep) and the next-tier (enforcement integrity on every install path: dynamic wrapper resolution + self-marketplace, wrapper-owned secret-scan coupled to the push, orchestrator-verified build/lint/test, grounded plan-size inputs, §19 de-verbatim + branch-normalize + in-wrapper calibration, hook live-sim release gate, single-sourced auto-merge + tracker preflight, verified specialists preset + locked writes, metrics-report consumer, caveman fork/smart integration + spec-contradiction fixes). All entries below this heading until [0.8.1] belong to this release.

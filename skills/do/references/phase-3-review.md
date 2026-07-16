@@ -57,13 +57,23 @@ DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME
 
 # Pass config.pr_size.* ONLY when the project overrides the defaults; the wrapper
 # bakes in the config-schema.md defaults (warn 800/20, block 2000/50) otherwise.
+#
+# Optional flags go through an ARRAY, never `${VAR:+--flag "$VAR"}`: that idiom
+# needs the shell to word-split the expansion — bash does, **zsh does not**, and
+# under zsh it collapses flag+value into ONE argv token (`--warn-lines 800`), which
+# every wrapper rejects as an unknown arg. add_opt behaves identically under bash
+# and zsh, skips unset/empty values, and keeps values containing spaces intact.
+PR_SIZE_ARGS=()
+add_opt() { [ -n "${2:-}" ] && PR_SIZE_ARGS+=("$1" "$2"); return 0; }
+add_opt --warn-lines  "${CFG_WARN_LINES:-}"
+add_opt --warn-files  "${CFG_WARN_FILES:-}"
+add_opt --block-lines "${CFG_BLOCK_LINES:-}"
+add_opt --block-files "${CFG_BLOCK_FILES:-}"
+
 if [ -x "$DO_SCRIPTS/pr-size-check" ]; then
   PR_SIZE_LINE="$("$DO_SCRIPTS/pr-size-check" \
     --lines "$DIFF_LINES" --files "$DIFF_FILES" \
-    ${CFG_WARN_LINES:+--warn-lines "$CFG_WARN_LINES"} \
-    ${CFG_WARN_FILES:+--warn-files "$CFG_WARN_FILES"} \
-    ${CFG_BLOCK_LINES:+--block-lines "$CFG_BLOCK_LINES"} \
-    ${CFG_BLOCK_FILES:+--block-files "$CFG_BLOCK_FILES"})" && PR_SIZE_RC=0 || PR_SIZE_RC=$?
+    ${PR_SIZE_ARGS[@]+"${PR_SIZE_ARGS[@]}"})" && PR_SIZE_RC=0 || PR_SIZE_RC=$?
 else
   # FAIL CLOSED — explicit token so the case below has a matching arm.
   PR_SIZE_LINE="Phase 3.0: GATE ERROR — pr-size-check wrapper not found (do-scripts resolver found no install)"; PR_SIZE_RC=127
