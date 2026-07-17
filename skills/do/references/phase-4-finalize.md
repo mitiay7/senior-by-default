@@ -4,7 +4,9 @@ Tracker operations use `{Tracker.OP}` from [`trackers.md`](trackers.md). Branch 
 
 On entering this phase, stamp the task clock (`phase_entered_at["4"]` — one-liner in [`phase-0-setup.md`](phase-0-setup.md) §Task clock) if you haven't already; §4.11 derives phase durations from the stamps and reads `--started-at` back from the same file.
 
-> **Critical ordering**: Phase 4.0 (branch normalization) MUST run BEFORE 4.2 (PR creation). Final announce (4.13) is COUPLED to Phase 4.11 metrics emission via shared bash variables — you literally cannot emit the announce without first running the metrics-append command. See "Final announce" at the bottom of this file.
+> **Critical ordering**: Phase 4.0 (branch normalization) MUST run BEFORE §4.2 (PR creation — [`phase-4-pr.md`](phase-4-pr.md)). Final announce (4.13) is COUPLED to Phase 4.11 metrics emission via shared bash variables — you literally cannot emit the announce without first running the metrics-append command. See "Final announce" at the bottom of this file.
+
+> **File routing**: the PR path — §4.2 PR creation, §4.2.5 CI gate, §4.2.6 auto-merge, §4.7 issue comment — lives in [`phase-4-pr.md`](phase-4-pr.md). Load it ONLY on Medium/High with a code-hosting remote. **Trivial and Low never load it** (no PR — §4.3): after the §4.1.2 push they go straight to §4.4–§4.6 housekeeping, then §4.11/§4.13. Design rationale and telemetry history live in [`telemetry-internals.md`](telemetry-internals.md) — consult when changing the system, not when running it.
 
 ## 4.0 Branch normalization — UNCONDITIONAL, BEFORE any push or PR — via the `branch-normalize` wrapper
 
@@ -82,103 +84,16 @@ fi
 
 Dispatch on the wrapper's first output line:
 - `Phase 4.1: SECRETS PASS` (exit 0) → the push already ran in the same block. Record for §4.11/§4.13: `gates.secret_scan = { "status": "pass", "details": { "tell": "<the wrapper's verdict line, verbatim>" } }` — the range SHAs + counts in it are the §19g anti-fabrication tell; carry the line from real stdout, never retype from memory.
-- `Phase 4.1: SECRETS BLOCK` (exit 3) → push withheld. **STOP**: alert the user with the finding list (paths + pattern names only — the wrapper never prints the secret text). Remove the secret from branch history or rotate it; do NOT proceed to 4.2. Metrics: `gates.secret_scan = { "status": "block", "details": { "tell": "<verdict line>" } }`, `OUTCOME="blocked"`, `--blocked-reason "secret_scan block"`.
+- `Phase 4.1: SECRETS BLOCK` (exit 3) → push withheld. **STOP**: alert the user with the finding list (paths + pattern names only — the wrapper never prints the secret text). Remove the secret from branch history or rotate it; do NOT proceed to §4.2. Metrics: `gates.secret_scan = { "status": "block", "details": { "tell": "<verdict line>" } }`, `OUTCOME="blocked"`, `--blocked-reason "secret_scan block"`.
 - `REJECT …` (exit 1) / `GATE ERROR` → fail closed: no push happened. Fix the invocation / install and re-run 4.1.2; a REJECT is never a pass. If the task ends here: `gates.secret_scan = { "status": "fail", "details": { "reason": "<the REJECT/GATE ERROR line>" } }`.
 
-> There is NO spec-copyable pass form for this gate — the verdict line with its range SHAs exists only in wrapper stdout. Proceeding to 4.2 / the §4.13 announce presupposes a real `SECRETS PASS` earlier in this transcript.
+> There is NO spec-copyable pass form for this gate — the verdict line with its range SHAs exists only in wrapper stdout. Proceeding to §4.2 / the §4.13 announce presupposes a real `SECRETS PASS` earlier in this transcript.
 
-## 4.2 PR / MR creation (Medium / High, if issue tracker configured)
+## 4.2 / 4.2.5 / 4.2.6 — PR creation, CI gate, auto-merge → [`phase-4-pr.md`](phase-4-pr.md)
 
-PR/MR is always against the **code-hosting** platform. Detect from `git remote get-url origin`:
-- `github.com` → `gh pr create --repo {code_repo}`
-- `gitlab.com` or self-hosted GitLab → `glab mr create -R {code_repo}`
-- Other → instruct user to open via web UI
+**Medium/High with a code-hosting remote: read [`phase-4-pr.md`](phase-4-pr.md) now** and run its §4.2 (PR/MR creation), §4.2.5 (CI gate, opt-in via `config.ci.required`), and §4.2.6 (auto-merge — its precondition is single-sourced THERE). Carry back `$PR_URL`, `$CI_STATUS`, `$AUTO_MERGE_STATUS` for §4.11/§4.13.
 
-PR body close keyword:
-- Same-repo issue tracker: `{config.issue_tracker.commands.close_keyword or "Closes"} #{N}`
-- Cross-repo: `Refs {config.issue_tracker.repo}#{N}`
-- Linear / Jira / etc: prepend `{close_keyword} {N}` to PR description
-
-PR body should also include:
-- Brief summary of changes
-- Test plan (from Sonnet's report)
-- Self-review summary (from Phase 2.5)
-- ADR reference if exists (`References ADR-{NNNN}`)
-- PR-size note if Phase 3.0 warned
-
-CODEOWNERS: do NOT bypass auto-request. For GitLab MRs, manually `--reviewer` per CODEOWNERS owners (see [`codeowners.md`](codeowners.md)).
-
-Fullstack → PR per code repo. One repo's PR fails → draft PR for failing one, normal PR for passing one, document mismatch in issue comment.
-
-## 4.2.5 CI Gate — wait for green checks
-
-**Skipped if `config.ci.required` is not explicitly set to `true`** (no auto-default — feature is opt-in). Most solo / local-only setups don't run cloud CI; gating on missing checks would just timeout. When skipped, §4.2.6 auto-merge is OFF the normal path — its precondition (the single source, below) requires this gate to have RUN and PASSED.
-
-When configured, this gate independently re-proves build/test post-push — but it runs after commit/push/PR, so it never replaces the Phase 3.1 `build-verify` re-run (pre-commit hygiene on every path; the ONLY independent evidence on the default no-CI path — anti-patterns §19h).
-
-If `config.ci.required: true` AND `--skip-ci-wait` not in `$ARGUMENTS`:
-
-GitHub:
-```
-gh pr checks {N} --watch --interval 30 --required
-```
-With timeout `config.ci.timeout_seconds` (default 1800 = 30 min). Use `timeout` shell command:
-```
-timeout {timeout_seconds} gh pr checks {N} --watch --interval 30 --required
-```
-
-GitLab:
-```
-glab ci status --branch {branch} --wait
-```
-
-Custom: `config.ci.wait_command` (template with `{N}`, `{branch}`, `{repo}` placeholders).
-
-Outcomes:
-- All required checks PASS → proceed to 4.2.6
-- Any required check FAIL → 
-  - If `config.ci.fail_action == "block"` (default): pull failure logs (`gh run view --log-failed`), return to Sonnet for fix (counts as a Phase 3 cycle)
-  - If `"warn"`: print failure summary, proceed but add `⚠ CI failures: {names}` to issue comment in 4.7
-- Timeout → escalate to user: `"CI gate timed out after {N}s. Check {url} manually."`. Do NOT auto-merge.
-- Send `ci_failed` notification if configured.
-
-## 4.2.6 Auto-merge
-
-If `config.auto_merge.enabled` OR `--auto-merge` in `$ARGUMENTS` (and `--no-auto-merge` not present):
-
-**Precondition — the single source of truth for when auto-merge may fire.** No other text defines this; [anti-patterns](anti-patterns.md)' auto-merge bullet and the README defer here:
-
-> Auto-merge is allowed ONLY when `config.ci.required` is **explicitly `true`** AND this run's §4.2.5 gate produced a PASS.
-
-`ci.required: false`, unset, and no `ci` block at all are ONE state — unverified. §4.2.5 was skipped, "CI is green" is not checkable, and no independent post-push evidence exists. Config alone (`auto_merge.enabled: true` + no `ci` block — the default solo/local setup) never pre-authorizes an unverified merge.
-
-Unverified state + auto-merge requested → print the warning and require **explicit per-run confirmation**:
-
-```
-⚠ Auto-merge requested, but config.ci.required is not explicitly true — nothing will
-  verify this PR post-push. Merging unverified is an automated hand grenade.
-  Reply exactly "merge unverified" to proceed THIS run; anything else → await_review.
-```
-
-- User replies exactly `merge unverified` → proceed to the merge commands below; add `⚠ merged unverified (per-run user confirmation, no CI gate)` to the §4.7 issue comment and the §4.13 announce.
-- Any other reply, or no reply → **`await_review`**: print PR url, wait for manual merge. Not an error — the PR is open, the pipeline completes.
-
-Precondition satisfied (§4.2.5 PASS this run, or per-run confirmation given):
-- Verify PR isn't blocked by required reviews
-- Run:
-  ```
-  gh pr merge {N} --auto --{config.auto_merge.method}    # squash | merge | rebase
-  ```
-  with `--delete-branch` if `config.auto_merge.delete_branch: true` (default true)
-- For GitLab:
-  ```
-  glab mr merge {N} --auto-merge --{method}
-  ```
-- Print: `Auto-merge enabled. Will merge when reviews approved.`
-
-If auto-merge command rejected (branch protection requires explicit reviewer) → fall back to `await_review` mode: print PR url and required-reviewer list, wait for manual merge.
-
-Origin (audit #11): pre-fix, this section's guard read "never auto-merge if `ci.required: false`" — by its letter it missed the common UNSET default, its "verify CI is green (4.2.5 already passed)" was vacuous when 4.2.5 was skipped, and anti-patterns said "warns; user must explicitly accept" for the same state. Two texts, two rules — an orchestrator inclined to proceed cited whichever permitted it, and a PR auto-merged with zero verification. One rule now, defined here only.
+**Trivial/Low: skip — do not load that file.** No PR exists on these tiers (§4.3 below); `$CI_STATUS`/`$AUTO_MERGE_FLAG` stay unset and default to `skipped`/`false` in §4.11, and the §4.13 announce prints `PR: -`.
 
 ## 4.3 Low complexity — skip PR
 No PR. Emit change summary:
@@ -240,13 +155,9 @@ For all complexity levels: update `config.context_doc.path`. Required sections (
 
 If Sonnet failed to update → Opus updates inline + notes in PR description: `Context updated by Opus: {sections}`.
 
-## 4.7 Issue comment (M/H — REQUIRED if issue tracker)
-Use `{Tracker.comment}` with body file:
-```
-✅ Done. PR: <url> · Migration: {TS} (or —) · Build: <list of ✓ checks> [+ if context_doc → "· Context updated: {context_doc.path} §N[, §M]"] [+ if ADR → "· ADR-{NNNN}"] [+ if auto-merge → "· Auto-merge enabled"] [+ if merged unverified per §4.2.6 confirmation → "· ⚠ merged unverified (per-run user confirmation, no CI gate)"]
-```
+## 4.7 Issue comment (M/H) → [`phase-4-pr.md`](phase-4-pr.md) §4.7
 
-Required content if context_doc updated: `Context updated: {context_doc.path} §N[, §M]`.
+Part of the PR path — the comment template and its required content live in [`phase-4-pr.md`](phase-4-pr.md). T/L: skip (no issue exists on these tiers).
 
 ## 4.8 Worktree cleanup
 **Tell user — do NOT execute** unless explicitly requested OR auto-merge enabled with `delete_branch: true` (then GitHub deletes the remote branch on merge; user still removes local worktree).
@@ -347,13 +258,9 @@ The wrapper enforces:
 
 #### Gate vocabulary (controlled, OPEN set)
 
-The `gates` object's keys are a **controlled vocabulary** — same data-quality lesson
-as the `outcome` enum (v0.6.0 found 16 outcome variants; the May-24 audit found ~110
-distinct gate keys for ~19 real gates, e.g. `test`/`tests`/`test_gate`/`go_test`,
-`ui`/`ui_gate`/`visual_verify`, `dep_vuln`/`dep_vuln_go`/`dep_vuln_pnpm`). Uncontrolled,
-every synonym splits a gate's stats across buckets and the gate-failure-rate metric is
-noise. The `metrics-append` wrapper normalizes automatically — you do NOT compose the
-final key names, the wrapper does:
+The `gates` object's keys are a **controlled vocabulary**; the `metrics-append` wrapper
+normalizes automatically — you do NOT compose the final key names, the wrapper does
+(history + why the set is open, not hard-rejecting: [`telemetry-internals.md`](telemetry-internals.md)):
 
 **Canonical gate keys** (the names that survive into the JSONL):
 
@@ -403,6 +310,8 @@ Do NOT invent values like `pr_opened`, `success`, `shipped`, `merged_pending`, `
 
 **Computing `$SR_SIZE_ASSESSMENT`**: the machine-readable `size_assessment:` value from the Phase 2.5 self-review block (`fits|exceeds|unknown`), verbatim — never inferred from prose. Self-review absent → omit the flag (wrapper defaults `n_a`). Do NOT compute `--sr-calibration*` values — the wrapper computes all three calibration verdicts from the raw inputs (see "Self-review calibration logic" below).
 
+**Computing `$TOKENS_IN` / `$TOKENS_OUT`** (optional): populate ONLY from harness-reported usage for this task (a usage/cost readout the harness itself surfaced). No harness figure available → leave both unset (the flags are omitted and the entry carries no `tokens` field — that absence is honest). **NEVER estimate, reconstruct from context size, or approximate chars/4** — a guessed number poisons downstream ROI math precisely because it is indistinguishable from a measured one ([`telemetry-internals.md`](telemetry-internals.md) §Why token accounting exists).
+
 **Computing `$STARTED_AT` / `$ENDED_AT` / `$PHASE_DURATIONS_JSON`**: Phase 0 preflight already captured `STARTED_AT` into the task clock file ([`phase-0-setup.md`](phase-0-setup.md) §Task clock) — **read it back from disk; NEVER re-run `date` for it here**. A spec bash block runs in a fresh shell, so no variable from Phase 0 survives to this one; the clock file is the carrier. The wrapper hard-rejects `--ended-at < --started-at` (production audit: 36% of pre-fix entries had negative cycle times from back-computing started_at at the end). The §4.13 procedure below performs the read-back as its first lines:
 
 - `$STARTED_AT` — `jq -r '.started_at'` from the clock file. Cross-check against the Phase 0 announce `Started:` line: a mismatch means a parallel same-CWD session overwrote the clock — prefer the announce value (it is the genuine echo of this task's capture). Clock file missing AND no announce line → the capture was skipped; that is a Phase 0 spec violation to note in `--notes`, not a license to back-compute.
@@ -439,7 +348,9 @@ announce coupling depends on capturing its stdout into `$METRICS_LINE`):
    --scope                   "$SCOPE" \                        # optional
    --notes                   "$NOTES" \                        # optional free-text
    --specialist-iterations-json "$SPECIALIST_ITERATIONS_JSON" \# optional
-   --sr-miscalibrated-json   "$SR_MISCALIBRATED_JSON"]          # optional, defaults []
+   --sr-miscalibrated-json   "$SR_MISCALIBRATED_JSON" \         # optional, defaults []
+   --tokens-in               "$TOKENS_IN" \                     # optional — harness-reported ONLY, never estimated
+   --tokens-out              "$TOKENS_OUT"]                     # optional — see "Computing $TOKENS_IN/$TOKENS_OUT"
 ```
 
 #### Defense in depth
@@ -475,78 +386,14 @@ Your job is only to deliver the RAW inputs faithfully: the gates as Phase 3 reco
 them, `--sr-claimed` from the Phase 2.5 `claimed_status:` line, and
 `--sr-size-assessment` from the Phase 2.5 `size_assessment:` line.
 
-**Reference — the function the wrapper implements** (documentation of wrapper
-internals, not an instruction to hand-execute):
-
-```
-phase3_failed_gates = [g for g in gates if gates[g].status in ("fail", "block")]
-sonnet_claimed = sonnet_self_review.claimed_status        # "ready" | "deferred" | "uncertain"
-
-# --- Legacy combined calibration (`calibration`; unchanged semantics) ---
-if not self_review.performed:
-    calibration = "skipped"
-elif sonnet_claimed == "ready" and phase3_failed_gates:
-    calibration = "false_positive"
-    miscalibrated = [f"{g}: claimed clean; Phase 3 found {brief_reason}" for g in phase3_failed_gates]
-elif sonnet_claimed == "ready" and not phase3_failed_gates:
-    calibration = "accurate"
-elif sonnet_claimed in ("deferred", "uncertain") and not phase3_failed_gates:
-    calibration = "false_negative"
-else:
-    calibration = "accurate"   # flagged issues, Phase 3 confirmed
-```
-
-(`miscalibrated` remains caller-provided free text via `--sr-miscalibrated-json` — it
-is descriptive, not a verdict.)
-
-**Why split** (production audit, 254 entries): of 44 `false_positive` entries, **17 (39%)
-fired ONLY `pr_size=warn`** — Sonnet's code was fine, it just under-predicted diff size.
-Counting those as "self-review missed something" inflates the FP rate and conflates two
-different failures: *missing a real code defect* vs *not predicting diff size*. The split
-records each separately so future audits read the right signal.
-
-```
-# A "real code defect" = any NON-pr_size gate failing/blocking, OR a specialist blocker.
-specialist_blocked = any(c.blockers for c in specialist_iterations)
-defect_found = [g for g in phase3_failed_gates if g != "pr_size"] or specialist_blocked
-
-# --- calibration_defect: code-correctness dimension ---
-if not self_review.performed:                       calibration_defect = "skipped"
-elif sonnet_claimed == "ready" and defect_found:    calibration_defect = "false_positive"
-elif sonnet_claimed == "ready":                     calibration_defect = "accurate"
-elif sonnet_claimed in ("deferred","uncertain") and not defect_found:
-                                                    calibration_defect = "false_negative"
-else:                                               calibration_defect = "accurate"
-
-# --- calibration_size: diff-size-prediction dimension ---
-pr_size_fired      = gates.get("pr_size", {}).get("status") in ("warn", "block")
-# Sonnet "flagged size" = --sr-size-assessment == "exceeds" (the Phase 2.5 machine-readable
-# line — don't guess from prose), OR a Phase 2.0 plan-size rebump happened this task
-# (--complexity-rebumped-from is set).
-sonnet_flagged_size = (sr_size_assessment == "exceeds") \
-                      or (COMPLEXITY_REBUMPED_FROM != "")
-
-if not self_review.performed:                       calibration_size = "skipped"
-elif "pr_size" not in gates:                        calibration_size = "n_a"   # gate didn't run
-elif sonnet_flagged_size and pr_size_fired:         calibration_size = "accurate"
-elif (not sonnet_flagged_size) and pr_size_fired:   calibration_size = "false_positive"  # under-predicted
-elif sonnet_flagged_size and (not pr_size_fired):   calibration_size = "false_negative"  # over-predicted
-else:                                               calibration_size = "accurate"
-```
-
-Why this matters downstream: `calibration_defect` is the **highest-signal data point** for
-skill iteration (the de-confounded FP rate: defect-FP trending up → self-review prompt too
-lax; defect-FN up → Sonnet over-flagging), while `calibration_size` tells whether Phase 0/2.0
-routing predicts diff size well (size-FP up → routing under-estimates; the P0 PR-size ceiling
-+ plan-size-check should drive it down). **Confounder**: do not compare FP rates across the
-≈2026-05-17 specialist-plugin-install boundary — pre-install cohorts had zero specialist
-review, so mechanically fewer findings. Segment any trend on that date.
+The reference implementation of all three verdict functions (`calibration`,
+`calibration_defect`, `calibration_size`), the 254-entry production analysis behind the
+three-way split, and the trend-reading guidance live in
+[`telemetry-internals.md`](telemetry-internals.md) — wrapper documentation, not runtime
+instructions.
 
 ### Schema reference
-See [`config-schema.md`](config-schema.md) under `metrics` for the full Tier 1 entry schema.
-
-### What metrics enable
-DORA-ish self-analysis: cycle time per complexity, review-iterations distribution, gate failure rate, self-review calibration trend, CI flakiness (when CI gate is opt-in-on).
+See [`config-schema.md`](config-schema.md) under `metrics` for the full Tier 1 entry schema; what the accumulated data enables: [`telemetry-internals.md`](telemetry-internals.md) §What metrics enable.
 
 ## 4.12 Notify completion
 If `config.notifications` configured AND `task_completed` in events → send. See [`notifications.md`](notifications.md). Include PR url, auto-merge status, ADR ref if applicable.
@@ -606,6 +453,9 @@ add_opt --review-cycles            "${REVIEW_CYCLES:-}"
 add_opt --ci-status                "${CI_STATUS:-}"
 add_opt --auto-merge               "${AUTO_MERGE_FLAG:-}"
 add_opt --blocked-reason           "${BLOCKED_REASON:-}"
+# tokens: harness-reported usage ONLY (see §4.11) — unset means "not measured", never guess
+add_opt --tokens-in                "${TOKENS_IN:-}"
+add_opt --tokens-out               "${TOKENS_OUT:-}"
 
 if [ -n "$LOG_PATH" ] && [ ! -x "$DO_SCRIPTS/metrics-append" ]; then
   # FAIL CLOSED — never hand-append to the log. APPEND FAILED is a legal
@@ -674,15 +524,7 @@ EOF
 
 ### Why structural coupling + external wrapper, not soft instruction
 
-Three enforcement layers, each addressing a failure mode the previous one missed:
-
-1. **Soft "mandatory" instruction** (v0.1–v0.3) — got skipped systematically. Sub-agent reads "Phase 4.11 mandatory" at session start, opens the PR, writes detailed PR-summary as final output, stops without emitting metrics.
-
-2. **Announce↔emit bash coupling** (v0.3–v0.5) — `$METRICS_LINE` set only by the emit block, no emit → can't compose announce. Fixed the "stops without emitting" failure. Still let sub-agents compose JSON freely inside the emit block, producing 100+ distinct field names across runs and `self_review` block missing in 0 of 37 entries (v0.6 audit).
-
-3. **External wrapper with named-args CLI** (current) — the wrapper is the only path to a valid append. Unknown flags reject, missing required flags reject, bad enums reject. Sub-agent cannot invent a new shape without making the announce print `Metrics: APPEND FAILED — REJECT <reason>`, which is visible. Content-based append verification lives inside the wrapper too (the exact entry must be present as a full line after the lock-serialized write), so a `>>` that returns exit 0 without actually writing (disk full) is still caught.
-
-The wrapper file (`skills/do/scripts/metrics-append`) lives in the skill and ships with the install. The §4.13 bash block above invokes it and captures stdout into `$METRICS_LINE`. If `config.metrics.log_path` is unset, the wrapper isn't called and METRICS_LINE = "not configured" — announce still works, only the file write is skipped.
+The three-layer enforcement history (soft instruction → bash coupling → named-args wrapper, each layer closing the failure mode the previous one missed, with measured effectiveness) is documented in [`telemetry-internals.md`](telemetry-internals.md). Operationally: the wrapper is the only path to a valid append; the §4.13 bash block above invokes it and captures stdout into `$METRICS_LINE`. If `config.metrics.log_path` is unset, the wrapper isn't called and METRICS_LINE = "not configured" — announce still works, only the file write is skipped.
 
 ### What "broke the procedure" looks like
 

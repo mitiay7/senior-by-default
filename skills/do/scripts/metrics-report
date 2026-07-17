@@ -32,10 +32,17 @@
 #
 # Report: per-complexity-tier counts (with outcome split), rebump rate +
 # transitions, self-review calibration accuracy (3 dimensions), per-gate
-# pass/fail table, top failing gates, and a SCHEMA BYPASS section — parseable
-# entries missing canonical fields (ref/started_at/ended_at/complexity/
-# outcome/self_review) are the §19a direct-write signature and are listed by
-# ref, excluded from aggregates. Malformed (non-JSON) lines are SKIPPED with a
+# pass/fail table, top failing gates, TIER DETAIL (median wall-minutes /
+# lines / files, mean review cycles, gate-caused fix-cycle rate, normalized
+# rebump transitions), SPECIALIST AUDITS (per-agent auditor appearances /
+# blockers / block-rate from specialist_iterations), TOKENS (per-tier medians
+# of the optional harness-reported `tokens` object; a notice line when none
+# recorded), a SOFT DRIFT section (canonical entries whose empty gates or
+# missing self_review.calibration silently contribute nothing to the gate/
+# calibration aggregates), and a SCHEMA BYPASS section — parseable entries
+# missing canonical fields (ref/started_at/ended_at/complexity/outcome/
+# self_review) are the §19a direct-write signature and are listed by ref,
+# excluded from aggregates. Malformed (non-JSON) lines are SKIPPED with a
 # stderr WARN, never fatal — one corrupt line must not kill the whole report.
 #
 # Exit codes:
@@ -60,7 +67,7 @@ while [ $# -gt 0 ]; do
     --repo)  [ $# -ge 2 ] || die "--repo needs a value";  REPO="$2";     shift 2 ;;
     --since) [ $# -ge 2 ] || die "--since needs a value"; SINCE="$2";    shift 2 ;;
     --json)  AS_JSON="true"; shift ;;
-    -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,53p' "$0"; exit 0 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
@@ -149,6 +156,20 @@ REPORT=$(jq -s \
     | .scored = (.accurate + .false_positive + .false_negative)
     | .accuracy_pct = (if .scored > 0 then ((.accurate * 100 / .scored) | round) else null end);
 
+  # Median over the numeric members of the input array (non-numbers dropped;
+  # null when nothing numeric remains).
+  def median:
+    map(select(type == "number")) | sort as $s | ($s | length) as $n
+    | if $n == 0 then null
+      elif ($n % 2) == 1 then $s[(($n - 1) / 2 | floor)]
+      else (($s[($n / 2 - 1 | floor)] + $s[($n / 2 | floor)]) / 2)
+      end;
+  def round1: if . == null then null else (. * 10 | round) / 10 end;
+  # Tier normalization for the NEW sections only (the legacy COMPLEXITY table
+  # keeps its exact-match behavior): first char upcased maps both the enum
+  # (T|L|M|H) and pre-enforcement long forms (Trivial/low/High/…) to T|L|M|H.
+  def tier_of: (.complexity // "?") | tostring | .[0:1] | ascii_upcase;
+
   . as $all
   # Canonical = has the 5 fields + self_review the wrapper always writes;
   # anything else parsed but incomplete is the §19a direct-write signature.
@@ -196,6 +217,82 @@ REPORT=$(jq -s \
       | .fail_rate_pct = (if .runs > 0 then ((.failed * 100 / .runs) | round) else 0 end)
     ) | sort_by([-.runs, .gate])) as $gates
 
+  # --- Per-tier detail (canonical entries only; tiers via tier_of) ---
+  | (["T","L","M","H"] | map(. as $t
+      | ($sel | map(select(tier_of == $t))) as $e
+      | ($e | map(.phase_durations_seconds
+                  | select(type == "object" and length > 0)
+                  | [.[] | select(type == "number")] | add)
+            | map(select(type == "number") | . / 60)) as $walls
+      | ($e | map(.review_cycles | select(type == "number"))) as $rc
+      | { tier: $t,
+          runs: ($e | length),
+          median_wall_minutes:  ($walls | median | round1),
+          wall_entries:         ($walls | length),
+          mean_review_cycles:   (if ($rc | length) > 0
+                                 then ((($rc | add) / ($rc | length)) | round1)
+                                 else null end),
+          median_lines_added:   ($e | map(.lines_added)   | median),
+          median_files_changed: ($e | map(.files_changed) | median),
+          gate_fix_runs: ($e | map(select(
+              [.gates // {} | to_entries[].value
+               | select(type == "object"
+                        and ((.fix_cycle? | if type == "number" then . else 0 end) > 0))]
+              | length > 0)) | length) }
+      | .gate_fix_rate_pct = (if .runs > 0 then ((.gate_fix_runs * 100 / .runs) | round) else 0 end)
+    )) as $tiers
+
+  # Rebump transitions, tier-normalized on BOTH sides (the legacy PLAN-SIZE
+  # REBUMPS section keeps its raw-value keys).
+  | ($sel | map(select(.complexity_rebumped_from? != null)
+      | ((.complexity_rebumped_from | tostring | .[0:1] | ascii_upcase) + "→" + tier_of))
+    | group_by(.) | map({key: .[0], value: length}) | from_entries) as $rbn
+
+  # --- Specialist table from specialist_iterations (canonical entries only;
+  # entries with a missing/empty/non-array list contribute nothing). Names
+  # normalized via split(":") | last. An iteration normally carries
+  # .auditors[] (strings) + .blockers[] (objects with .agent); the legacy
+  # per-agent shape {agent, verdict, …} without .auditors counts its .agent
+  # as one auditor appearance. ---
+  | ([$sel[] | .specialist_iterations? | select(type == "array") | .[]
+      | select(type == "object")]) as $iters
+  | ([$iters[]
+      | (if (.auditors? | type) == "array"
+         then (.auditors[] | select(type == "string"))
+         elif (.agent? | type) == "string" then .agent
+         else empty end)
+      | split(":") | last]) as $aud
+  | ([$iters[] | (.blockers? // []) | (if type == "array" then .[] else empty end)
+      | select(type == "object") | .agent? | select(type == "string")
+      | split(":") | last]) as $blk
+  | ((($aud | unique) + ($blk | unique)) | unique | map(. as $a
+      | { agent: $a,
+          appearances: ([$aud[] | select(. == $a)] | length),
+          blockers:    ([$blk[] | select(. == $a)] | length) }
+      | .block_rate_pct = (if .appearances > 0
+                           then ((.blockers * 100 / .appearances) | round)
+                           else null end))
+    | sort_by([-.appearances, -.blockers, .agent])) as $specialists
+
+  # --- Token usage (optional harness-reported `tokens` object) ---
+  | ($sel | map(select(.tokens? | type == "object"))) as $tok
+  | { any: (($tok | length) > 0),
+      tiers: (["T","L","M","H"] | map(. as $t
+        | ($tok | map(select(tier_of == $t))) as $e
+        | { tier: $t,
+            runs: ($e | length),
+            median_in:  ($e | map(.tokens["in"]?)  | median),
+            median_out: ($e | map(.tokens["out"]?) | median) })
+        | map(select(.runs > 0))) } as $tokens
+
+  # --- Soft drift: canonical entries that pass the schema gate but carry no
+  # gate/calibration signal (gates missing/{}; or self_review without
+  # .calibration) — they silently dilute nothing and contribute nothing. ---
+  | ($sel | map(select(
+      ((.gates? // {}) == {}) or
+      ((.self_review | type == "object") and (.self_review | has("calibration") | not))
+    ))) as $drift
+
   | {
       generated_at: (now | todate),
       log_files: $files,
@@ -227,6 +324,12 @@ REPORT=$(jq -s \
       gates: $gates,
       top_failing_gates: ($gates | map(select(.failed > 0))
                                  | sort_by([-.failed, -.fail_rate_pct, .gate]) | .[0:5]),
+      tier_detail: $tiers,
+      rebump_transitions_normalized: $rbn,
+      specialists: $specialists,
+      tokens: $tokens,
+      soft_drift: { count: ($drift | length),
+                    refs:  ($drift | map(.ref? // "(no ref)")) },
       bypass_refs: ($bypass | map(.ref? // "(no ref)"))
     }
 ' "$TMP_ENTRIES") || die "aggregation failed (internal — please report)"
@@ -311,6 +414,62 @@ if [ "$TOPN" -eq 0 ]; then
 else
   echo "$REPORT" | jq -r '.top_failing_gates | to_entries[] |
     "  \(.key + 1). \(.value.gate) — \(.value.failed) fail+block / \(.value.runs) runs (\(.value.fail_rate_pct)%)"'
+fi
+
+echo
+echo "TIER DETAIL (median wall-min = sum of phase_durations_seconds/60; cycles = mean review_cycles; gate-fix = runs with any gate fix_cycle > 0)"
+printf '  %-6s %6s %10s %8s %8s %8s %16s\n' "tier" "runs" "wall-min" "cycles" "lines+" "files" "gate-fix-rate"
+echo "$REPORT" | jq -r '.tier_detail[] | select(.runs > 0) |
+  [.tier, .runs,
+   (.median_wall_minutes  | if . == null then "-" else tostring end),
+   (.mean_review_cycles   | if . == null then "-" else tostring end),
+   (.median_lines_added   | if . == null then "-" else tostring end),
+   (.median_files_changed | if . == null then "-" else tostring end),
+   "\(.gate_fix_runs)/\(.runs) (\(.gate_fix_rate_pct)%)"] | @tsv' \
+| while IFS=$'\t' read -r t r w c l f g; do
+    printf '  %-6s %6s %10s %8s %8s %8s %16s\n' "$t" "$r" "$w" "$c" "$l" "$f" "$g"
+  done
+echo "$REPORT" | jq -r '.rebump_transitions_normalized |
+  if length == 0 then "  rebumps: none"
+  else "  rebumps: " + (to_entries | map("\(.key): \(.value)") | join(", "))
+  end'
+
+echo
+echo "SPECIALIST AUDITS (per agent from specialist_iterations; block% = blockers / auditor appearances)"
+SPECN=$(echo "$REPORT" | jq -r '.specialists | length')
+if [ "$SPECN" -eq 0 ]; then
+  echo "  none recorded"
+else
+  printf '  %-28s %7s %9s %7s\n' "agent" "audits" "blockers" "block%"
+  echo "$REPORT" | jq -r '.specialists[] |
+    [.agent, .appearances, .blockers,
+     (.block_rate_pct | if . == null then "-" else "\(.)%" end)] | @tsv' \
+  | while IFS=$'\t' read -r a ap b br; do
+      printf '  %-28s %7s %9s %7s\n' "$a" "$ap" "$b" "$br"
+    done
+fi
+
+echo
+echo "TOKENS (harness-reported usage — metrics-append --tokens-in/--tokens-out; never estimated)"
+if [ "$(echo "$REPORT" | jq -r '.tokens.any')" != "true" ]; then
+  echo "  not yet recorded — no canonical entry carries a tokens object"
+else
+  printf '  %-6s %6s %10s %10s\n' "tier" "runs" "med-in" "med-out"
+  echo "$REPORT" | jq -r '.tokens.tiers[] |
+    [.tier, .runs,
+     (.median_in  | if . == null then "-" else tostring end),
+     (.median_out | if . == null then "-" else tostring end)] | @tsv' \
+  | while IFS=$'\t' read -r t r i o; do
+      printf '  %-6s %6s %10s %10s\n' "$t" "$r" "$i" "$o"
+    done
+fi
+
+DRIFT=$(echo "$REPORT" | jq -r '.soft_drift.count')
+if [ "$DRIFT" -gt 0 ]; then
+  echo
+  echo "SOFT DRIFT (canonical entries with gates missing/{} or self_review lacking .calibration; counted above but carrying zero gate/calibration signal)"
+  echo "$REPORT" | jq -r '"  \(.soft_drift.count) entr\(if .soft_drift.count == 1 then "y" else "ies" end): \(.soft_drift.refs | join(", "))"'
+  echo "  These pass the schema gate yet silently contribute nothing to the GATES / SELF-REVIEW CALIBRATION aggregates — re-emit via metrics-append with the real --gates-json and self-review flags."
 fi
 
 BYPASS=$(echo "$REPORT" | jq -r '.entries.bypass')

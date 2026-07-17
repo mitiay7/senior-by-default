@@ -137,7 +137,12 @@ fi
 
 # Count check. Deliberately -lt, not -ne: ACTUAL > N is legitimate (a concurrent
 # /do session may append to the same log between this session's emit and Stop).
-ACTUAL=$(wc -l < "$PATHV" 2>/dev/null | tr -d ' '); ACTUAL="${ACTUAL:-0}"
+# Newline-tolerant count: `grep -c ''` matches every line INCLUDING an
+# unterminated final one, where `wc -l` (which counts newline bytes) undercounts
+# it by 1 — a log whose last write lost its trailing newline would false-BLOCK a
+# truthful announce. (grep exits 1 on a 0-count empty file but still prints "0";
+# the `|| true` keeps that output.)
+ACTUAL=$(grep -c '' "$PATHV" 2>/dev/null || true); ACTUAL="${ACTUAL:-0}"
 if [ "$ACTUAL" -lt "$N" ]; then
   jq -n --arg l "$METRICS_LINE" --arg a "$ACTUAL" --arg n "$N" '{decision:"block", reason:("senior-by-default Phase 4.13: the announce claims " + $n + " entries but the log actually has " + $a + " lines — the entry was NOT appended this turn (fabricated or silently-failed Metrics line). Re-run the §4.13 metrics-append emit and use its real OK output.")}'
   exit 0

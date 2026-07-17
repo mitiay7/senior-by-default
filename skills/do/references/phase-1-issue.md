@@ -55,7 +55,9 @@ This list feeds the concurrent-edit check (next section) AND Phase 4.2 CODEOWNER
 
 ## Concurrent-edit check (`config.concurrent_edit_check.enabled`, default true)
 
-Run immediately after the planned-files list above exists — moved here from Phase 0 Step 5, where it was circularly sequenced (it needs Phase 1's planned files; audit #19):
+Run immediately after the planned-files list above exists — moved here from Phase 0 Step 5, where it was circularly sequenced (it needs Phase 1's planned files; audit #19).
+
+**The conflict signal is IN-FLIGHT work, not merged history.** A commit already merged into `origin/main` cannot conflict with this task — the worktree branches from it. What conflicts is work that exists but hasn't landed: unmerged remote branches and other live local worktrees touching the same files. Production telemetry proved the old merged-history heuristic backwards: 13 recorded checks, zero true positives, and both documented warns were false alarms whose own notes read "all prior edits landed in main, no in-flight branches" (2026-07-17 re-audit).
 
 ```bash
 # PLANNED_FILES is an ARRAY, and the pathspec is expanded quoted. An unquoted
@@ -68,12 +70,26 @@ Run immediately after the planned-files list above exists — moved here from Ph
 # paths containing spaces.
 PLANNED_FILES=(internal/foo/service.go internal/foo/repository.go)   # from the Est deltas list
 
-# REQUIRED: refresh origin/main first — otherwise reads stale ref, misses recent activity
-git -C "$REPO" fetch origin main --quiet
-git -C "$REPO" log --since="${LOOKBACK_DAYS} days ago" --name-only --pretty="%h %an" origin/main -- "${PLANNED_FILES[@]}"
+# REQUIRED: refresh remote refs first — otherwise reads stale state, misses live branches
+git -C "$REPO" fetch origin --prune --quiet
+
+# PRIMARY — in-flight remote branches (not merged into origin/main) touching planned files → WARN
+while IFS= read -r BR; do
+  HITS="$(git -C "$REPO" log --name-only --pretty='%h %an' "origin/main..$BR" -- "${PLANNED_FILES[@]}")"
+  [ -n "$HITS" ] && printf 'IN-FLIGHT %s\n%s\n' "$BR" "$HITS"
+done < <(git -C "$REPO" branch -r --no-merged origin/main --format='%(refname:short)' | grep -v '^origin/HEAD')
+
+# PRIMARY — other live worktrees on this repo (an agent mid-task hasn't pushed yet) → WARN
+git -C "$REPO" worktree list --porcelain | sed -n 's/^branch refs\/heads\///p' | grep -v "^$(git -C "$REPO" rev-parse --abbrev-ref HEAD)$"
+
+# SECONDARY — merged activity on planned files within the lookback → INFO only, never a warn
+# (context for the issue body: whose recent work you're building on top of)
+git -C "$REPO" log --since="${LOOKBACK_DAYS} days ago" --name-only --pretty='%h %an' origin/main -- "${PLANNED_FILES[@]}"
 ```
 
-`LOOKBACK_DAYS` = `config.concurrent_edit_check.lookback_days` (default 7). Recent commits on planned files → WARN with author+SHA list; proceed. The warning rides in two places: the issue body's Implementation Hints (template below) and the Phase 1 announce.
+`LOOKBACK_DAYS` = `config.concurrent_edit_check.lookback_days` (default 7) — scopes the SECONDARY context query only. Verdict mapping:
+- Any `IN-FLIGHT` hit or a foreign live worktree → **WARN** with branch + author + SHA list; proceed. The warning rides in two places: the issue body's Implementation Hints (template below) and the Phase 1 announce. Metrics: `gates.concurrent_edit = warn` with the branch list in `details`.
+- Merged-history hits only → **INFO** line in Implementation Hints (`recently touched by <author> <sha>` — build-awareness, not a conflict); gate records `pass`. Do NOT warn on merged-only activity — that was the measured false-positive mode.
 
 **Empty output is a verdict, not a pass — sanity-check it.** This gate's failure mode is silence, so an empty result on a repo with any history deserves one probe before you believe it: re-run with a single known-touched path and confirm you get commits back. A gate that cannot fail is not a gate ([anti-patterns §25](anti-patterns.md)).
 

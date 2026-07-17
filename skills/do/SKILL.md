@@ -1,6 +1,6 @@
 ---
 name: do
-version: 0.9.1
+version: 0.10.0
 model: opus
 description: |
   Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Sonnet plan + specialist/Opus plan review + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
@@ -62,8 +62,11 @@ Do NOT preload. Read each only when its trigger fires.
 | Any git operation | [`references/git-rules.md`](references/git-rules.md) |
 | **Phase 1** (M/H) — issue creation | [`references/phase-1-issue.md`](references/phase-1-issue.md) |
 | **Phase 2** — Sonnet prompt, plan review, self-review, stale-main | [`references/phase-2-implementation.md`](references/phase-2-implementation.md) |
-| **Phase 3** — gates, specialist audit, Opus review | [`references/phase-3-review.md`](references/phase-3-review.md) |
-| **Phase 4** — commit, push, PR, CI, auto-merge, metrics, announce | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) |
+| **Phase 3** (M/H) — gates, specialist audit, Opus review | [`references/phase-3-review.md`](references/phase-3-review.md) |
+| **Phase 3** (Low) — build-verify + dep-vuln + diff scan, complete Low path | [`references/phase-3-low.md`](references/phase-3-low.md) |
+| **Phase 4** — commit, push, context doc, metrics, announce (every tier) | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) |
+| **Phase 4 PR path** (M/H with code-host) — PR, CI gate, auto-merge, issue comment | [`references/phase-4-pr.md`](references/phase-4-pr.md) |
+| Changing the telemetry system itself (never at runtime) | [`references/telemetry-internals.md`](references/telemetry-internals.md) |
 | Migration audit specialist | [`references/zero-downtime-migrations.md`](references/zero-downtime-migrations.md) |
 | Specialist audit + PR reviewer routing | [`references/codeowners.md`](references/codeowners.md) |
 | ADR generation (High) | [`references/adr.md`](references/adr.md) |
@@ -137,10 +140,10 @@ Final `[Phase 0] ...` announce — must include `Models:` line (orchestrator + i
 |---|---|---|
 | 1 — Issue creation | M/H only (skipped for T/L) | [`references/phase-1-issue.md`](references/phase-1-issue.md) |
 | 2 — Implementation + self-review + ADR (High) | L/M/H (Trivial uses simplified flow below) | [`references/phase-2-implementation.md`](references/phase-2-implementation.md) |
-| 3 — Code review (gates, specialist audit, Opus review) | L/M/H (Trivial: Sonnet diff-scan + dep-vuln when deps changed — see below) | [`references/phase-3-review.md`](references/phase-3-review.md) |
-| 4 — Finalize (commit, push, PR, CI, auto-merge, context doc, metrics, announce) | always | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) |
+| 3 — Code review (gates, specialist audit, Opus review) | M/H → [`references/phase-3-review.md`](references/phase-3-review.md); **Low → [`references/phase-3-low.md`](references/phase-3-low.md) instead** (Trivial: Sonnet diff-scan + dep-vuln when deps changed — see below) | per tier |
+| 4 — Finalize (commit, push, context doc, metrics, announce) | always | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) — **plus** [`references/phase-4-pr.md`](references/phase-4-pr.md) (PR, CI, auto-merge, issue comment) on M/H with a code-host; **T/L never load the PR file** |
 
-**Low complexity simplifications**: skip Phase 1, Phase 3 = `build-verify` re-run + diff scan + dep-vuln scan (nothing else), Phase 4 = push + change summary (no PR), still emit metrics + notification.
+**Low complexity simplifications**: skip Phase 1, Phase 3 = the complete [`phase-3-low.md`](references/phase-3-low.md) path — `build-verify` re-run + diff scan + dep-vuln scan (nothing else), Phase 4 = push + change summary (no PR, no ADR — ADR is High-only; context-doc update per §4.6 still applies when `required_for_finalize: true`), still emit metrics + notification.
 
 **Trivial complexity simplifications**:
 - Phase 1: skip (no issue)

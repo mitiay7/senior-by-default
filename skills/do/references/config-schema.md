@@ -74,12 +74,16 @@ All other fields are optional; missing fields fall back to defaults documented b
     "backend_handlers_path": "internal/api/"
   },
 
+  // Default preset written by config-init (its jq literal is the source of truth;
+  // auto-init filters entries against installed plugins). Shown in full because a
+  // 2026-07 audit misread the placeholder version and recommended removing an agent
+  // from a preset it was never in — document reality, not shapes:
   "specialists": {
-    "backend_plan": ["agent1", "agent2"],
-    "frontend_plan": ["..."],
-    "backend_audit": ["..."],
-    "frontend_audit": ["..."],
-    "migration_audit": ["..."]
+    "backend_plan":    ["backend-development:backend-architect", "backend-development:security-auditor", "database-design:database-architect"],
+    "frontend_plan":   ["ui-design:design-system-architect", "ui-design:ui-designer", "javascript-typescript:typescript-pro"],
+    "backend_audit":   ["code-refactoring:code-reviewer", "backend-development:backend-architect", "backend-development:security-auditor"],
+    "frontend_audit":  ["code-refactoring:code-reviewer", "ui-design:ui-designer", "pr-review-toolkit:silent-failure-hunter", "ui-design:accessibility-expert"],
+    "migration_audit": ["database-design:database-architect"]
   },
 
   "naming": {
@@ -261,7 +265,7 @@ For local-only CI workflows (lefthook, manual `make test`), build/lint/test are 
 
 #### `auto_merge`
 After PR creation (Phase 4.2), enable auto-merge so PR merges automatically when CI passes + required reviews approve.
-- **Precondition (single-sourced in [phase-4 §4.2.6](phase-4-finalize.md))**: fires only when `ci.required` is explicitly `true` AND that run's §4.2.5 CI gate passed. `false`/unset/no-`ci`-block → per-run hand-grenade warning + explicit confirmation, else `await_review`. `enabled: true` alone never merges unverified.
+- **Precondition (single-sourced in [phase-4 §4.2.6](phase-4-pr.md))**: fires only when `ci.required` is explicitly `true` AND that run's §4.2.5 CI gate passed. `false`/unset/no-`ci`-block → per-run hand-grenade warning + explicit confirmation, else `await_review`. `enabled: true` alone never merges unverified.
 - `enabled: false` by default (opt-in — auto-merge is risky)
 - `method` — `squash` (default), `merge`, or `rebase`
 - `delete_branch: true` — clean up branch after merge
@@ -303,8 +307,7 @@ If set to a positive integer: Phase 0 counts `git worktree list` across known re
 The feature originates from Kanban WIP limits for human teams (where context-switching is real cost). For AI-orchestrated workflows with isolated agent contexts, parallel sessions are usually beneficial — leave unset unless you have a specific reason for a soft ceiling.
 
 #### `concurrent_edit_check`
-Phase 1 check (M/H — runs right after the planned-files list is derived; moved from Phase 0 Step 5, which predated that list — audit #19): list recent commits touching planned files. Configurable lookback.
-Recent commits → warn with author + SHA list (someone else may be editing nearby).
+Phase 1 check (M/H — runs right after the planned-files list is derived; moved from Phase 0 Step 5, which predated that list — audit #19). **Warns on IN-FLIGHT work only**: unmerged remote branches and other live worktrees touching planned files ([`phase-1-issue.md`](phase-1-issue.md) §Concurrent-edit). Merged-history activity within `lookback_days` (default 7) is demoted to an INFO line — production telemetry showed the old merged-history warn produced 0 true positives in 13 checks with documented false alarms (2026-07-17 re-audit). Warn-only either way; this gate never blocks.
 
 #### `feature_flags`
 Phase 1 (issue body) + Phase 2 (Sonnet rule) integration.

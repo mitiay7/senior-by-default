@@ -37,7 +37,7 @@ All strings truncated to `config.metrics.max_string_length` chars. Captured data
 | 3.2 UI Gate | `config.ui_gate` set AND diff contains files matching `cache.ui_extensions` |
 | 3.3 i18n Gate | `config.i18n` set AND diff contains UI files |
 | 3.4 Contract Gate | diff contains BOTH backend (.go/.rs/.py API handler files) AND TS API type files |
-| 3.5 Low Diff Scan | Low complexity only |
+| 3.5 Low Diff Scan | Low complexity only — full path in [`phase-3-low.md`](phase-3-low.md) (Low loads that file instead of this one) |
 | 3.6 Specialist Audit | High complexity AND `config.specialists.{backend_audit|frontend_audit|migration_audit}` set OR `config.codeowners` provides agent_map |
 | 3.7 Opus Review | Medium / High |
 
@@ -135,7 +135,7 @@ If diff modifies API signatures (handler routes, public function signatures, exp
 
 ## 3.1 Build/Test Verify — **YOU re-run the checklist in the worktree; the implementer's report is NEVER the gate**
 
-Phase 2's completion report — exit codes included — is the implementer's own testimony, and the report format asks Sonnet to write its own rc's. Adjudicating "tests pass / build passes" from that report is the §19 fabrication class one trust level down: a plausible green self-report reaches commit, push, and PR with zero independent evidence (with `auto_merge` + no CI, it reaches merged main). Re-run the checklist yourself via the `build-verify` wrapper. Cost is a duplicate of Sonnet's run — acceptable for M/H, trivial for Low's small diffs (§3.5 routes Low through this same re-run); with `config.affected_graph` the re-run is scoped to affected projects (the same commands Phase 2 ran; `--no-affected-graph` = full set). The opt-in §4.2.5 CI gate re-proves this post-push when configured — it does not replace this pre-commit re-run on the default (no-CI) path.
+Phase 2's completion report — exit codes included — is the implementer's own testimony, and the report format asks Sonnet to write its own rc's. Adjudicating "tests pass / build passes" from that report is the §19 fabrication class one trust level down: a plausible green self-report reaches commit, push, and PR with zero independent evidence (with `auto_merge` + no CI, it reaches merged main). Re-run the checklist yourself via the `build-verify` wrapper. Cost is a duplicate of Sonnet's run — acceptable for M/H, trivial for Low's small diffs ([`phase-3-low.md`](phase-3-low.md) routes Low through this same re-run); with `config.affected_graph` the re-run is scoped to affected projects (the same commands Phase 2 ran; `--no-affected-graph` = full set). The opt-in §4.2.5 CI gate re-proves this post-push when configured — it does not replace this pre-commit re-run on the default (no-CI) path.
 
 ```bash
 # Canonical do-scripts resolver — identical line in every wrapper block; each
@@ -241,21 +241,9 @@ For each new/modified API endpoint:
 
 Mismatch → list with file:line, return to Sonnet.
 
-## 3.5 Low — Opus Diff Scan
-§3.1 `build-verify` re-run PASS (the wrapper, in the worktree — Low is NOT exempt; without it the Low path is self-report-only, §19h) + dep vuln scan pass + Opus scans `git diff` for:
-- SQL injection / unsanitized input
-- Missing error handling
-- Resource leaks (DB rows, HTTP bodies, file handles, useEffect cleanup)
-- Nil/undefined dereference without guard
-- Unsafe type assertions (Go `x.(T)` without `ok`; TS `as T` on uncertain values)
-- Race conditions (shared state without mutex, concurrent map access)
-- Hardcoded user-facing strings (only if `config.i18n` set)
-- Import pattern violations (per CLAUDE.md)
-- Accidental secret files OR inline secrets
-- Speculative abstractions/config/feature flags/dependencies not required by acceptance criteria
-- Drive-by refactors, formatting churn, comment rewrites, or changed lines not traceable to the task
+## 3.5 Low — Opus Diff Scan → [`phase-3-low.md`](phase-3-low.md)
 
-All clear → Phase 4. Issues → one fix cycle (no specialists). Opus describes fixes, Sonnet applies.
+The complete Low path (build-verify re-run + dep-vuln + the 11-item Opus diff-scan checklist + one fix cycle, no specialists) lives in [`phase-3-low.md`](phase-3-low.md) — **Low runs load that file INSTEAD of this one**. If you are on a Low task and reading this file, switch. Semantics are unchanged from the former inline §3.5: Low is NOT exempt from the §3.1 `build-verify` re-run (without it the Low path is self-report-only, §19h).
 
 ## 3.6 Specialist Audit (High only)
 

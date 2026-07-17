@@ -51,6 +51,14 @@
 #      --ci-status skipped --auto-merge false --blocked-reason '' \
 #      --title '...' --scope Backend --notes '...' \
 #      --specialist-iterations-json '[]' --sr-miscalibrated-json '[]']
+#     [--tokens-in <N> --tokens-out <N>]
+#                                 # OPTIONAL token usage for this run — populate
+#                                 # ONLY from harness-reported usage; never
+#                                 # estimate. Non-negative integers; either flag
+#                                 # may be passed alone. Recorded as a top-level
+#                                 # `tokens` object with only the provided keys,
+#                                 # e.g. {"in":12345,"out":6789}; both omitted =
+#                                 # NO `tokens` key at all (absent, not null).
 #
 # Outcome enum (strictly enforced — production audit found 16 distinct values
 # in entries pre-enforcement; canonical mapping below):
@@ -111,6 +119,8 @@ SR_MISCALIBRATED_JSON='[]'
 ORCHESTRATOR="opus"   # spec mandates orchestrator=opus; caller MAY pass running model id e.g. opus-<version> (never hardcode)
 COMPLEXITY_REBUMPED_FROM=""   # optional: T|L|M if Phase 2.0 plan-size check re-routed; "" if no rebump
 SR_SIZE_ASSESSMENT="n_a"      # raw Phase 2.5 `size_assessment:` value (fits|exceeds|unknown|n_a)
+TOKENS_IN=""                  # optional: input tokens — populate ONLY from harness-reported usage; never estimate
+TOKENS_OUT=""                 # optional: output tokens — same rule (harness-reported only); "" = flag not passed
 # Self-review calibration verdicts: COMPUTED by this wrapper (see the
 # "Calibration computation" block below — pure function of the raw inputs,
 # formula documented in phase-4-finalize.md §4.11). The three flags are
@@ -169,8 +179,10 @@ while [ $# -gt 0 ]; do
     --specialist-iterations-json) SPECIALIST_ITERATIONS_JSON="$2"; shift 2 ;;
     --orchestrator)              ORCHESTRATOR="$2";              shift 2 ;;
     --complexity-rebumped-from)  COMPLEXITY_REBUMPED_FROM="$2";  shift 2 ;;
+    --tokens-in)                 TOKENS_IN="$2";                 shift 2 ;;
+    --tokens-out)                TOKENS_OUT="$2";                shift 2 ;;
     -h|--help)
-      sed -n '4,91p' "$0"
+      sed -n '4,99p' "$0"
       exit 0
       ;;
     *) die "unknown arg: $1" ;;
@@ -224,6 +236,11 @@ esac
 [[ "$LINES_ADDED"    =~ ^[0-9]+$ ]]                                              || die "--lines-added must be int, got: $LINES_ADDED"
 [[ "$LINES_DELETED"  =~ ^[0-9]+$ ]]                                              || die "--lines-deleted must be int, got: $LINES_DELETED"
 [[ "$REVIEW_CYCLES"  =~ ^[0-9]+$ ]]                                              || die "--review-cycles must be int, got: $REVIEW_CYCLES"
+# Optional token counts — populate ONLY from harness-reported usage; never
+# estimate (a fabricated/guessed count is worse than an absent one). Empty =
+# flag not passed = no `tokens` key in the entry.
+[ -z "$TOKENS_IN" ]  || [[ "$TOKENS_IN"  =~ ^[0-9]+$ ]]                          || die "--tokens-in must be a non-negative int (harness-reported usage only; never estimate), got: $TOKENS_IN"
+[ -z "$TOKENS_OUT" ] || [[ "$TOKENS_OUT" =~ ^[0-9]+$ ]]                          || die "--tokens-out must be a non-negative int (harness-reported usage only; never estimate), got: $TOKENS_OUT"
 [[ "$ORCHESTRATOR"   =~ ^(opus|opus-[0-9.]+|haiku|sonnet|unknown)$ ]]            || die "--orchestrator must be opus[-N.M] (or haiku/sonnet for testing), got: $ORCHESTRATOR"
 # Optional — empty means no Phase 2.0 plan-size re-route happened (the common case)
 if [ -n "$COMPLEXITY_REBUMPED_FROM" ]; then
@@ -508,6 +525,8 @@ JSON_ENTRY=$(jq -cn \
   --arg     outcome         "$OUTCOME" \
   --arg     blocked_reason  "$BLOCKED_REASON" \
   --arg     notes           "$NOTES" \
+  --arg     tokens_in       "$TOKENS_IN" \
+  --arg     tokens_out      "$TOKENS_OUT" \
   '{
      ref:$ref, title:$title,
      started_at:$started_at, ended_at:$ended_at,
@@ -534,7 +553,11 @@ JSON_ENTRY=$(jq -cn \
      blocked_reason:(if $blocked_reason=="" then null else $blocked_reason end)
    }
    + (if $notes == "" then {} else {notes:$notes} end)
-   + (if $rebumped_from == "" then {} else {complexity_rebumped_from:$rebumped_from} end)') \
+   + (if $rebumped_from == "" then {} else {complexity_rebumped_from:$rebumped_from} end)
+   + (if $tokens_in == "" and $tokens_out == "" then {}
+      else {tokens: ((if $tokens_in  == "" then {} else {"in":  ($tokens_in  | tonumber)} end)
+                   + (if $tokens_out == "" then {} else {"out": ($tokens_out | tonumber)} end))}
+      end)') \
   || die "jq build failed (likely malformed --gates-json or --phase-durations-json)"
 
 # --- Schema gate (defense in depth: in case caller passed valid-JSON-but-wrong-shape via the json flags) ---
@@ -549,7 +572,11 @@ echo "$JSON_ENTRY" | jq -e '
   (.self_review.claimed_status| test("^(ready|deferred|uncertain|n/a)$")) and
   (.self_review.calibration   | test("^(accurate|false_positive|false_negative|skipped)$")) and
   (.self_review.calibration_defect | test("^(accurate|false_positive|false_negative|skipped|n_a)$")) and
-  (.self_review.calibration_size   | test("^(accurate|false_positive|false_negative|skipped|n_a)$"))
+  (.self_review.calibration_size   | test("^(accurate|false_positive|false_negative|skipped|n_a)$")) and
+  ((has("tokens") | not) or
+   (.tokens | (type == "object") and (length > 0)
+    and ((keys - ["in","out"]) | length == 0)
+    and all(.[]; type == "number")))
 ' >/dev/null || die "schema gate failed (internal — please report)"
 
 # --- Append + verify (lock-serialized, content-verified; audit #18) ---
