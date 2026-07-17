@@ -6,7 +6,7 @@ On entering this phase, stamp the task clock (`phase_entered_at["4"]` — one-li
 
 > **Critical ordering**: Phase 4.0 (branch normalization) MUST run BEFORE §4.2 (PR creation — [`phase-4-pr.md`](phase-4-pr.md)). Final announce (4.13) is COUPLED to Phase 4.11 metrics emission via shared bash variables — you literally cannot emit the announce without first running the metrics-append command. See "Final announce" at the bottom of this file.
 
-> **File routing**: the PR path — §4.2 PR creation, §4.2.5 CI gate, §4.2.6 auto-merge, §4.7 issue comment — lives in [`phase-4-pr.md`](phase-4-pr.md). Load it ONLY on Medium/High with a code-hosting remote. **Trivial and Low never load it** (no PR — §4.3): after the §4.1.2 push they go straight to §4.4–§4.6 housekeeping, then §4.11/§4.13. Design rationale and telemetry history live in [`telemetry-internals.md`](telemetry-internals.md) — consult when changing the system, not when running it.
+> **File routing**: the PR path — §4.2 PR creation, §4.2.5 CI gate, §4.2.6 auto-merge, §4.7 issue comment — lives in [`phase-4-pr.md`](phase-4-pr.md). Load it ONLY on Medium/High with a code-hosting remote. **Trivial and Low never load it** (no PR — §4.3): after the §4.1.2 push they go straight to §4.4–§4.6 housekeeping, then §4.10.5 (merge-on-finish, when the invocation form enables it), then §4.11/§4.13. Design rationale and telemetry history live in [`telemetry-internals.md`](telemetry-internals.md) — consult when changing the system, not when running it.
 
 ## 4.0 Branch normalization — UNCONDITIONAL, BEFORE any push or PR — via the `branch-normalize` wrapper
 
@@ -102,7 +102,7 @@ No PR. Emit change summary:
 - Build / test results
 - Self-review section (if enabled)
 
-Tell user:
+Tell user (skip this tell when §4.10.5 merge-on-finish is active — the merge replaces it):
 ```
 Branch pushed: {branch}. Review diff and merge when ready.
 git -C {repo} diff main...{branch}
@@ -160,7 +160,7 @@ If Sonnet failed to update → Opus updates inline + notes in PR description: `C
 Part of the PR path — the comment template and its required content live in [`phase-4-pr.md`](phase-4-pr.md). T/L: skip (no issue exists on these tiers).
 
 ## 4.8 Worktree cleanup
-**Tell user — do NOT execute** unless explicitly requested OR auto-merge enabled with `delete_branch: true` (then GitHub deletes the remote branch on merge; user still removes local worktree).
+**Tell user — do NOT execute** unless explicitly requested, OR auto-merge enabled with `delete_branch: true` (then GitHub deletes the remote branch on merge; user still removes local worktree), OR §4.10.5 merge-on-finish completed a real merge this run (then §4.10.5's own cleanup block executes this section — don't also advise it).
 
 If `config.worktree.cleanup_cmd` set → suggest that template (substitute `{repo}`, `{suffix}`).
 Else suggest:
@@ -183,6 +183,61 @@ If `config.lessons_doc` set:
 - Ask user: "Anything surprising worth recording? (skip / one-line / full entry)"
 - One-line or full → append to `config.lessons_doc` with date + ref_format prefix
 - Skip → continue silently
+
+## 4.10.5 Merge on finish + worktree cleanup (invocation-scoped)
+
+Runs ONLY when `merge_on_finish` is set ([SKILL.md](../SKILL.md) §Invocation-form default: `+++`-form invocations → ON unless `nomerge`/`--no-merge` in `$ARGUMENTS`; `/do`-form → OFF unless `--merge`). Runs BEFORE §4.11 so the metrics entry and the §4.13 announce reflect the merged state.
+
+**This is NOT §4.2.6 auto-merge.** §4.2.6 ([`phase-4-pr.md`](phase-4-pr.md)) arms the code-host's merge-when-CI-green and is gated on explicit `ci.required: true` — that rule is unchanged and stays single-sourced there; neither section cites the other as permission (the audit-#11 two-texts class). Merge-on-finish is an **immediate operator merge the user requested at invocation time** — the `+++` form IS that standing request. Its evidence basis is this run's full Phase 3 gate suite; on the default no-CI setup that is exactly the evidence a human clicking "merge" would have, because no CI exists to add more.
+
+**Fire conditions — ALL must hold; any miss → skip (announce `Merged: skipped(<reason>)`), leaving today's await-review behavior:**
+- Clean finalize: Phase 3 ended APPROVE; outcome is not `blocked`; no `pr_size` BLOCK, no draft/`WIP:` PR, no 3-cycle escalation; the §4.1.2 push really happened (`SECRETS PASS` in this transcript).
+- If `config.ci.required: true` → this run's §4.2.5 gate PASSED (a red or timed-out CI gate always beats merge-on-finish).
+- For the T/L local-merge path: the MAIN repo checkout is on `main` and clean (`status --porcelain` empty) — never merge over someone's dirty state.
+
+Run as ONE bash block (fresh-shell model — capture state to the task clock file for §4.13):
+
+```bash
+MERGED_BRANCH="$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD)"   # capture BEFORE any cleanup
+
+# --- M/H (PR exists): merge the PR; method = config.auto_merge.method, same default as §4.2.6
+METHOD="${AUTO_MERGE_METHOD:-squash}"
+if gh pr merge "$PR_NUMBER" --repo "$CODE_REPO" --"$METHOD" --delete-branch; then
+  MERGE_STATUS="merged($METHOD)"
+else
+  MERGE_STATUS="await_review"   # branch protection / required review refused — NEVER retry with
+                                # --admin or bypass flags (same class as --no-verify); print PR url
+fi
+# GitLab: glab mr merge "$N" --"$METHOD" --remove-source-branch — same dispatch.
+
+# --- T/L (no PR): merge the gated branch into main locally
+# Preconditions (checked above): main checkout on `main`, porcelain-clean.
+# git -C "$MAIN_REPO" pull --ff-only origin main
+# if   git -C "$MAIN_REPO" merge --ff-only  "$MERGED_BRANCH"; then MERGE_KIND=ff
+# elif git -C "$MAIN_REPO" merge --no-edit  "$MERGED_BRANCH"; then MERGE_KIND=merge-commit
+# else git -C "$MAIN_REPO" merge --abort; MERGE_STATUS="conflict"; fi   # branch stays pushed; §4.3 tell applies; NO cleanup
+# [ -z "${MERGE_STATUS:-}" ] && git -C "$MAIN_REPO" push origin main \
+#   && { MERGE_STATUS="merged($MERGE_KIND)"; git -C "$MAIN_REPO" push origin --delete "$MERGED_BRANCH"; }
+
+# --- Cleanup — ONLY after a real merge this run (worktree BEFORE branch: a branch
+# checked out in a worktree cannot be deleted)
+case "$MERGE_STATUS" in merged*)
+  git -C "$MAIN_REPO" worktree remove "$WORKTREE_PATH"    # --force only for untracked leftovers; announce if used
+  git -C "$MAIN_REPO" branch -D "$MERGED_BRANCH" 2>/dev/null || true   # remote branch already deleted above
+esac
+
+# --- Carrier for §4.13 (fresh shell there; clock file is the established carrier, same as STARTED_AT)
+CLOCK_ANCHOR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+CLOCK_FILE="$HOME/.claude/do/state/$(printf '%s' "$CLOCK_ANCHOR" | sed -E 's/[^a-zA-Z0-9]+/-/g; s/^-+//; s/-+$//').task-clock.json"
+jq --arg ms "$MERGE_STATUS" --arg mb "$MERGED_BRANCH" '. + {merge_status: $ms, merged_branch: $mb}' \
+  "$CLOCK_FILE" > "$CLOCK_FILE.tmp" && mv "$CLOCK_FILE.tmp" "$CLOCK_FILE"
+echo "Phase 4.10.5: MERGE $MERGE_STATUS branch=$MERGED_BRANCH"
+```
+
+Consequences downstream:
+- **§4.11**: a completed merge (any `merged(...)` status) → `OUTCOME="merged"` (for M/H the existing `mergedAt` probe already yields it; for T/L set it explicitly — the enum covers it) and append `merge_on_finish` to `--notes`. `await_review`/`conflict`/`skipped` → outcome unchanged (`ready_for_review`).
+- **§4.13**: `Merged:` token + branch-name fallback read the clock file (see the patched read-back there).
+- **§4.8** becomes executed, not advisory, on the merged path. `conflict`/`await_review` → no cleanup; the worktree and branch stay for manual resolution exactly as today.
 
 ## 4.11 Metrics log — **MANDATORY when configured**
 
@@ -295,6 +350,9 @@ the wrapper never emitted is an [anti-pattern](anti-patterns.md).
 if [ "$BLOCKED" = "true" ]; then
   # Phase 3 escalated after 3 failed cycles, draft PR + `blocked` label applied
   OUTCOME="blocked"
+elif jq -r '.merge_status // ""' "$CLOCK_FILE" 2>/dev/null | grep -q '^merged'; then
+  # §4.10.5 merge-on-finish completed this run (covers T/L, which have no PR to probe)
+  OUTCOME="merged"
 elif gh pr view "$PR_NUMBER" --repo "$CODE_REPO" --json mergedAt -q .mergedAt 2>/dev/null | grep -qv '^$'; then
   # PR is merged (either auto-merge completed or manual merge)
   OUTCOME="merged"
@@ -302,6 +360,8 @@ else
   # PR opened but not yet merged (manual review pending, or auto-merge waiting for CI)
   OUTCOME="ready_for_review"
 fi
+# §4.10.5 completed → also append "merge_on_finish" to --notes (distinguishes this
+# path from §4.2.6 auto-merge in telemetry: auto_merge stays false, outcome=merged).
 ```
 
 Do NOT invent values like `pr_opened`, `success`, `shipped`, `merged_pending`, `merged_or_pr_open` — wrapper rejects. The 3-value mapping is exhaustive for /do's exit states.
@@ -507,14 +567,20 @@ fi
 # carrier). MUST equal the name in the §4.0 $BRANCH_LINE verdict — a mismatch
 # means the rename never happened or was reverted (the v0.3.1 violation, §19j):
 # STOP and re-run 4.0 before announcing.
-BRANCH_NAME="$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD)"
+# Sole legitimate fallback: §4.10.5 merged AND cleaned up, so the worktree is
+# gone — then read merged_branch from the clock file (captured live by the
+# §4.10.5 block from the same git source before removal; still not composed).
+BRANCH_NAME="$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null \
+  || jq -r '.merged_branch // "?"' "$CLOCK_FILE" 2>/dev/null)"
+# Merge-on-finish verdict — clock-file carrier written by §4.10.5; absent = "no"
+MERGE_STATUS="$(jq -r '.merge_status // empty' "$CLOCK_FILE" 2>/dev/null)"; MERGE_STATUS="${MERGE_STATUS:-no}"
 
 # Models line — orchestrator from frontmatter (opus), implementer from Phase 0 complexity routing,
 # specialists from Phase 2 plan-review / Phase 3.6 audit roster (or "none")
 MODELS_LINE="Models: orchestrator=${ORCHESTRATOR_MODEL:-opus}, implementer=${IMPLEMENTER_MODEL:-sonnet}, specialists=[${SPECIALISTS_LIST:-none}]"
 
 cat <<EOF
-Complete. Branch: $BRANCH_NAME. PR: ${PR_URL:--}. CI: ${CI_STATUS:-skipped}. Auto-merge: ${AUTO_MERGE_STATUS:-off}.
+Complete. Branch: $BRANCH_NAME. PR: ${PR_URL:--}. CI: ${CI_STATUS:-skipped}. Auto-merge: ${AUTO_MERGE_STATUS:-off}. Merged: ${MERGE_STATUS}.
 ${CTX_LINE:+$CTX_LINE
 }${ADR_LINE:+$ADR_LINE
 }${MODELS_LINE}.

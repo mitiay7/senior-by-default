@@ -4,6 +4,20 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-07-17
+
+### Added — merge-on-finish: `+++` invocations merge the gated branch and clean the worktree; `nomerge` opts out
+
+The two invocation forms now differ at the finish line. A message starting `+++` sets `merge_on_finish = true`: after a clean Phase 3 APPROVE, new [phase-4 §4.10.5](skills/do/references/phase-4-finalize.md) merges the branch — `gh pr merge --<config.auto_merge.method, default squash> --delete-branch` on M/H; on T/L (no PR exists by design) a local merge into `main` (`pull --ff-only`, then ff-merge, else a single merge commit, push) — and then removes the worktree and local branch. `+++ nomerge task` / `--no-merge` keeps the current await-review behavior; plain `/do` still defaults to it, `/do --merge` opts in; an explicit flag always beats the form default. The orchestrator detects the form from the literal user message (the `+++` prefix is visible to it), so no trigger-block magic is required — but `install.sh`'s CLAUDE.md block and the live install's block were updated to state the semantic difference instead of claiming the forms are "equivalent".
+
+Guardrails, stated once (§4.10.5 only — deliberately NOT woven into §4.2.6, to avoid recreating the audit-#11 "two texts, two rules" class; the anti-patterns auto-merge bullet and §4.2.6 each carry a one-line distinction pointer):
+- Never fires on `blocked`/escalated/draft outcomes or a withheld push; a red or timed-out `ci.required` gate always wins.
+- T/L local path requires the main checkout on `main` and porcelain-clean; merge conflicts are abort-and-hand-back (branch stays pushed for manual review, no cleanup) — never resolved on `main`.
+- Branch-protection refusal on M/H → `await_review` fallback; never retried with `--admin`/bypass flags.
+- "Never commit to main" gains its second scoped exception in [git-rules.md](skills/do/references/git-rules.md): merging THIS run's gated branch under an explicit merge-on-finish invocation — never raw implementation commits.
+
+Plumbing: §4.10.5 stamps `merge_status`/`merged_branch` into the task-clock file (the established fresh-shell carrier), §4.13 reads them back — the announce's `Complete.` line gains a `Merged:` token (Stop-hook parsers unaffected: the scoping prefix and the closed `Metrics:` forms are unchanged) and the branch-name live read-back gets its sole legitimate fallback for the merged-and-cleaned case. §4.11 outcome logic records `merged` for completed merge-on-finish runs (T/L included) with `merge_on_finish` in `--notes`, keeping the path distinguishable from §4.2.6 auto-merge in telemetry (`auto_merge` stays `false`). §4.8 worktree-cleanup advisory notes the executed path; §4.3's "merge when ready" tell is skipped when the merge replaces it.
+
 ## [0.10.0] — 2026-07-17
 
 Telemetry-driven diet release. Input: a maximum-thoroughness re-audit of 227 production runs (miro-rooms-rentals) cross-validated against 109 runs on a second repo (lea) — every number below recomputed from the raw JSONL, not taken from the original audit report (which the re-check corrected in several places). The release cuts measured dead weight, fixes the one gate the data proved backwards, and gives the telemetry loop the cost axis it was missing. Deliberately NOT done, against the original audit's advice: removing review from Low (the tier gradient did not replicate on the second repo — L out-fired M there), removing `database-architect` from `backend_audit` (it was never in that preset; the audit read a placeholder doc), dropping `opus_review` as "duplicative" (specialists are High-only; §3.7 is the ONLY review gate Medium has), and hard-rejecting unknown gate names (the open set is a documented design decision).

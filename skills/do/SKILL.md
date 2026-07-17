@@ -1,9 +1,9 @@
 ---
 name: do
-version: 0.10.0
+version: 0.10.1
 model: opus
 description: |
-  Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Sonnet plan + specialist/Opus plan review + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge.
+  Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Sonnet plan + specialist/Opus plan review + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge. `+++`-form invocations additionally merge the gated branch and clean the worktree at the end (opt out with `nomerge`).
 
   TRIGGER ONLY when the user's message LITERALLY starts with `/do`, `/<plugin>:do`, or `+++` as a COMPLETE TOKEN — followed by whitespace or end of message. `/docs`, `/done`, `/do-something` do NOT match. A message starting `+++ b/` or `--- a/` is a pasted unified diff, not an invocation — do NOT trigger. NEVER auto-trigger from description matching, perceived task fit, or conversational context, EVEN IF a coding task otherwise matches every other criterion.
 
@@ -94,7 +94,12 @@ Recognize free-form (accept natural-language equivalents too):
 | `--implementer=opus\|sonnet\|haiku` | Override default implementer (Phase 2 only — review/audit/merge stay on Opus) |
 | `--repo=NAME` | Force target repo (skip workspace routing) |
 | `--redetect` | Force stack re-detection (skip cache) |
-| `--auto-merge` / `--no-auto-merge` | Per-task auto-merge override |
+| `--auto-merge` / `--no-auto-merge` | Per-task override of §4.2.6 CI-coupled auto-merge (distinct from merge-on-finish below) |
+| `--merge` / `--no-merge` (bare `nomerge` token accepted) | Merge-on-finish override — see "Invocation-form default" below |
+
+### Invocation-form default — merge-on-finish
+
+If the triggering user message began with the **`+++` token** → `merge_on_finish = true`: Phase 4 ends by merging the gated branch ([`phase-4-finalize.md`](references/phase-4-finalize.md) §4.10.5 — `gh pr merge` on M/H, local ff/merge into `main` on T/L) and removing the worktree + branch. If it began with **`/do`** → `merge_on_finish = false` (today's await-review behavior). An explicit flag always wins over the form default: `+++ nomerge fix X` leaves the branch for manual review; `/do --merge fix X` merges. Strip `nomerge`/`--no-merge`/`--merge` from the task text like every other flag. Merge-on-finish NEVER fires on a blocked/escalated/draft outcome, and a red §4.2.5 CI gate always beats it — full fire conditions live only in §4.10.5. Do not confuse with `--auto-merge` (§4.2.6, the code-host's merge-when-CI-green).
 
 ### Advanced flags (niche)
 
@@ -143,13 +148,13 @@ Final `[Phase 0] ...` announce — must include `Models:` line (orchestrator + i
 | 3 — Code review (gates, specialist audit, Opus review) | M/H → [`references/phase-3-review.md`](references/phase-3-review.md); **Low → [`references/phase-3-low.md`](references/phase-3-low.md) instead** (Trivial: Sonnet diff-scan + dep-vuln when deps changed — see below) | per tier |
 | 4 — Finalize (commit, push, context doc, metrics, announce) | always | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) — **plus** [`references/phase-4-pr.md`](references/phase-4-pr.md) (PR, CI, auto-merge, issue comment) on M/H with a code-host; **T/L never load the PR file** |
 
-**Low complexity simplifications**: skip Phase 1, Phase 3 = the complete [`phase-3-low.md`](references/phase-3-low.md) path — `build-verify` re-run + diff scan + dep-vuln scan (nothing else), Phase 4 = push + change summary (no PR, no ADR — ADR is High-only; context-doc update per §4.6 still applies when `required_for_finalize: true`), still emit metrics + notification.
+**Low complexity simplifications**: skip Phase 1, Phase 3 = the complete [`phase-3-low.md`](references/phase-3-low.md) path — `build-verify` re-run + diff scan + dep-vuln scan (nothing else), Phase 4 = push + change summary (no PR, no ADR — ADR is High-only; context-doc update per §4.6 still applies when `required_for_finalize: true`), still emit metrics + notification. With merge-on-finish (`+++` form): §4.10.5 then merges the branch into `main` and removes the worktree.
 
 **Trivial complexity simplifications**:
 - Phase 1: skip (no issue)
 - Phase 2: spawn `Agent(model: "haiku")` with tightly scoped prompt — exact files + exact change. Haiku does NOT explore codebase, does NOT make architectural decisions, does NOT touch tests. Anything ambiguous → **abort and re-route to Low**.
 - Phase 3: skip all gates except dep-vuln (only if deps changed). `Agent(model: "sonnet")` diff-scan with one question: "does this diff do exactly what was asked, nothing more?" Reject + retry once; second failure → re-route to Low.
-- Phase 4: commit + push to worktree branch. **No PR**, no context-doc update, no ADR. Emit metrics + notification. Co-Author = the implementer sub-agent's model identifier read from ITS session metadata (the Haiku-tier agent that wrote the diff — not the orchestrator's model, and never a hardcoded version; see Notation).
+- Phase 4: commit + push to worktree branch. **No PR**, no context-doc update, no ADR. Emit metrics + notification. With merge-on-finish (`+++` form): §4.10.5 merges into `main` + cleans the worktree first. Co-Author = the implementer sub-agent's model identifier read from ITS session metadata (the Haiku-tier agent that wrote the diff — not the orchestrator's model, and never a hardcoded version; see Notation).
 - Worktree rule still applies — Trivial does not bypass [`git-rules.md`](references/git-rules.md).
 
 Before announcing completion, scan [`references/anti-patterns.md`](references/anti-patterns.md).
@@ -157,7 +162,7 @@ Before announcing completion, scan [`references/anti-patterns.md`](references/an
 ## Top-level git constraints (full: [`references/git-rules.md`](references/git-rules.md))
 
 - Worktree only — never `git checkout -b`, never `git clone`
-- Never commit to `main` (sole scoped exception: Phase 4.6 context-doc delivery into a separate docs repo, gated on `context_doc.allow_main_push: true` — never the code repo). Never `--force` / `--hard` / `--amend` / `--no-verify`
+- Never commit to `main` (two scoped exceptions, both defined in [`git-rules.md`](references/git-rules.md): Phase 4.6 context-doc delivery into a separate docs repo gated on `context_doc.allow_main_push: true`, and §4.10.5 merge-on-finish merging THIS run's gated branch after Phase 3 APPROVE). Never `--force` / `--hard` / `--amend` / `--no-verify`
 - Never modify `.git/config` or `core.hooksPath`
 - Never commit `.env*` / `*.key` / `*.pem` / `credentials.*` / `*.secret` or inline keys/tokens. The Phase 4.1.2 `secret-scan` wrapper gates every push over the full push range (`merge-base(origin/main, HEAD)..HEAD`) — push only on its exit 0, never on eyeballed diffs
 - `Co-Authored-By: <current model from environment>` — auto-detect, never hardcode

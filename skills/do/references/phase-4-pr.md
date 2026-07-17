@@ -61,6 +61,8 @@ Outcomes:
 
 ## 4.2.6 Auto-merge
 
+> Distinct mode: [`phase-4-finalize.md`](phase-4-finalize.md) §4.10.5 **merge-on-finish** (the `+++`-form / `--merge` immediate end-of-run merge) is NOT this feature and does not use this section's precondition — it has its own fire conditions, defined only there. This section governs only the config/flag-armed merge-when-CI-green below; neither section cites the other as permission.
+
 If `config.auto_merge.enabled` OR `--auto-merge` in `$ARGUMENTS` (and `--no-auto-merge` not present):
 
 **Precondition — the single source of truth for when auto-merge may fire.** No other text defines this; [anti-patterns](anti-patterns.md)' auto-merge bullet and the README defer here:
