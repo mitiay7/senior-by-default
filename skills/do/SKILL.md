@@ -60,7 +60,7 @@ Do NOT preload. Read each only when its trigger fires.
 | Stack detection or cache I/O | [`references/stack-detection.md`](references/stack-detection.md) |
 | Any tracker operation | [`references/trackers.md`](references/trackers.md) |
 | Any git operation | [`references/git-rules.md`](references/git-rules.md) |
-| **Phase 1** (M/H) — issue creation | [`references/phase-1-issue.md`](references/phase-1-issue.md) |
+| **Phase 1** (M/H, tracker configured & ≠ `none`) — issue creation | [`references/phase-1-issue.md`](references/phase-1-issue.md) — skip decided in Phase 1 §tracker-none skip; don't load on a none tracker |
 | **Phase 2** — Sonnet prompt, plan review, self-review, stale-main | [`references/phase-2-implementation.md`](references/phase-2-implementation.md) |
 | **Phase 3** (M/H) — gates, specialist audit, Opus review | [`references/phase-3-review.md`](references/phase-3-review.md) |
 | **Phase 3** (Low) — build-verify + dep-vuln + diff scan, complete Low path | [`references/phase-3-low.md`](references/phase-3-low.md) |
@@ -144,10 +144,16 @@ Final `[Phase 0] ...` announce — must include `Models:` line (orchestrator + i
 
 | Phase | Always-run? | Reference |
 |---|---|---|
-| 1 — Issue creation | M/H only (skipped for T/L) | [`references/phase-1-issue.md`](references/phase-1-issue.md) |
+| 1 — Issue creation | M/H **with a configured tracker** (skipped for T/L, and for any tier when `issue_tracker.type` is missing or `none`) | [`references/phase-1-issue.md`](references/phase-1-issue.md) — **do not load it on the skip; decide the skip here** (see below) |
 | 2 — Implementation + self-review + ADR (High) | L/M/H (Trivial uses simplified flow below) | [`references/phase-2-implementation.md`](references/phase-2-implementation.md) |
 | 3 — Code review (gates, specialist audit, Opus review) | M/H → [`references/phase-3-review.md`](references/phase-3-review.md); **Low → [`references/phase-3-low.md`](references/phase-3-low.md) instead** (Trivial: Sonnet diff-scan + dep-vuln when deps changed — see below) | per tier |
 | 4 — Finalize (commit, push, context doc, metrics, announce) | always | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) — **plus** [`references/phase-4-pr.md`](references/phase-4-pr.md) (PR, CI, auto-merge, issue comment) on M/H with a code-host; **T/L never load the PR file** |
+
+**Phase 1 tracker-none skip (decide here — do NOT open `phase-1-issue.md` for it).** On M/H, before loading the Phase 1 file, check the tracker: if `config.issue_tracker` is missing or `issue_tracker.type == "none"`, Phase 1 is a no-op — **skip it without reading `phase-1-issue.md`** (loading a 17 KB file only to execute its own first-line skip is pure overhead). Announce exactly one line, then move on:
+- Plain none/missing → `[Phase 1] SKIPPED — tracker: none`
+- Degraded none (config carries `_meta.tracker_degraded_from`, or Phase 0's `$CONFIG_LINE` included a `Tracker: DEGRADED to none (…)` line) → `[Phase 1] SKIPPED — tracker: none (DEGRADED from {github|gitlab}: {tracker_degraded_reason})` — repeat the reason here; the Phase 0 announce scrolls away and a silent skip reads as "worked as configured" when the truth is the tracker CLI was missing/unauthenticated (audit #13).
+
+Downstream consequences of a none tracker (so nothing else needs `trackers.md` on this path): no `Closes #N`, no `Ref:` line in commits, no issue comment in Phase 4 ([`trackers.md`](references/trackers.md) §none). Load `phase-1-issue.md` **only** when the tracker is configured (`type` set and ≠ `none`) — that is the sole case where an issue is actually created.
 
 **Low complexity simplifications**: skip Phase 1, Phase 3 = the complete [`phase-3-low.md`](references/phase-3-low.md) path — `build-verify` re-run + diff scan + dep-vuln scan (nothing else), Phase 4 = push + change summary (no PR, no ADR — ADR is High-only; context-doc update per §4.6 still applies when `required_for_finalize: true`), still emit metrics + notification. With merge-on-finish (`+++` form): §4.10.5 then merges the branch into `main` and removes the worktree.
 
