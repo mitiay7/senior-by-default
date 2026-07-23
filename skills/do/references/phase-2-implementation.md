@@ -232,12 +232,24 @@ PLAN-SIZE: files={PLANNED_FILES} lines={PLANNED_LINES_EST} complexity={COMPLEXIT
 <!-- ^ machine-readable marker from §2.0. Harmless to the implementer; read by the
      optional PreToolUse plan-size hook (references/hooks.md) to surface the verdict
      at spawn time. Omit nothing — emit it verbatim with the §2.0 numbers. -->
+Finalize owner: {you | orchestrator}
+<!-- ^ set by the parent composing this prompt (it knows its own deployment):
+     "you"          — the spawned agent runs the ENTIRE flow through Phase 4 and
+                      finalizes itself (the dominant single-agent install). Default.
+     "orchestrator" — the spawned agent implements + returns; the PARENT (which
+                      already holds phase-4-finalize.md + anti-patterns.md) runs
+                      Phase 4 itself. Omitted line → treat as "you" (back-compat
+                      with prompts composed from older checkouts). -->
 
 ## Rules
 
-**Critical Phase 4 reminders — pinned at top so they don't get forgotten by end-of-task:**
+**Critical Phase 4 reminders — pinned at top so they don't get forgotten by end-of-task. Which variant applies depends on the `Finalize owner:` flag above:**
 
-These apply to **whoever is currently executing this skill flow** — whether you are the spawned agent doing everything yourself, or a parent orchestrator that spawned a sub-agent. There is no separate "Opus picks up after Sub-Agent reports" step in most real installs (the spawned agent typically runs the entire flow start-to-finish and returns). So if you are reading this prompt, **you** are responsible for Phase 4.0 + Phase 4.13 procedures.
+**If `Finalize owner: you` (default — you run the whole flow through Phase 4):** you own Phase 4.0 + Phase 4.13. Read [`phase-4-finalize.md`](phase-4-finalize.md) (and scan [`anti-patterns.md`](anti-patterns.md)) at Phase 4 and run the procedures verbatim — the three reminders below are yours. Because YOU are the finalize owner, the parent does NOT re-read those two files to "verify" your announce; it relays your §4.13 output, and the wrapper OK-line + the opt-in Stop gate ([`hooks.md`](hooks.md)) are the enforcement. So the two files are read exactly once — by you.
+
+**If `Finalize owner: orchestrator`:** you implement and RETURN — do **NOT** run Phase 4, and do **NOT** read `phase-4-finalize.md` / `anti-patterns.md` (the orchestrator already holds both and finalizes itself). Just keep these three facts in mind so your returned state is finalize-ready: (a) don't inline `git branch -m` — the `branch-normalize` wrapper owns the rename, run at Phase 4.0 by the orchestrator; (b) don't compose a prose `Metrics:`/announce line — Phase 4.13 is the orchestrator's bash flow; (c) leave the worktree branch as-is for the orchestrator to normalize. Then the two files are read exactly once — by the orchestrator.
+
+The three reminders (apply to the finalize owner — the `you` variant above, or the orchestrator executing Phase 4 from its own copy of `phase-4-finalize.md`):
 
 1. **Phase 4.0 (branch rename) MUST run BEFORE Phase 4.2 (PR open)**, not after. The rename decision is owned by the `branch-normalize` wrapper (phase-4-finalize.md §4.0) — never inline `git branch -m` from memory of the naming rules. If you're in a worktree with auto-named `claude/<adj>-<noun>-<hash>` (Claude Code harness pre-spawn) — the wrapper RENAMES UNCONDITIONALLY. The worktree PATH is fine to keep; the BRANCH must follow spec so PR title / commit `Ref:` / metrics `branch_rename` note / tracker comments all cross-reference via `i{N}`. **Pre-spawned worktree is NOT an excuse** — the wrapper's `git branch -m` works on pre-spawned worktrees just fine. [Anti-patterns §12, §19j](anti-patterns.md).
 
@@ -245,7 +257,7 @@ These apply to **whoever is currently executing this skill flow** — whether yo
 
 3. **Append verification is wrapper-owned — check the OK line, don't recount**: `metrics-append` serializes the write under the log's mkdir lock and verifies by CONTENT (the exact entry present as a full line) before emitting `OK pre=N post=N+1 …`; a silent write failure → `IOFAIL append verify failed: …` (the pre/post counts on the OK line are informational — audit #18). AFTER the §4.13 bash flow runs, verify the captured wrapper output starts with `OK `; any other result surfaces verbatim as `Metrics: APPEND FAILED — <reason>` in the announce. Don't re-implement the check with hand-run `wc -l`/`grep`, and don't gloss over a non-OK result.
 
-These three are NOT optional and NOT ceremony. They're the fail-fast contract that makes the skill self-verifying — if you skip them, downstream metrics-driven skill iteration breaks silently.
+These three are NOT optional and NOT ceremony. They're the fail-fast contract that makes the skill self-verifying — if the finalize owner skips them, downstream metrics-driven skill iteration breaks silently. The §4.13 bash flow runs **exactly once**, by the finalize owner — never by both actors, never by neither.
 
 Now, the rules for the implementation work:
 

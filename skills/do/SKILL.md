@@ -65,7 +65,7 @@ Do NOT preload. Read each only when its trigger fires.
 | **Phase 2** — Sonnet prompt, plan review, self-review, stale-main | [`references/phase-2-implementation.md`](references/phase-2-implementation.md) |
 | **Phase 3** (M/H) — gates, specialist audit, Opus review | [`references/phase-3-review.md`](references/phase-3-review.md) |
 | **Phase 3** (Low) — build-verify + dep-vuln + diff scan, complete Low path | [`references/phase-3-low.md`](references/phase-3-low.md) |
-| **Phase 4** — commit, push, context doc, metrics, announce (every tier) | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) |
+| **Phase 4** — commit, push, context doc, metrics, announce (every tier) | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) — **loaded by the finalize owner only** (see Finalize-owner note below); a thin orchestrator that delegated Phase 4 to the implementer does not re-read it |
 | **Phase 4 PR path** (M/H with code-host) — PR, CI gate, auto-merge, issue comment | [`references/phase-4-pr.md`](references/phase-4-pr.md) |
 | Changing the telemetry system itself (never at runtime) | [`references/telemetry-internals.md`](references/telemetry-internals.md) |
 | Migration audit specialist | [`references/zero-downtime-migrations.md`](references/zero-downtime-migrations.md) |
@@ -148,7 +148,7 @@ Final `[Phase 0] ...` announce — must include `Models:` line (orchestrator + i
 | 1 — Issue creation | M/H **with a configured tracker** (skipped for T/L, and for any tier when `issue_tracker.type` is missing or `none`) | [`references/phase-1-issue.md`](references/phase-1-issue.md) — **do not load it on the skip; decide the skip here** (see below) |
 | 2 — Implementation + self-review + ADR (High) | L/M/H (Trivial uses simplified flow below) | [`references/phase-2-implementation.md`](references/phase-2-implementation.md) |
 | 3 — Code review (gates, specialist audit, Opus review) | M/H → [`references/phase-3-review.md`](references/phase-3-review.md); **Low → [`references/phase-3-low.md`](references/phase-3-low.md) instead** (Trivial: Sonnet diff-scan + dep-vuln when deps changed — see below) | per tier |
-| 4 — Finalize (commit, push, context doc, metrics, announce) | always | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) — **plus** [`references/phase-4-pr.md`](references/phase-4-pr.md) (PR, CI, auto-merge, issue comment) on M/H with a code-host; **T/L never load the PR file** |
+| 4 — Finalize (commit, push, context doc, metrics, announce) | always (loaded by the **finalize owner** only — see the Finalize-owner note below) | [`references/phase-4-finalize.md`](references/phase-4-finalize.md) — **plus** [`references/phase-4-pr.md`](references/phase-4-pr.md) (PR, CI, auto-merge, issue comment) on M/H with a code-host; **T/L never load the PR file** |
 
 **Phase 1 tracker-none skip (decide here — do NOT open `phase-1-issue.md` for it).** On M/H, before loading the Phase 1 file, check the tracker: if `config.issue_tracker` is missing or `issue_tracker.type == "none"`, Phase 1 is a no-op — **skip it without reading `phase-1-issue.md`** (loading a 17 KB file only to execute its own first-line skip is pure overhead). Announce exactly one line, then move on:
 - Plain none/missing → `[Phase 1] SKIPPED — tracker: none`
@@ -165,7 +165,9 @@ Downstream consequences of a none tracker (so nothing else needs `trackers.md` o
 - Phase 4: commit + push to worktree branch. **No PR**, no context-doc update, no ADR. Emit metrics + notification. With merge-on-finish (`+++` form): §4.10.5 merges into `main` + cleans the worktree first. Co-Author = the implementer sub-agent's model identifier read from ITS session metadata (the Haiku-tier agent that wrote the diff — not the orchestrator's model, and never a hardcoded version; see Notation).
 - Worktree rule still applies — Trivial does not bypass [`git-rules.md`](references/git-rules.md).
 
-Before announcing completion, scan [`references/anti-patterns.md`](references/anti-patterns.md).
+Before announcing completion, the **finalize owner** scans [`references/anti-patterns.md`](references/anti-patterns.md) (see the Finalize-owner note below — the actor that runs Phase 4 loads it; the other actor does not).
+
+**Finalize owner (avoids a double read of `phase-4-finalize.md` + `anti-patterns.md`, ~69 KB).** Phase 4 is executed by exactly one actor, and only that actor loads those two files. The Phase 2 spawn prompt carries a `Finalize owner: {you | orchestrator}` flag ([`phase-2-implementation.md`](references/phase-2-implementation.md) §Sonnet prompt template): with `you` (the default, and the dominant single-agent install) the spawned implementer runs the whole flow through Phase 4 and finalizes itself — the orchestrator then **relays** the implementer's §4.13 announce instead of re-reading the two files to verify it (enforcement stays the wrapper OK-line + the opt-in Stop gate). With `orchestrator` the implementer returns after coding and the orchestrator runs Phase 4 from its own copy. Either way the §4.13 bash flow runs **exactly once**, by the owner — never by both, never by neither; §19a announce coupling is unchanged.
 
 ## Top-level git constraints (full: [`references/git-rules.md`](references/git-rules.md))
 

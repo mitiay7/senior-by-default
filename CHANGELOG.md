@@ -4,6 +4,16 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Changed — explicit finalize ownership: the implementer and orchestrator no longer both read `phase-4-finalize.md` + `anti-patterns.md` (issue #4)
+
+The Phase 2 spawn prompt's "Critical Phase 4 reminders" told *whoever executes the flow* to run Phase 4.0/4.13 verbatim from `phase-4-finalize.md` (48.3 KB) + `anti-patterns.md` (21 KB). In the split deployment (a parent orchestrator that pre-loaded both as core-set files AND spawned an implementer) both actors read those ~69 KB. The spawn prompt now carries an explicit **`Finalize owner: {you | orchestrator}`** flag ([`phase-2-implementation.md`](skills/do/references/phase-2-implementation.md) §Sonnet prompt template), set by the parent that composes it:
+
+- **`you`** (default; the dominant single-agent install) — the spawned implementer runs the whole flow through Phase 4 and finalizes itself. The parent then **relays** the implementer's §4.13 announce instead of re-reading the two files to verify it (enforcement stays the wrapper OK-line + the opt-in Stop gate). The two files are read once, by the implementer.
+- **`orchestrator`** — the implementer codes and returns with three inline reminders and an explicit instruction **not** to read `phase-4-finalize.md`/`anti-patterns.md`; the orchestrator, which already holds both, runs Phase 4. Read once, by the orchestrator.
+- Missing flag → treated as `you` (back-compat with prompts composed from older checkouts).
+
+SKILL.md's Phase 4 dispatch rows + the anti-patterns scan line now say the files are loaded by the **finalize owner only**, with a Finalize-owner note spelling out the relay contract. No weakening of the §19a announce coupling: the §4.13 bash flow still runs **exactly once**, by the owner — never both, never neither.
+
 ### Changed — split `config-schema.md` into a slim read-path + an authoring reference (issue #3)
 
 `config-schema.md` (26.3 KB ≈ 6.6k tokens) was mandated on **every run** — Phase 0 Step 1 loads config each time — yet most of its bulk (the full annotated JSON block, the telemetry JSONL entry shape, example pointers) is authoring-time material a steady-state *read* never needs. The annotated **full schema**, the **Telemetry JSONL entry schema** (Tier-1 shape + gate-vocabulary rules), and the **examples** list now live in a new [`config-authoring.md`](skills/do/references/config-authoring.md) (11.9 KB), loaded only when Phase 0 auto-init writes a config or someone hand-authors one. [`config-schema.md`](skills/do/references/config-schema.md) keeps its name (every existing cross-reference stays valid) and slims to the read-path — location & discovery, path resolution, per-field semantics, and no-config defaults — **26.3 KB → 16.9 KB (−36% of the every-run load)**. A line-by-line union audit confirms zero normative loss (the only deltas are the new title, the now-self-contained defaults line, and pointers to the relocated blocks). SKILL.md dispatch splits the row (reading → `config-schema.md`; creating/editing → `config-authoring.md`); [`phase-4-finalize.md`](skills/do/references/phase-4-finalize.md) §4.11 and [`phase-0-setup.md`](skills/do/references/phase-0-setup.md) auto-init repoint accordingly; `config.schema.json` is untouched and still the machine-readable source of truth.
