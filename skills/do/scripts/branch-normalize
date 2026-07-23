@@ -41,7 +41,13 @@
 # head=<sha8>, the repo's real HEAD at run time; session-varying, not
 # composable from spec text):
 #   Phase 4.0: BRANCH OK name=<name> head=<sha8>
-#   Phase 4.0: BRANCH RENAMED <old>→<new> head=<sha8> old_remote=<none|deleted(<ref>)|delete-failed(<ref>)>
+#   Phase 4.0: BRANCH RENAMED <old>→<new> head=<sha8> old_remote=<none|deleted(<ref>)|delete-failed(<ref>)|skipped(protected:<branch>)>
+#     old_remote cleanup deletes ONLY the remote ref matching the OLD LOCAL NAME
+#     ($ACTUAL) when it was actually pushed and is not the default/main/master
+#     branch. It NEVER derives the ref from @{upstream} (a worktree branch cut
+#     from origin/main tracks origin/main, which would delete the default branch).
+#     `skipped(protected:<branch>)` = the old name was the default/main/master
+#     branch, so cleanup was refused by the hard guard.
 #
 # Exit codes:
 #   0  OK / RENAMED — branch now matches config.naming
@@ -141,21 +147,38 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then
   exit 0
 fi
 
-# --- Rename (+ old remote-ref cleanup, previous inline-bash behavior) ---------
+# --- Rename (+ old remote-ref cleanup) ---------------------------------------
+# The ref we may clean up is the remote branch matching the OLD LOCAL NAME
+# ($ACTUAL) — NEVER the branch's upstream. A worktree created with
+# `git worktree add -b X origin/main` sets X's upstream to origin/main, so
+# keying the delete off @{upstream} runs `git push origin --delete main` —
+# default-branch deletion (only branch protection has saved it in the wild).
+# Upstream is used ONLY to pick a remote NAME; the delete is gated on: the
+# old-name ref was actually pushed AND is not the default / main / master branch.
 OLD_UPSTREAM=$(git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null || true)
 
 git -C "$REPO_DIR" branch -m "$EXPECTED" 2>/dev/null \
   || gitfail "git branch -m $ACTUAL $EXPECTED failed"
 
 OLD_REMOTE="none"
-if [ -n "$OLD_UPSTREAM" ] && [ "$NO_REMOTE_DELETE" -ne 1 ]; then
-  REMOTE_NAME="${OLD_UPSTREAM%%/*}"
-  REMOTE_BRANCH="${OLD_UPSTREAM#*/}"
-  if git -C "$REPO_DIR" push "$REMOTE_NAME" --delete "$REMOTE_BRANCH" >/dev/null 2>&1; then
-    OLD_REMOTE="deleted($OLD_UPSTREAM)"
-  else
-    OLD_REMOTE="delete-failed($OLD_UPSTREAM)"
+if [ "$NO_REMOTE_DELETE" -ne 1 ]; then
+  UP_REMOTE="${OLD_UPSTREAM%%/*}"
+  REMOTE_NAME="${UP_REMOTE:-origin}"
+  # Remote's default branch (empty if origin/HEAD is unset — main/master still guarded).
+  DEFAULT_BRANCH=$(git -C "$REPO_DIR" symbolic-ref --quiet --short "refs/remotes/$REMOTE_NAME/HEAD" 2>/dev/null || true)
+  DEFAULT_BRANCH="${DEFAULT_BRANCH#"$REMOTE_NAME"/}"
+  if [ "$ACTUAL" = "main" ] || [ "$ACTUAL" = "master" ] || { [ -n "$DEFAULT_BRANCH" ] && [ "$ACTUAL" = "$DEFAULT_BRANCH" ]; }; then
+    # Hard guard: never delete the default / main / master branch, whatever @{upstream} said.
+    OLD_REMOTE="skipped(protected:$ACTUAL)"
+  elif git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/$REMOTE_NAME/$ACTUAL"; then
+    # The OLD branch was actually pushed under its own name → delete that stale ref.
+    if git -C "$REPO_DIR" push "$REMOTE_NAME" --delete "$ACTUAL" >/dev/null 2>&1; then
+      OLD_REMOTE="deleted($REMOTE_NAME/$ACTUAL)"
+    else
+      OLD_REMOTE="delete-failed($REMOTE_NAME/$ACTUAL)"
+    fi
   fi
+  # else: old branch was never pushed → nothing to clean up (OLD_REMOTE stays "none")
 fi
 
 # ${..} braces are load-bearing: bash 3.2 mis-parses a bare $VAR immediately

@@ -4,6 +4,16 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-07-23
+
+### Fixed — `branch-normalize` old-remote cleanup could delete the default branch (`origin/main`)
+
+Phase 4.0's post-rename remote cleanup keyed its `git push --delete` off the old branch's `@{upstream}`. A worktree branch created with `git worktree add -b <name> origin/main` — the exact shape the Claude Code harness pre-spawns — has `upstream = origin/main`, so on a rename the cleanup ran `git push origin --delete main`, **deleting the repository's default branch**. Only branch protection (or a bare remote refusing to delete its own current branch) prevented data loss in the wild.
+
+The cleanup now targets ONLY the remote ref matching the **old local branch name** (`$ACTUAL`), and only when (a) that ref was actually pushed and (b) it is not the default / `main` / `master` branch. A hard guard short-circuits with a new verdict value `old_remote=skipped(protected:<branch>)` when the old name is protected; `@{upstream}` is now consulted solely to pick the remote *name*, never the branch to delete. A pre-spawned worktree that never pushed its auto-name reports `old_remote=none` and leaves `origin/main` untouched; a genuinely stale pushed feature branch is still cleaned up (`deleted(<remote>/<old>)`), and `--no-remote-delete` still opts out entirely.
+
+New regression test [`tests/branch-normalize-remote-guard.test.sh`](tests/branch-normalize-remote-guard.test.sh) builds synthetic bare origins + clones and asserts all four paths (worktree-tracking-main → no delete; current-branch-is-main → guarded; non-default pushed branch → still cleaned; opt-out) — green on both macOS/BSD and GNU/Linux. Docs synced in lockstep: the `branch-normalize` header verdict grammar, [phase-4-finalize.md](skills/do/references/phase-4-finalize.md) §4.0 dispatch (the `old_remote` value list + `skipped(protected:…)` guidance), and [anti-patterns.md](skills/do/references/anti-patterns.md) §19j.
+
 ## [0.11.0] — 2026-07-23
 
 ### Added — auto-split: a Phase 3.0 PR-size BLOCK now splits into a stack of sub-cap PRs instead of halting

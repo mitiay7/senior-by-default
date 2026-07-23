@@ -42,7 +42,7 @@ echo "$BRANCH_LINE"
 Dispatch on the wrapper's verdict line (the `head=<sha8>` — the repo's real HEAD at run time — is the §19j anti-fabrication tell; carry the line verbatim, never retype):
 
 - `Phase 4.0: BRANCH OK name=<name> head=<sha8>` — already normalized; proceed.
-- `Phase 4.0: BRANCH RENAMED <old>→<new> head=<sha8> old_remote=<…>` — renamed. Record `branch_rename: <old>→<new>` in the §4.11 `--notes` — the signal that upstream automation pre-spawned a worktree without following the worktree-setup spec. `old_remote=delete-failed(…)` → tell the user the stale remote ref needs manual cleanup; do not retry the delete yourself.
+- `Phase 4.0: BRANCH RENAMED <old>→<new> head=<sha8> old_remote=<none|deleted(<remote>/<old>)|delete-failed(<remote>/<old>)|skipped(protected:<branch>)>` — renamed. Record `branch_rename: <old>→<new>` in the §4.11 `--notes` — the signal that upstream automation pre-spawned a worktree without following the worktree-setup spec. The `old_remote` field only ever names the OLD LOCAL branch's own pushed ref, never the branch's upstream (a pre-spawned worktree tracks `origin/main`; the cleanup must not touch it). `old_remote=delete-failed(…)` → tell the user the stale remote ref needs manual cleanup; do not retry the delete yourself. `old_remote=skipped(protected:<branch>)` is expected and safe — the old name was the default/main/master branch, so the wrapper's hard guard refused to delete it; no action needed.
 - `Phase 4.0: NORMALIZE FAILED — REJECT <reason>` / `NORMALIZE SKIPPED` → **fail closed**: do NOT proceed to 4.1/4.2 on an unnormalized branch. Collision cap (`-v9`) → ask the user; missing install → re-run install.sh / `/plugin install`, then re-run 4.0.
 
 ### Pre-spawned worktree is NOT an excuse
