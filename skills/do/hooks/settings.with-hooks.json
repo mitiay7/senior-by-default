@@ -6,6 +6,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/skills/do/hooks/do-metrics-stop-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/skills/do/hooks/do-tokens-stop-amend.sh"
           }
         ]
       }

@@ -248,7 +248,7 @@ fi
 
 HOOKS_DIR_INSTALLED="$SYMLINK_PATH/hooks"
 SETTINGS_JSON="$HOME/.claude/settings.json"
-ENABLE_HOOKS=$(prompt "Enable opt-in enforcement hooks? (Stop=metrics backstop, PreToolUse=plan-size + pre-push secret scan + PR-size) — merges into $SETTINGS_JSON" "N" "ENABLE_HOOKS")
+ENABLE_HOOKS=$(prompt "Enable opt-in enforcement hooks? (Stop=metrics backstop + token-usage recording, PreToolUse=plan-size + pre-push secret scan + PR-size) — merges into $SETTINGS_JSON" "N" "ENABLE_HOOKS")
 
 if [[ "$ENABLE_HOOKS" =~ ^[Yy] ]]; then
   if [ ! -f "$HOOKS_DIR_INSTALLED/do-metrics-stop-gate.sh" ]; then
@@ -260,13 +260,15 @@ if [[ "$ENABLE_HOOKS" =~ ^[Yy] ]]; then
       log "Backed up existing settings.json"
     fi
     STOP_CMD="$HOOKS_DIR_INSTALLED/do-metrics-stop-gate.sh"
+    TOKENS_CMD="$HOOKS_DIR_INSTALLED/do-tokens-stop-amend.sh"
     PRE_CMD="$HOOKS_DIR_INSTALLED/do-plan-size-pretooluse.sh"
     SECRET_CMD="$HOOKS_DIR_INSTALLED/do-secret-scan-pretooluse.sh"
     PRSIZE_CMD="$HOOKS_DIR_INSTALLED/do-pr-size-pretooluse.sh"
-    if SETTINGS_JSON="$SETTINGS_JSON" STOP_CMD="$STOP_CMD" PRE_CMD="$PRE_CMD" SECRET_CMD="$SECRET_CMD" PRSIZE_CMD="$PRSIZE_CMD" python3 - <<'PY'
+    if SETTINGS_JSON="$SETTINGS_JSON" STOP_CMD="$STOP_CMD" TOKENS_CMD="$TOKENS_CMD" PRE_CMD="$PRE_CMD" SECRET_CMD="$SECRET_CMD" PRSIZE_CMD="$PRSIZE_CMD" python3 - <<'PY'
 import json, os, sys
 p = os.environ["SETTINGS_JSON"]
 stop_cmd, pre_cmd = os.environ["STOP_CMD"], os.environ["PRE_CMD"]
+tokens_cmd = os.environ["TOKENS_CMD"]
 secret_cmd = os.environ["SECRET_CMD"]
 prsize_cmd = os.environ["PRSIZE_CMD"]
 try:
@@ -279,9 +281,10 @@ def present(event, cmd):
     return any(h.get("command") == cmd
                for grp in hooks.get(event, []) for h in grp.get("hooks", []))
 changed = False
-if not present("Stop", stop_cmd):
-    hooks.setdefault("Stop", []).append({"hooks": [{"type": "command", "command": stop_cmd}]})
-    changed = True
+for stop_c in (stop_cmd, tokens_cmd):
+    if not present("Stop", stop_c):
+        hooks.setdefault("Stop", []).append({"hooks": [{"type": "command", "command": stop_c}]})
+        changed = True
 if not present("PreToolUse", pre_cmd):
     hooks.setdefault("PreToolUse", []).append(
         {"matcher": "Task", "hooks": [{"type": "command", "command": pre_cmd}]})
