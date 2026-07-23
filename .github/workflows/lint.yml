@@ -71,11 +71,16 @@ jobs:
       - name: Check frontmatter
         run: |
           python - <<'PY'
-          import yaml, sys, pathlib
+          import yaml, sys, pathlib, re
           p = pathlib.Path('skills/do/SKILL.md')
-          parts = p.read_text().split('---', 2)
-          assert len(parts) >= 3, 'no frontmatter delimiter found'
-          fm = yaml.safe_load(parts[1])
+          # Extract the block between the '---' *delimiter lines* only. A naive
+          # split('---') breaks here because the description legitimately contains
+          # a literal '--- a/' (the pasted-unified-diff guard); that inner '---'
+          # would be mistaken for the closing delimiter and silently truncate the
+          # parsed frontmatter before the NEVER-auto-trigger / SKIP substrings.
+          m = re.match(r'^---\n(.*?)\n---\n', p.read_text(), re.S)
+          assert m, 'no frontmatter delimiter found'
+          fm = yaml.safe_load(m.group(1))
           for required in ('name', 'version', 'description', 'model'):
               assert required in fm, f'missing frontmatter key: {required}'
           assert fm['name'] == 'do', f'name must be "do", got {fm["name"]!r}'
