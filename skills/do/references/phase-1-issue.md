@@ -2,6 +2,8 @@
 
 **Skip entirely if** `config.issue_tracker` is missing, or `type == "none"`. For Low complexity, also skip (no issue is needed — Sonnet runs from inline task description).
 
+> **The none/missing skip is now decided in [`SKILL.md`](../SKILL.md) §"Phase 1 tracker-none skip" — before this file is ever opened** (loading 17 KB only to execute a one-line skip was pure overhead; 2026-07-23 token audit). If you are reading this file, the tracker is configured (`type` set and ≠ `none`) and an issue is genuinely being created. The skip rule is kept here for direct readers and for the exact announce forms; it is not the load trigger.
+
 **Skips are announced, never silent** — print exactly one line, then move on:
 
 - Plain none/missing: `[Phase 1] SKIPPED — tracker: none`

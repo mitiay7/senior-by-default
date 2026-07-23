@@ -4,6 +4,10 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Changed — decide the tracker-`none` Phase 1 skip in SKILL.md, don't load `phase-1-issue.md` to find it (issue #2)
+
+On M/H with the default local-only config (`issue_tracker.type: none`), `phase-1-issue.md` (17.2 KB ≈ 4.3k tokens) was read **only to execute its own first line** — "Skip entirely if … `type == none`". The skip decision now lives in [`SKILL.md`](skills/do/SKILL.md) (which the orchestrator has already read): before the Phase 1 file is opened, it checks the tracker and, on missing/`none`, skips with the exact one-line announce (plain + degraded forms preserved verbatim, incl. the audit-#13 reason repetition) — `phase-1-issue.md` loads **only** when a tracker is configured (`type` set and ≠ `none`), the sole case that actually creates an issue. The none-path downstream semantics (no `Closes #N`, no `Ref:`, no issue comment) are stated inline so `trackers.md` isn't needed either. Behavior-preserving: the concurrent-edit check sits below the skip rule inside `phase-1-issue.md`, so tracker-`none` runs already skipped it. `phase-1-issue.md` keeps its skip paragraph for direct readers with a pointer to the new decision site.
+
 ### Added — token-usage Stop hook: the `tokens` field is finally fillable (issue #1)
 
 v0.10.0 added `metrics-append --tokens-in/--tokens-out` so the skill could compute its own ROI. A 2026-07-23 re-audit found **0 of 27** post-v0.10.0 entries ever carried a `tokens` object — and diagnosed it as **structural, not neglect**: no in-session actor can read its own usage (`/cost` is TUI-only; a sub-agent can't observe its own usage; a headless usage block lands only after the session ends). The one actor the runtime hands harness-recorded usage is a **hook** — a Stop hook receives `transcript_path`, and the transcript's assistant records carry `message.usage`.
