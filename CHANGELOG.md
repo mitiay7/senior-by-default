@@ -4,6 +4,10 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-23
+
+**Token-economy release.** Built from a 2026-07-23 audit that re-measured the skill's own telemetry and per-tier context load (fanned-out, adversarially verified against the raw JSONL). Headline finding: the v0.10.0 `tokens` field had **0 % adoption across 27 post-release runs** — structurally unfillable, because no in-session actor can read its own usage. The four issues below close that gap and trim the mandatory per-run context load.
+
 ### Changed — explicit finalize ownership: the implementer and orchestrator no longer both read `phase-4-finalize.md` + `anti-patterns.md` (issue #4)
 
 The Phase 2 spawn prompt's "Critical Phase 4 reminders" told *whoever executes the flow* to run Phase 4.0/4.13 verbatim from `phase-4-finalize.md` (48.3 KB) + `anti-patterns.md` (21 KB). In the split deployment (a parent orchestrator that pre-loaded both as core-set files AND spawned an implementer) both actors read those ~69 KB. The spawn prompt now carries an explicit **`Finalize owner: {you | orchestrator}`** flag ([`phase-2-implementation.md`](skills/do/references/phase-2-implementation.md) §Sonnet prompt template), set by the parent that composes it:
