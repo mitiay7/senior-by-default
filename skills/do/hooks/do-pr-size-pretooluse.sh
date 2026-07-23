@@ -15,11 +15,17 @@
 # unreviewable 4000-line PR is a problem in any session — but it never
 # disturbs non-PR work.
 #
-# DRAFT ESCAPE HATCH (load-bearing): §3.0's own BLOCK remediation is "push
+# DRAFT ESCAPE HATCH (load-bearing): §3.0's opt-out BLOCK remediation is "push
 # current state as a DRAFT PR + `blocked` label". A `--draft` creation is
 # therefore ALWAYS allowed — on a BLOCK verdict it gets the verdict injected
 # as context (keep it draft, apply the label) instead of a deny. Blocking
 # drafts would deadlock the sanctioned escape path.
+#
+# AUTO-SPLIT (v0.11.0, default): §3.0 BLOCK normally routes to §4.2.1 auto-split,
+# which opens a STACK of PRs whose per-part diff (base = the previous part
+# branch) is each sub-cap — so those non-draft creations pass this hook's RC=0
+# arm naturally, no special-casing needed. The deny below only ever fires on a
+# genuine SINGLE over-block non-draft PR, which auto-split never produces.
 #
 # FAIL-OPEN (deliberate, mirrors do-secret-scan-pretooluse.sh): missing jq /
 # wrapper / non-repo dir / unresolvable base ref / wrapper REJECT or crash →
@@ -150,7 +156,7 @@ if [ "$RC" -eq 3 ] && [ -z "$DRAFT" ]; then
   {
     echo "[pr-size-check / PreToolUse hook] BLOCKED this PR/MR creation — the real diff ($BASEREF...$HEADREF in $DIR) is over the hard PR-size cap:"
     printf '%s\n' "$OUT"
-    echo "Phase 3.0 BLOCK is not advisory (anti-pattern §19f/§21) and this verdict came from the repo's actual diff — do NOT retry a mergeable PR and do NOT shrink the numbers. The sanctioned path: re-run this command with --draft (title prefixed WIP:), apply the \`blocked\` label, file the split sub-issues, record gates.pr_size.status=\"block\" with OUTCOME=\"blocked\" (phase-3-review.md §3.0)."
+    echo "Phase 3.0 BLOCK is not advisory (anti-pattern §19f/§21) and this verdict came from the repo's actual diff — do NOT retry a mergeable single PR and do NOT shrink the numbers. Sanctioned paths: (default) auto-split via the pr-split wrapper into a STACK of sub-cap PRs, each opened with --base set to the previous part branch (phase-4-pr.md §4.2.1) — those per-part creations are under cap and pass this hook; OR (--no-split / auto_split:false) re-run this command with --draft (title prefixed WIP:), apply the \`blocked\` label, file the split sub-issues, record gates.pr_size.status=\"block\" with OUTCOME=\"blocked\" (phase-3-review.md §3.0)."
   } >&2
   exit 2
 fi
@@ -160,7 +166,7 @@ if [ "$RC" -eq 3 ] && [ -n "$DRAFT" ]; then
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "allow",
-      additionalContext: ("[pr-size-check / PreToolUse hook] draft PR allowed under a BLOCK verdict: " + $v + " — this is the §3.0 BLOCK path: keep it a draft, apply the `blocked` label, file the split sub-issues; gates.pr_size.status=\"block\", OUTCOME=\"blocked\". Do NOT mark it ready-for-review without splitting.")
+      additionalContext: ("[pr-size-check / PreToolUse hook] draft PR allowed under a BLOCK verdict: " + $v + " — this is the §3.0 --no-split/opt-out BLOCK path: keep it a draft, apply the `blocked` label, file the split sub-issues; gates.pr_size.status=\"block\", OUTCOME=\"blocked\". Do NOT mark it ready-for-review without splitting. (The default path is auto-split into a stack of sub-cap PRs — phase-4-pr.md §4.2.1.)")
     }
   }'
   exit 0

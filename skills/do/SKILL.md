@@ -1,6 +1,6 @@
 ---
 name: do
-version: 0.10.1
+version: 0.11.0
 model: opus
 description: |
   Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Sonnet plan + specialist/Opus plan review + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge. `+++`-form invocations additionally merge the gated branch and clean the worktree at the end (opt out with `nomerge`).
@@ -105,6 +105,7 @@ If the triggering user message began with the **`+++` token** → `merge_on_fini
 
 | Flag | Effect |
 |---|---|
+| `--no-split` / `--split` | Per-task override of `config.pr_size.auto_split` (default on). On a Phase 3.0 PR-size BLOCK, `--split` auto-splits delivery into a stack of sub-cap PRs (§4.2.1); `--no-split` reverts to the pre-0.11 hard halt (draft PR + `blocked`, split manually) |
 | `--skip-ci-wait` | Don't wait for CI before final announce |
 | `--no-self-review` | Skip Sonnet self-review (Phase 2.5) — emergencies only |
 | `--no-codeowners` | Skip CODEOWNERS-based reviewer routing |
@@ -174,7 +175,7 @@ Before announcing completion, scan [`references/anti-patterns.md`](references/an
 - **Final assistant message ends with PR-summary prose and NO `Metrics: ...` line** — Phase 4.13 procedure skipped. Run bash flow verbatim from `phase-4-finalize.md` instead of composing prose.
 - **Auto-named branches without `i{N}` for M/H** — Phase 4.0 renames UNCONDITIONALLY before PR open. "Pre-spawned worktree" is NOT an excuse — `git branch -m` works on pre-spawned worktrees too.
 - **Using `Agent(isolation: "worktree")` for Phase 2** — auto-names branches, breaks `config.naming`. Pre-create worktree explicitly via `git worktree add`.
-- **Downgrading a Phase 3.0 PR-size BLOCK to `warn`** — the `pr-size-check` wrapper owns the verdict and BLOCK exits 3 (hard halt → draft PR + `blocked`). Never eyeball the diff and ship an over-block PR as `warn` (production ledger: [anti-patterns §19f](references/anti-patterns.md)). Plan-time sibling: Phase 2.0 `plan-size-check` SPLIT-REQUIRED.
+- **Downgrading a Phase 3.0 PR-size BLOCK to `warn`** — the `pr-size-check` wrapper owns the verdict and BLOCK exits 3. Never eyeball the diff and ship an over-block change as one `warn` PR (production ledger: [anti-patterns §19f](references/anti-patterns.md)). BLOCK's default response is **auto-split into a stack of sub-cap PRs** (§4.2.1 `pr-split`), or draft PR + `blocked` with `--no-split` — never a single mergeable over-block PR. Plan-time sibling: Phase 2.0 `plan-size-check` SPLIT-REQUIRED.
 - **Skipping zero-downtime migration audit** when migration present
 - **Bypassing CODEOWNERS** when file exists in repo
 - **Subjective reviews / scope creep / silent assumptions / speculative abstractions / drive-by refactors**

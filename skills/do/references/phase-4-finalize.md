@@ -91,7 +91,7 @@ Dispatch on the wrapper's first output line:
 
 ## 4.2 / 4.2.5 / 4.2.6 — PR creation, CI gate, auto-merge → [`phase-4-pr.md`](phase-4-pr.md)
 
-**Medium/High with a code-hosting remote: read [`phase-4-pr.md`](phase-4-pr.md) now** and run its §4.2 (PR/MR creation), §4.2.5 (CI gate, opt-in via `config.ci.required`), and §4.2.6 (auto-merge — its precondition is single-sourced THERE). Carry back `$PR_URL`, `$CI_STATUS`, `$AUTO_MERGE_STATUS` for §4.11/§4.13.
+**Medium/High with a code-hosting remote: read [`phase-4-pr.md`](phase-4-pr.md) now** and run its §4.2 (PR/MR creation), §4.2.5 (CI gate, opt-in via `config.ci.required`), and §4.2.6 (auto-merge — its precondition is single-sourced THERE). Carry back `$PR_URL`, `$CI_STATUS`, `$AUTO_MERGE_STATUS` for §4.11/§4.13. **If Phase 3.0 set `PR_SPLIT_REQUIRED=1`** (a `pr_size` BLOCK with auto-split armed), §4.2 forks to **§4.2.1 Auto-split delivery** — a stack of sub-cap PRs instead of one — and carries back `$SPLIT_PR_URLS` + `pr_auto_split=k`.
 
 **Trivial/Low: skip — do not load that file.** No PR exists on these tiers (§4.3 below); `$CI_STATUS`/`$AUTO_MERGE_FLAG` stay unset and default to `skipped`/`false` in §4.11, and the §4.13 announce prints `PR: -`.
 
@@ -191,7 +191,7 @@ Runs ONLY when `merge_on_finish` is set ([SKILL.md](../SKILL.md) §Invocation-fo
 **This is NOT §4.2.6 auto-merge.** §4.2.6 ([`phase-4-pr.md`](phase-4-pr.md)) arms the code-host's merge-when-CI-green and is gated on explicit `ci.required: true` — that rule is unchanged and stays single-sourced there; neither section cites the other as permission (the audit-#11 two-texts class). Merge-on-finish is an **immediate operator merge the user requested at invocation time** — the `+++` form IS that standing request. Its evidence basis is this run's full Phase 3 gate suite; on the default no-CI setup that is exactly the evidence a human clicking "merge" would have, because no CI exists to add more.
 
 **Fire conditions — ALL must hold; any miss → skip (announce `Merged: skipped(<reason>)`), leaving today's await-review behavior:**
-- Clean finalize: Phase 3 ended APPROVE; outcome is not `blocked`; no `pr_size` BLOCK, no draft/`WIP:` PR, no 3-cycle escalation; the §4.1.2 push really happened (`SECRETS PASS` in this transcript).
+- Clean finalize: Phase 3 ended APPROVE; outcome is not `blocked`; no `pr_size` BLOCK, no draft/`WIP:` PR, no 3-cycle escalation; the §4.1.2 push really happened (`SECRETS PASS` in this transcript). **A `pr_size` BLOCK excludes merge-on-finish even when it auto-split (§4.2.1)** — a stack is merged manually in order (`Merged: skipped(pr_size block → auto-split, k PRs)`); never auto-merge one part of a stack.
 - If `config.ci.required: true` → this run's §4.2.5 gate PASSED (a red or timed-out CI gate always beats merge-on-finish).
 - For the T/L local-merge path: the MAIN repo checkout is on `main` and clean (`status --porcelain` empty) — never merge over someone's dirty state.
 
@@ -579,9 +579,13 @@ MERGE_STATUS="$(jq -r '.merge_status // empty' "$CLOCK_FILE" 2>/dev/null)"; MERG
 # specialists from Phase 2 plan-review / Phase 3.6 audit roster (or "none")
 MODELS_LINE="Models: orchestrator=${ORCHESTRATOR_MODEL:-opus}, implementer=${IMPLEMENTER_MODEL:-sonnet}, specialists=[${SPECIALISTS_LIST:-none}]"
 
+# Auto-split (§4.2.1) — list the stack when it fired; absent on the normal single-PR path.
+[ -n "${SPLIT_PR_URLS:-}" ] && SPLIT_LINE="Split: pr_size BLOCK auto-split into a stack — merge in order: ${SPLIT_PR_URLS}"
+
 cat <<EOF
 Complete. Branch: $BRANCH_NAME. PR: ${PR_URL:--}. CI: ${CI_STATUS:-skipped}. Auto-merge: ${AUTO_MERGE_STATUS:-off}. Merged: ${MERGE_STATUS}.
-${CTX_LINE:+$CTX_LINE
+${SPLIT_LINE:+$SPLIT_LINE
+}${CTX_LINE:+$CTX_LINE
 }${ADR_LINE:+$ADR_LINE
 }${MODELS_LINE}.
 ${METRICS_LINE}.

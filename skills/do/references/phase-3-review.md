@@ -10,7 +10,7 @@ Per gate, on failure / warning, capture:
 
 | Gate | `details` shape |
 |---|---|
-| 3.0 PR Size | `{ "lines": <int>, "files": <int>, "thresholds_breached": ["lines"\|"files"\|both] }` |
+| 3.0 PR Size | `{ "lines": <int>, "files": <int>, "thresholds_breached": ["lines"\|"files"\|both]` + on BLOCK-with-auto-split `, "auto_split": { "parts": <k>, "branches": [...] }` (parts/branches filled by Phase 4.2) `}` |
 | 3.0.5 Dep Vuln | `{ "scanner": "<tool>", "findings": [{"severity","package","id"}], "threshold": "<level>" }` (cap at 10 findings; rest as `"truncated_count"`) |
 | 3.0.6 Public Docs | `{ "api_files_changed": [...], "missing_docs": [...] }` |
 | 3.1 Verify | per key `build`/`lint`/`test`: `{ "tell": "<that leg's per-command wrapper line(s), verbatim>" }`; on fail add `"failing_cmd"`, `"rc"`, `"self_report_mismatch": true\|false`; coverage misses add `"uncovered_branching_funcs": [...]` under `test` |
@@ -41,11 +41,13 @@ All strings truncated to `config.metrics.max_string_length` chars. Captured data
 | 3.6 Specialist Audit | High complexity AND `config.specialists.{backend_audit|frontend_audit|migration_audit}` set OR `config.codeowners` provides agent_map |
 | 3.7 Opus Review | Medium / High |
 
-All applicable gates must PASS before 3.6 / 3.7.
+All applicable gates must PASS before 3.6 / 3.7 — **except a `pr_size` BLOCK when auto-split is armed** (§3.0 below): the size verdict gates *delivery*, not *review*, so 3.6 / 3.7 still run on the full diff and the change is reviewed once as a unit before Phase 4.2 splits it into a stack of sub-cap PRs.
 
 ## 3.0 PR Size Guard — **decision comes from the `pr-size-check` wrapper, NOT your judgment**
 
 Measure the actual diff, then run the wrapper. Do NOT eyeball the numbers and decide PASS/WARN/BLOCK yourself — production shipped **8 PRs >2000 lines as `pr_size=warn`** because the orchestrator read "block → STOP" and treated it as advisory (anti-patterns §19f / §21). The wrapper owns the decision; **BLOCK exits 3 (a hard halt)**, so it cannot be narrated past.
+
+**BLOCK → auto-split by default (v0.11.0).** A BLOCK verdict means the change cannot ship as ONE PR. It is *never* downgraded to a single mergeable PR. But the default response is no longer "halt and ask the user to split" — it is to **split automatically in Phase 4.2** into a stack of individually-reviewable, sub-cap PRs (via the `pr-split` wrapper). Resolve `CFG_AUTO_SPLIT` from `config.pr_size.auto_split` (default `true`); `--no-split` in `$ARGUMENTS` or `auto_split:false` reverts to the pre-0.11 hard halt (draft PR + `blocked`, user splits manually). Auto-split sets `PR_SPLIT_REQUIRED=1` and **continues** the rest of Phase 3 on the full diff — it does NOT set `BLOCKED`, because the run ends `ready_for_review` with *k* open PRs, not blocked.
 
 ```bash
 DIFF_LINES=$(git -C "$WORKTREE_PATH" diff main...HEAD --numstat | awk '{a+=$1; d+=$2} END {print a+d+0}')   # total churn (added+deleted)
@@ -83,14 +85,28 @@ echo "$PR_SIZE_LINE"
 case "$PR_SIZE_LINE" in
   "Phase 3.0: PASS"*)  GATE_PR_SIZE_STATUS=pass ;;                         # proceed
   "Phase 3.0: WARN"*)  GATE_PR_SIZE_STATUS=warn; PR_SIZE_NOTE="$PR_SIZE_LINE" ;;  # note in PR desc (4.2), proceed
-  "Phase 3.0: BLOCK"*)                                                     # PR_SIZE_RC == 3 — HARD HALT
+  "Phase 3.0: BLOCK"*)                                                     # PR_SIZE_RC == 3 — cannot ship as ONE PR
     GATE_PR_SIZE_STATUS=block
-    # Do NOT proceed to the merge gate. Same escalation path as Phase 3.6 3-cycle exhaustion:
-    #   1. Push current state, create a DRAFT PR (`gh pr create --draft`, title prefixed `WIP:`)
-    #   2. File follow-up split issues (~N sub-issues per the wrapper's suggested count)
-    #   3. Apply the `blocked` label; comment the split proposal on the issue
-    #   4. Phase 4.11 metrics: gates.pr_size.status = "block"; OUTCOME = "blocked"
-    #   5. Tell user: "PR-size BLOCK: {PR_SIZE_LINE}. Draft PR: {url}. Split before merge."
+    if [ "${CFG_AUTO_SPLIT:-true}" != "false" ] && ! printf '%s' "$ARGUMENTS" | grep -qw -- '--no-split'; then
+      # DEFAULT: auto-split. Arm the flag and CONTINUE the rest of Phase 3 (the
+      # full change is reviewed as one unit here; Phase 4.2 splits DELIVERY into a
+      # stack of sub-cap PRs via `pr-split`). Do NOT set BLOCKED — outcome is
+      # ready_for_review with k open PRs. gates.pr_size.status stays "block" (the
+      # size genuinely blocked a single PR — telemetry stays honest); add
+      # details.auto_split = { requested: true } now, parts/branches filled in 4.2.
+      PR_SPLIT_REQUIRED=1
+      echo "Phase 3.0: BLOCK → auto-split armed — Phase 4.2 will open a stack of sub-cap PRs; continuing full-diff review."
+    else
+      # OPT-OUT (config.pr_size.auto_split:false OR --no-split): the pre-0.11 hard
+      # halt. Do NOT proceed to the merge gate. Same escalation path as the Phase
+      # 3.6 3-cycle exhaustion:
+      #   1. Push current state, create a DRAFT PR (`gh pr create --draft`, title prefixed `WIP:`)
+      #   2. File follow-up split issues (~N sub-issues per the wrapper's suggested count)
+      #   3. Apply the `blocked` label; comment the split proposal on the issue
+      #   4. Phase 4.11 metrics: gates.pr_size.status = "block"; OUTCOME = "blocked"
+      #   5. Tell user: "PR-size BLOCK: {PR_SIZE_LINE}. Draft PR: {url}. Split before merge."
+      BLOCKED=true; PR_SPLIT_REQUIRED=0
+    fi
     ;;
   "Phase 3.0: GATE ERROR"*)                                                # FAIL CLOSED
     GATE_PR_SIZE_STATUS=fail
@@ -106,7 +122,7 @@ esac
 
 **Why a wrapper, not inline threshold bash**: identical to the [plan-size-check §2.0](phase-2-implementation.md) lesson — the orchestrator reliably runs `$(wrapper)` + `case`, but reliably *fabricates* a plausible verdict from inline `if [ $lines -gt $block ]` it's told to evaluate itself. The wrapper output's `breached: [..]` list + `+N lines/+N files` overage are the anti-fabrication tell (computed from the real numbers); the non-zero BLOCK exit is the structural halt. Record the result in the metrics `gates.pr_size` entry: `{ "status": pass|warn|block, "details": { "lines": <int>, "files": <int>, "thresholds_breached": [...] } }`.
 
-> **`block` is not advisory.** If `pr-size-check` says BLOCK, the PR does not merge this run — it becomes a draft + `blocked` outcome and the user splits it. The plan was wrong, not the implementation (re-plan into smaller issues; Phase 2.0 plan-size-check should have caught it earlier).
+> **`block` is not advisory — but the default response is auto-split, not halt.** BLOCK means the change cannot ship as ONE PR; it never downgrades to a single mergeable PR (§19f/§21). By default Phase 4.2 splits it into a **stack of sub-cap PRs** (`pr-split` wrapper) and the run ends `ready_for_review` with *k* open PRs. With `config.pr_size.auto_split:false` or `--no-split` it reverts to the pre-0.11 hard halt (draft + `blocked`; user splits manually). Either way the plan was over-budget — Phase 2.0 plan-size-check should have said SPLIT-REQUIRED earlier; auto-split is the safety net, not a licence to plan huge.
 
 ## 3.0.5 Dep Vulnerability Scan
 Per `cache.package_manager`:

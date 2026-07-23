@@ -123,7 +123,8 @@ All other fields are optional; missing fields fall back to defaults documented b
     "warn_lines": 800,
     "warn_files": 20,
     "block_lines": 2000,
-    "block_files": 50
+    "block_files": 50,
+    "auto_split": true
   },
 
   "stale_main": {
@@ -275,8 +276,9 @@ After PR creation (Phase 4.2), enable auto-merge so PR merges automatically when
 Phase 3.0 (pre-gate) check via `git diff main...HEAD --shortstat`.
 - `warn_lines: 800` (default) — warn user, proceed
 - `warn_files: 20`
-- `block_lines: 2000` — STOP, suggest splitting into follow-up issues
+- `block_lines: 2000` — over this, the change cannot ship as ONE PR
 - `block_files: 50`
+- `auto_split: true` (default) — on a BLOCK, Phase 4.2.1 auto-splits delivery into a **stack of sub-cap PRs** (`pr-split` wrapper) each ≤ the WARN caps, reviewed once as a unit and merged in order; the run ends `ready_for_review` with *k* open PRs. Set `false` (or pass `--no-split`) to revert to the pre-0.11 hard halt: draft PR + `blocked` label, user splits manually.
 
 #### `stale_main`
 Phase 2 (before each implementation attempt) check via `git rev-list --count HEAD..origin/main`.

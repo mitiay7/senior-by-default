@@ -1,0 +1,328 @@
+#!/bin/bash
+# pr-split — the ONLY supported way to turn a Phase 3.0 PR-size BLOCK into a set
+# of stacked, individually-reviewable PRs (Phase 4.2 auto-split path). Wrapper,
+# not inline spec bash, for the same structural reasons as pr-size-check /
+# plan-size-check: the DECISION (how many parts, which files in each, and the
+# guarantee that each part's diff is under cap) must live outside the
+# orchestrator's judgment, and the branch construction is fiddly git plumbing
+# that spec bash reliably gets wrong.
+#
+# Why this exists: BLOCK used to be a hard halt — draft PR + `blocked` label +
+# "user, go split this". The user asked the pipeline to split automatically
+# instead of asking. Splitting a 4000-line change into N mergeable PRs without a
+# human is only SAFE as a STACK: part 1 branches off main, part i branches off
+# part i-1, and the LAST part's branch IS the fully-implemented tip branch B
+# (already reviewed by Phase 3 as one unit and already pushed by §4.1.2). Each
+# PR's diff AGAINST ITS BASE is exactly one file-group (≤ target cap, so it
+# passes the size gate and the PreToolUse hook); the tip of the stack is
+# byte-identical to B, so the cumulative change still builds. Merged in stack
+# order, main ends at B. GitHub auto-retargets a child PR's base to the
+# grandparent when the parent merges, so the stack collapses cleanly.
+#
+# This is NOT downgrading BLOCK to WARN (anti-patterns §19f/§21): the full change
+# still never ships as one over-cap PR. It ships as k sub-cap PRs.
+#
+# What the wrapper OWNS (so the orchestrator can't fabricate it):
+#   - the partition: next-fit bin-pack of changed files (in path order, for
+#     directory cohesion) into ordered groups, each ≤ --target-lines churn and
+#     ≤ --target-files files. A lone file bigger than the target is its own
+#     part (can't hunk-split a file across PRs) — reported, never silently merged.
+#   - construction of the local stacked branches for parts 1..k-1 in a throwaway
+#     worktree (parts built by overlaying B's content for each group; the tip B
+#     is the k-th part's head, reused as-is — no orphan branch, keeps its
+#     normalized feat/iN-slug name).
+#   - a hard correctness SELF-CHECK: every built part's diff-against-its-base
+#     equals exactly its file-group, AND base_{k-1}...B equals exactly the last
+#     group (so the union is complete and B is a valid stack tip). Any mismatch →
+#     SPLIT-FAILED, the wrapper touches nothing further, and the caller FALLS
+#     BACK to the old draft-PR + `blocked` path. Fail-safe, never fail-open.
+#
+# What the CALLER (Phase 4.2) does with the plan: push each part branch
+# (secret-scan already covered the full range on B in §4.1.2 — every part's
+# content is a subset of B's, so no new blob can appear) and open one PR per
+# part with --base set to the part's base. Never merges the stack automatically.
+#
+# Usage:
+#   pr-split --dir <worktree> --tip-branch <name> \
+#     [--base origin/main] \
+#     [--target-lines N] [--target-files N] \
+#     [--block-lines 2000] [--block-files 50] \
+#     [--commit-subject "<subject>"] [--plan-json <path>]
+#
+#   --target-lines / --target-files default to the block caps; Phase 4.2 passes
+#   the WARN caps so each part is a clean, review-sized PR (≈800 lines) rather
+#   than k barely-under-block monsters.
+#
+# Output (stdout) on success — the caller dispatches on the line prefixes:
+#   Phase 4.2: SPLIT-PLAN parts=<k> tip=<b> base=<ref> total_lines=<L> total_files=<F> plan_json=<path|-> [tell:<h>:<ck>]
+#   Phase 4.2: SPLIT-PART i=1/<k> branch=<b1>  base=<ref>  lines=<l> files=<f> push=yes
+#   Phase 4.2: SPLIT-PART i=2/<k> branch=<b2>  base=<b1>   lines=<l> files=<f> push=yes
+#   ...
+#   Phase 4.2: SPLIT-PART i=<k>/<k> branch=<tip> base=<b_{k-1}> lines=<l> files=<f> push=no
+#   Phase 4.2: SPLIT-OK built=<k-1> verified=exact-groups+tip-tree
+#
+# Exit codes:
+#   0  split built + verified; stdout carries the plan above
+#   3  SPLIT-FAILED — stdout/stderr: "Phase 4.2: SPLIT-FAILED — <reason>". Not an
+#      error in the pipeline sense: the caller falls back to draft PR + `blocked`
+#      (the pre-auto-split behavior). Reasons: <2 parts possible, a construction
+#      step failed, or the self-check did not confirm exact groups / tip tree.
+#   1  rejected (bad/missing arg, non-numeric value, unresolvable ref); stderr:
+#      "REJECT <reason>"
+
+set -euo pipefail
+
+die()   { echo "REJECT $*" >&2; exit 1; }
+failed(){ echo "Phase 4.2: SPLIT-FAILED — $*"; exit 3; }
+
+DIR=""
+TIP_BRANCH=""
+BASE="main"          # PR base-branch NAME for part 1 (e.g. main/master); also the ref root
+TARGET_LINES=""
+TARGET_FILES=""
+BLOCK_LINES=2000
+BLOCK_FILES=50
+COMMIT_SUBJECT=""
+PLAN_JSON=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dir)            DIR="$2";            shift 2 ;;
+    --tip-branch)     TIP_BRANCH="$2";     shift 2 ;;
+    --base)           BASE="$2";           shift 2 ;;
+    --target-lines)   TARGET_LINES="$2";   shift 2 ;;
+    --target-files)   TARGET_FILES="$2";   shift 2 ;;
+    --block-lines)    BLOCK_LINES="$2";    shift 2 ;;
+    --block-files)    BLOCK_FILES="$2";    shift 2 ;;
+    --commit-subject) COMMIT_SUBJECT="$2"; shift 2 ;;
+    --plan-json)      PLAN_JSON="$2";      shift 2 ;;
+    -h|--help)        sed -n '2,72p' "$0"; exit 0 ;;
+    *) die "unknown flag: $1" ;;
+  esac
+done
+
+[ -n "$DIR" ]        || die "--dir required (the worktree whose HEAD is the full change)"
+[ -d "$DIR" ]        || die "--dir not a directory: $DIR"
+[ -n "$TIP_BRANCH" ] || die "--tip-branch required (the normalized tip branch name)"
+git -C "$DIR" rev-parse --git-dir >/dev/null 2>&1 || die "--dir is not a git repo: $DIR"
+
+# Defaults for the packing target = the block caps (so a part is never itself a
+# BLOCK). Phase 4.2 overrides with the WARN caps for reviewable-sized parts.
+TARGET_LINES="${TARGET_LINES:-$BLOCK_LINES}"
+TARGET_FILES="${TARGET_FILES:-$BLOCK_FILES}"
+
+for pair in "TARGET_LINES=$TARGET_LINES" "TARGET_FILES=$TARGET_FILES" \
+            "BLOCK_LINES=$BLOCK_LINES" "BLOCK_FILES=$BLOCK_FILES"; do
+  v="${pair#*=}"
+  [[ "$v" =~ ^[0-9]+$ ]] || die "${pair%%=*} must be a non-negative integer, got: $v"
+done
+[ "$TARGET_LINES" -ge 1 ] || die "--target-lines must be ≥ 1"
+[ "$TARGET_FILES" -ge 1 ] || die "--target-files must be ≥ 1"
+
+TIP_SHA=$(git -C "$DIR" rev-parse --verify -q "$TIP_BRANCH^{commit}" 2>/dev/null \
+       || git -C "$DIR" rev-parse --verify -q "HEAD^{commit}" 2>/dev/null) \
+  || die "cannot resolve tip commit (tried $TIP_BRANCH and HEAD)"
+
+# Resolve the base ref (prefer the remote mirror `origin/<base>`, else the local
+# branch) and take the MERGE-BASE with the tip — the fork point. This is the
+# three-dot PR semantics Phase 3.0 measures (`main...HEAD`): if `main` advanced
+# during the task, a two-dot `origin/main HEAD` diff would wrongly report main's
+# new commits as reversed changes. Building the stack off the merge-base makes
+# each part's diff == exactly its file-group and part 1's `--base main` PR show
+# only its slice on GitHub.
+BASE_REF=$(git -C "$DIR" rev-parse --verify -q "origin/$BASE^{commit}" 2>/dev/null \
+        || git -C "$DIR" rev-parse --verify -q "$BASE^{commit}" 2>/dev/null) \
+  || die "cannot resolve base ref (tried origin/$BASE and $BASE)"
+BASE_SHA=$(git -C "$DIR" merge-base "$BASE_REF" "$TIP_SHA" 2>/dev/null || echo "$BASE_REF")
+
+# ── Gather changed files + per-file churn (NUL-safe; --no-renames so a rename is
+#    a delete+add pair, each with its own churn and its own group — no two-path
+#    -z rename records to parse). Binary files show '-' churn → counted as 0
+#    lines / 1 file. Parsed with `read -d ''` (bash 3.2 + zsh safe; no mapfile). ──
+# Two parallel 0-indexed arrays. This script runs under its `#!/bin/bash`
+# shebang (bash 3.2 on macOS — no mapfile -d, no assoc arrays), NOT the
+# orchestrator's interactive shell, so bash array semantics are guaranteed here;
+# the zsh-word-splitting concern of anti-patterns §25 applies to SPEC bash, not
+# to invoked wrapper scripts.
+PATHS=()
+CHURN=()
+while IFS= read -r -d '' rec; do
+  [ -n "$rec" ] || continue
+  adds="${rec%%$'\t'*}"; rest="${rec#*$'\t'}"
+  dels="${rest%%$'\t'*}"; p="${rest#*$'\t'}"
+  [ "$adds" = "-" ] && adds=0
+  [ "$dels" = "-" ] && dels=0
+  # Non-numeric guard (defensive; numstat is well-formed): treat as 0.
+  [[ "$adds" =~ ^[0-9]+$ ]] || adds=0
+  [[ "$dels" =~ ^[0-9]+$ ]] || dels=0
+  PATHS+=("$p")
+  CHURN+=("$(( adds + dels ))")
+done < <(git -C "$DIR" diff --numstat --no-renames -z "$BASE_SHA" "$TIP_SHA")
+
+N=${#PATHS[@]}
+[ "$N" -ge 1 ] || failed "no changed files between $BASE and tip — nothing to split"
+[ "$N" -ge 2 ] || failed "only 1 changed file (${PATHS[0]}) — a single file cannot be split across PRs without hunk-splitting; keep the draft-PR + blocked path"
+
+TOTAL_LINES=0; for c in "${CHURN[@]}"; do TOTAL_LINES=$(( TOTAL_LINES + c )); done
+TOTAL_FILES=$N
+
+# Files already arrive in path order from `git diff` (git sorts by path), which
+# groups same-directory files together for cohesion. Do not re-sort — that would
+# desync PATHS from CHURN.
+
+# ── Next-fit bin-pack into ordered groups. GROUP_OF[i] = 0-based part index for
+#    PATHS[i]. A file that alone exceeds the target still forms one part (its own
+#    bin); it is never packed WITH another file. ──
+GROUP_OF=()
+part=0
+cur_lines=0
+cur_files=0
+for ((i=0; i<N; i++)); do
+  c=${CHURN[$i]}
+  if [ "$cur_files" -gt 0 ] && { [ "$(( cur_lines + c ))" -gt "$TARGET_LINES" ] || [ "$(( cur_files + 1 ))" -gt "$TARGET_FILES" ]; }; then
+    part=$(( part + 1 ))
+    cur_lines=0
+    cur_files=0
+  fi
+  GROUP_OF+=("$part")
+  cur_lines=$(( cur_lines + c ))
+  cur_files=$(( cur_files + 1 ))
+done
+K=$(( part + 1 ))
+
+[ "$K" -ge 2 ] || failed "the change fits in one part at target ${TARGET_LINES}L/${TARGET_FILES}F (total ${TOTAL_LINES}L/${TOTAL_FILES}F) — nothing to split; not over cap under this target"
+
+# Per-part line/file tallies (for the plan lines + JSON).
+PART_LINES=(); PART_FILES=()
+for ((g=0; g<K; g++)); do PART_LINES+=(0); PART_FILES+=(0); done
+for ((i=0; i<N; i++)); do
+  g=${GROUP_OF[$i]}
+  PART_LINES[$g]=$(( ${PART_LINES[$g]} + ${CHURN[$i]} ))
+  PART_FILES[$g]=$(( ${PART_FILES[$g]} + 1 ))
+done
+
+# Part branch names: parts 1..k-1 are new stacked branches "<tip>-pN"; the k-th
+# part's head is the tip branch B itself (already pushed, already named).
+part_branch() {  # $1 = 0-based part index
+  local g="$1"
+  if [ "$g" -eq "$(( K - 1 ))" ]; then echo "$TIP_BRANCH"; else echo "${TIP_BRANCH}-p$(( g + 1 ))"; fi
+}
+
+# Clean any stale local part branches from a prior run of THIS tip (idempotent
+# re-runs: a previous SPLIT-FAILED or an aborted attempt may have left them).
+for ((g=0; g<K-1; g++)); do
+  b=$(part_branch "$g")
+  git -C "$DIR" branch -D "$b" >/dev/null 2>&1 || true
+done
+
+# ── Build parts 1..k-1 in a throwaway detached worktree. trap guarantees the
+#    worktree is removed even on error. Each part resets to its base, overlays
+#    its group's files from B (checkout for add/modify, rm for delete), commits. ──
+WT="$(mktemp -d "${TMPDIR:-/tmp}/pr-split.XXXXXX")" || die "mktemp failed"
+cleanup() {
+  git -C "$DIR" worktree remove --force "$WT" >/dev/null 2>&1 || true
+  rm -rf "$WT" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+git -C "$DIR" worktree add --quiet --detach "$WT" "$BASE_SHA" >/dev/null 2>&1 \
+  || failed "could not create scratch worktree at $BASE"
+
+prev_branch="$BASE"          # base for part 1 is the real base ref
+prev_ref="$BASE_SHA"
+built=0
+for ((g=0; g<K-1; g++)); do
+  b=$(part_branch "$g")
+  # Reset scratch worktree onto this part's base, as a fresh branch.
+  git -C "$WT" checkout -q -B "$b" "$prev_ref" 2>/dev/null \
+    || failed "checkout -B $b onto $prev_branch failed"
+
+  # Collect this group's add/modify vs delete paths.
+  am=(); del=()
+  for ((i=0; i<N; i++)); do
+    [ "${GROUP_OF[$i]}" -eq "$g" ] || continue
+    p="${PATHS[$i]}"
+    if git -C "$DIR" cat-file -e "$TIP_SHA:$p" 2>/dev/null; then am+=("$p"); else del+=("$p"); fi
+  done
+  if [ "${#am[@]}" -gt 0 ]; then
+    git -C "$WT" checkout "$TIP_SHA" -- "${am[@]}" 2>/dev/null \
+      || failed "overlay of ${#am[@]} file(s) into $b failed"
+  fi
+  if [ "${#del[@]}" -gt 0 ]; then
+    git -C "$WT" rm -q -- "${del[@]}" 2>/dev/null \
+      || failed "removing ${#del[@]} deleted file(s) in $b failed"
+  fi
+
+  git -C "$WT" add -A 2>/dev/null || failed "git add failed in $b"
+  msg="${COMMIT_SUBJECT:-split $TIP_BRANCH} (part $(( g + 1 ))/$K)"
+  # Allow-empty guard: if a group somehow produced no tree change the self-check
+  # below will catch it; commit normally here.
+  git -C "$WT" commit -q -m "$msg" 2>/dev/null \
+    || failed "commit failed for $b (empty group or index error)"
+
+  # SELF-CHECK: this part's diff against its base must be EXACTLY its group.
+  # if/then/fi (not `[ ] && printf`): under `pipefail`, a for-loop whose LAST
+  # iteration ends in a false test exits non-zero, and that would propagate
+  # through the `| sort` pipe and trip `set -e` on the assignment.
+  want=$(for ((i=0;i<N;i++)); do if [ "${GROUP_OF[$i]}" -eq "$g" ]; then printf '%s\n' "${PATHS[$i]}"; fi; done | LC_ALL=C sort)
+  got=$(git -C "$DIR" diff --name-only --no-renames "$prev_ref" "$b" 2>/dev/null | LC_ALL=C sort)
+  [ "$want" = "$got" ] || failed "part $(( g + 1 )) diff != its file-group (construction drift)"
+
+  prev_branch="$b"
+  prev_ref=$(git -C "$DIR" rev-parse --verify -q "$b^{commit}") || failed "cannot resolve built branch $b"
+  built=$(( built + 1 ))
+done
+
+# ── Final self-check: the last group must be EXACTLY base_{k-1}...B. If so, the
+#    union of all groups is complete and B is a valid stack tip (its tree is
+#    reached by overlaying the last group on the last built branch). ──
+last_want=$(for ((i=0;i<N;i++)); do if [ "${GROUP_OF[$i]}" -eq "$(( K - 1 ))" ]; then printf '%s\n' "${PATHS[$i]}"; fi; done | LC_ALL=C sort)
+last_got=$(git -C "$DIR" diff --name-only --no-renames "$prev_ref" "$TIP_SHA" 2>/dev/null | LC_ALL=C sort)
+[ "$last_want" = "$last_got" ] || failed "tip part diff != its file-group — union incomplete; tip is not a valid stack head"
+
+# Belt-and-braces: the built stack tip's tree, once the last group is overlaid,
+# is B by construction; assert base_{k-1}'s tree differs from B ONLY within the
+# last group (already implied by the name-only check above, which is exact).
+
+trap - EXIT
+cleanup   # remove scratch worktree; the part branches persist as refs
+
+# ── Emit the plan. Anti-fabrication tell mirrors plan-size-check: <head8> = tip
+#    short SHA (session-varying), <ck> = cksum over the derived shape. ──
+HEAD8=$(git -C "$DIR" rev-parse --short=8 "$TIP_SHA" 2>/dev/null || echo nogit)
+TELL_CK=$(printf '%s' "${K}:${TOTAL_LINES}:${TOTAL_FILES}:${TARGET_LINES}:${TARGET_FILES}:${HEAD8}" | cksum | cut -d' ' -f1)
+TELL="[tell:${HEAD8}:${TELL_CK}]"
+
+# Optional full JSON plan (file lists per part) for informative PR bodies.
+PLAN_JSON_OUT="-"
+if [ -n "$PLAN_JSON" ]; then
+  {
+    printf '{\n  "parts": %d,\n  "tip": "%s",\n  "base": "%s",\n  "total_lines": %d,\n  "total_files": %d,\n  "groups": [\n' \
+      "$K" "$TIP_BRANCH" "$BASE" "$TOTAL_LINES" "$TOTAL_FILES"
+    for ((g=0; g<K; g++)); do
+      b=$(part_branch "$g")
+      if [ "$g" -eq 0 ]; then pbase="$BASE"; else pbase=$(part_branch "$(( g - 1 ))"); fi
+      printf '    { "part": %d, "branch": "%s", "base": "%s", "lines": %d, "files": %d, "paths": [' \
+        "$(( g + 1 ))" "$b" "$pbase" "${PART_LINES[$g]}" "${PART_FILES[$g]}"
+      first=1
+      for ((i=0; i<N; i++)); do
+        [ "${GROUP_OF[$i]}" -eq "$g" ] || continue
+        esc=$(printf '%s' "${PATHS[$i]}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        [ "$first" -eq 1 ] && first=0 || printf ', '
+        printf '"%s"' "$esc"
+      done
+      if [ "$g" -eq "$(( K - 1 ))" ]; then printf '] }\n'; else printf '] },\n'; fi
+    done
+    printf '  ]\n}\n'
+  } > "$PLAN_JSON" 2>/dev/null && PLAN_JSON_OUT="$PLAN_JSON"
+fi
+
+echo "Phase 4.2: SPLIT-PLAN parts=$K tip=$TIP_BRANCH base=$BASE total_lines=$TOTAL_LINES total_files=$TOTAL_FILES plan_json=$PLAN_JSON_OUT $TELL"
+for ((g=0; g<K; g++)); do
+  b=$(part_branch "$g")
+  if [ "$g" -eq 0 ]; then pbase="$BASE"; else pbase=$(part_branch "$(( g - 1 ))"); fi
+  if [ "$g" -eq "$(( K - 1 ))" ]; then push="no"; else push="yes"; fi
+  echo "Phase 4.2: SPLIT-PART i=$(( g + 1 ))/$K branch=$b base=$pbase lines=${PART_LINES[$g]} files=${PART_FILES[$g]} push=$push"
+done
+echo "Phase 4.2: SPLIT-OK built=$built verified=exact-groups+tip-tree"
+exit 0

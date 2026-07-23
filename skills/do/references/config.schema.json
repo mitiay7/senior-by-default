@@ -251,7 +251,8 @@
         "warn_lines":  { "type": "integer", "minimum": 0 },
         "warn_files":  { "type": "integer", "minimum": 0 },
         "block_lines": { "type": "integer", "minimum": 0 },
-        "block_files": { "type": "integer", "minimum": 0 }
+        "block_files": { "type": "integer", "minimum": 0 },
+        "auto_split":  { "type": "boolean", "description": "On a Phase 3.0 BLOCK, split delivery into a stack of sub-cap PRs (Phase 4.2.1) instead of halting. Default true; false reverts to the pre-0.11 draft-PR + blocked hard halt. Per-run override: --no-split." }
       }
     },
 

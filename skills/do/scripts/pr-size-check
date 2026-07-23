@@ -27,13 +27,17 @@
 # Output (stdout, exactly one line — dispatch the spec's `case` on the prefix):
 #   Phase 3.0: PASS — N lines / N files within warn caps (warn WL/WF · block BL/BF)
 #   Phase 3.0: WARN — N lines / N files over warn (WL/WF); breached: [..]; note in PR, proceed
-#   Phase 3.0: BLOCK — N lines / N files over block (BL/BF) by +Lo lines/+Fo files; breached: [..]; STOP, split
+#   Phase 3.0: BLOCK — N lines / N files over block (BL/BF) by +Lo lines/+Fo files; breached: [..]; cannot ship as ONE PR — auto-split (§4.2.1) or --no-split halt
 #
 # Exit codes:
 #   0  PASS or WARN — proceed (WARN ⇒ add the PR-size note to the PR description)
-#   3  BLOCK — HARD HALT. Do NOT proceed to the merge gate. Push current state as a
-#      draft PR, file follow-up split issues, apply the `blocked` label (same path
-#      as the Phase 3.6 3-cycle escalation). The plan was wrong, not the impl.
+#   3  BLOCK — the change cannot ship as ONE PR. Exit 3 forces the spec's `case`
+#      to dispatch (cannot be narrated past); it does NOT dictate the response.
+#      Default (config.pr_size.auto_split, on): Phase 4.2.1 auto-splits delivery
+#      into a stack of sub-cap PRs via the `pr-split` wrapper. Opt-out
+#      (auto_split:false / --no-split): the pre-0.11 hard halt — draft PR, file
+#      follow-up split issues, apply the `blocked` label (same path as the Phase
+#      3.6 3-cycle escalation). Either way the plan was over-budget, not the impl.
 #   1  rejected (bad/missing arg, non-numeric value); stderr: "REJECT <reason>"
 
 set -euo pipefail
@@ -82,7 +86,7 @@ breached() {
 if [ "$LINES" -gt "$BLOCK_LINES" ] || [ "$FILES" -gt "$BLOCK_FILES" ]; then
   LINES_OVER=$(( LINES > BLOCK_LINES ? LINES - BLOCK_LINES : 0 ))
   FILES_OVER=$(( FILES > BLOCK_FILES ? FILES - BLOCK_FILES : 0 ))
-  echo "Phase 3.0: BLOCK — $LINES lines / $FILES files over block ($BLOCK_LINES/$BLOCK_FILES) by +$LINES_OVER lines/+$FILES_OVER files; breached: $(breached "$BLOCK_LINES" "$BLOCK_FILES"); STOP — split into sub-issues, draft PR + 'blocked' label, do NOT merge."
+  echo "Phase 3.0: BLOCK — $LINES lines / $FILES files over block ($BLOCK_LINES/$BLOCK_FILES) by +$LINES_OVER lines/+$FILES_OVER files; breached: $(breached "$BLOCK_LINES" "$BLOCK_FILES"); cannot ship as ONE PR — default auto-split into a stack of sub-cap PRs (Phase 4.2.1), or draft PR + 'blocked' with --no-split."
   exit 3
 fi
 
