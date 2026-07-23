@@ -55,7 +55,8 @@ Do NOT preload. Read each only when its trigger fires.
 | When | Read |
 |---|---|
 | **Phase 0** (setup, routing, complexity, sanity checks) | [`references/phase-0-setup.md`](references/phase-0-setup.md) |
-| Reading or writing `.claude/do/config.json` | [`references/config-schema.md`](references/config-schema.md) |
+| Reading `.claude/do/config.json` (steady-state — location, path resolution, field semantics, defaults) | [`references/config-schema.md`](references/config-schema.md) |
+| Creating / initializing / editing a config (Phase 0 auto-init, hand-authoring — full annotated schema, JSONL entry shape, examples) | [`references/config-authoring.md`](references/config-authoring.md) |
 | Validating config on load | [`references/config-validation.md`](references/config-validation.md) |
 | Stack detection or cache I/O | [`references/stack-detection.md`](references/stack-detection.md) |
 | Any tracker operation | [`references/trackers.md`](references/trackers.md) |

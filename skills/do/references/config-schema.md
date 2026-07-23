@@ -1,9 +1,11 @@
-# do.config.json schema
+# do.config.json schema — read path
+
+Runtime reference for **reading** an existing `.claude/do/config.json`: where it lives, how paths resolve, what each field means, and the no-config defaults. **Creating or editing a config** (Phase 0 auto-init, hand-authoring a whole file) → read [`config-authoring.md`](config-authoring.md) instead — it carries the full annotated schema, the telemetry JSONL entry shape, and example configs. The machine-readable source of truth is [`config.schema.json`](config.schema.json).
 
 ## Location & discovery
-Place at `<workspace_or_repo_root>/.claude/do/config.json`. The skill walks up from CWD to find the first match. None found → use defaults below.
+Place at `<workspace_or_repo_root>/.claude/do/config.json`. The skill walks up from CWD to find the first match. None found → use the defaults below (and Phase 0 auto-init offers to write one — see [`config-authoring.md`](config-authoring.md)).
 
-The skill **reads but never writes** config. Hand-edited.
+The skill **reads but never writes** config on a normal run. Hand-edited (or written once by auto-init).
 
 Validate with [`config-validation.md`](config-validation.md) on every load.
 
@@ -18,196 +20,9 @@ All path-bearing fields (`context_doc.path`, `tech_debt_doc`, `lessons_doc`, `i1
 
 Validators (Phase 0 Step 1) and runtime path checks MUST apply this rule consistently.
 
-## Full schema
-
-**No fields are strictly required.** `version` is *recommended* — it identifies the schema version. If omitted, validators default to `1` and emit a warning (back-compat for early hand-written configs). Explicit mismatches (`version: 2` against this schema) are hard failures.
-
-All other fields are optional; missing fields fall back to defaults documented below. The JSON Schema in [`config.schema.json`](config.schema.json) reflects this — `version` is **not** in the schema's `required` array.
-
-```json
-{
-  "version": 1,
-
-  "workspace": {
-    "is_workspace": true,
-    "repos": {
-      "<repo-key>": {
-        "path": "/abs/path/to/repo",
-        "scope_keywords": ["..."]
-      }
-    }
-  },
-
-  "issue_tracker": {
-    "type": "github" | "gitlab" | "none" | "custom",
-    "repo": "owner/repo",
-    "required_labels": ["..."],
-    "optional_labels": ["..."],
-    "domain_labels": ["..."],
-    "commands": { "list_open": "...", "create": "...", "view_body": "...", "edit_body": "...", "comment": "...", "view_url": "...", "close_keyword": "Closes" }
-  },
-
-  "context_doc": {
-    "path": "/abs/or/rel/path/AGENT_CONTEXT.md",
-    "sections": { "current_state": 6, "structure": 4, "deployment": 11, "constraints": 12 },
-    "required_for_finalize": true,
-    "allow_main_push": false
-  },
-
-  "tech_debt_doc": "/abs/or/rel/path/tech-debt.md",
-
-  "i18n": {
-    "fn": "t",
-    "locale_files": ["path/to/en.json", "path/to/ru.json"],
-    "ui_extensions": [".tsx", ".jsx"]
-  },
-
-  "ui_gate": {
-    "infra_cmd": "make up",
-    "dev_cmd": "pnpm dev",
-    "url": "http://localhost:3000",
-    "login_script": "/abs/path/login.sh"
-  },
-
-  "contract_gate": {
-    "frontend_types_path": "packages/shared/src/api/",
-    "backend_handlers_path": "internal/api/"
-  },
-
-  // Default preset written by config-init (its jq literal is the source of truth;
-  // auto-init filters entries against installed plugins). Shown in full because a
-  // 2026-07 audit misread the placeholder version and recommended removing an agent
-  // from a preset it was never in — document reality, not shapes:
-  "specialists": {
-    "backend_plan":    ["backend-development:backend-architect", "backend-development:security-auditor", "database-design:database-architect"],
-    "frontend_plan":   ["ui-design:design-system-architect", "ui-design:ui-designer", "javascript-typescript:typescript-pro"],
-    "backend_audit":   ["code-refactoring:code-reviewer", "backend-development:backend-architect", "backend-development:security-auditor"],
-    "frontend_audit":  ["code-refactoring:code-reviewer", "ui-design:ui-designer", "pr-review-toolkit:silent-failure-hunter", "ui-design:accessibility-expert"],
-    "migration_audit": ["database-design:database-architect"]
-  },
-
-  "naming": {
-    "low":   { "worktree_suffix": "do-{slug}",   "branch": "feat/{slug}" },
-    "issue": { "worktree_suffix": "i{N}",        "branch": "feat/i{N}-{slug}", "ref_format": "i{N}" }
-  },
-
-  "issue_locale": "en" | "ru" | "ja" | "ko" | "pt-BR" | ...,   // any ^[a-z]{2}(-[A-Z]{2})?$ code — pattern, not an enum
-
-  "worktree": {
-    "base": "/abs/path/parent",
-    "cleanup_cmd": "/abs/script.sh done {repo} {suffix}"
-  },
-
-  "memory_path": "auto" | "/abs/path/MEMORY.md",
-
-  "acceptance_extensions": [
-    { "trigger_keywords": ["..."], "criterion": "..." }
-  ],
-
-  "ci": {
-    "required": true,
-    "wait_command": "gh pr checks {N} --watch --interval 30",
-    "status_command": "gh pr checks {N} --required",
-    "timeout_seconds": 1800,
-    "fail_action": "block"
-  },
-
-  "auto_merge": {
-    "enabled": false,
-    "method": "squash" | "merge" | "rebase",
-    "delete_branch": true,
-    "command": "gh pr merge {N} --auto --{method}"
-  },
-
-  "pr_size": {
-    "warn_lines": 800,
-    "warn_files": 20,
-    "block_lines": 2000,
-    "block_files": 50,
-    "auto_split": true
-  },
-
-  "stale_main": {
-    "warn_commits_behind": 20,
-    "block_commits_behind": 50,
-    "auto_rebase": false
-  },
-
-  "self_review": {
-    "enabled": true
-  },
-
-  "codeowners": {
-    "enabled": true,
-    "paths": [".github/CODEOWNERS", ".gitlab/CODEOWNERS", "docs/CODEOWNERS"],
-    "agent_map": { "@team-frontend": "ui-design:ui-designer", "@team-platform": "backend-development:backend-architect" }
-  },
-
-  "wip_limit": null,
-
-  "concurrent_edit_check": {
-    "enabled": true,
-    "lookback_days": 7
-  },
-
-  "feature_flags": {
-    "system": "launchdarkly" | "growthbook" | "unleash" | "env" | "custom",
-    "registry_path": "config/flags.json",
-    "naming_convention": "snake_case",
-    "default_state": "off",
-    "required_for_scopes": ["frontend", "fullstack"]
-  },
-
-  "adr": {
-    "dir": "docs/adr/",
-    "min_complexity": "high",
-    "template_path": null,
-    "filename_format": "{NNNN}-{slug}.md"
-  },
-
-  "affected_graph": {
-    "tool": "nx" | "turbo" | "auto",
-    "base_ref": "origin/main",
-    "test_command_override": null,
-    "lint_command_override": null
-  },
-
-  "security_scan": {
-    "enabled": true,
-    "threshold": "low" | "moderate" | "high" | "critical",
-    "command_override_by_pm": { "npm": "...", "go": "...", "cargo": "..." }
-  },
-
-  "notifications": {
-    "slack_webhook": "https://hooks.slack.com/services/...",
-    "teams_webhook": null,
-    "events": ["task_started", "task_blocked", "task_completed"],
-    "templates": { "task_started": "...", "task_blocked": "...", "task_completed": "..." }
-  },
-
-  "public_docs_dir": "docs/api/",
-
-  "lessons_doc": "docs/lessons.md",
-
-  "metrics": {                                            // or null = explicit opt-out (nullable like ui_gate)
-    "log_path": "~/.claude/do/metrics/{repo_slug}.jsonl", // or null = keep block, disable JSONL emission
-    "include_phase_durations": true,
-    "tier": 1,
-    "capture_failure_details": true,
-    "capture_self_review_calibration": true,
-    "capture_specialist_iterations": true,
-    "max_string_length": 500
-  },
-
-  "postmortem": {
-    "trigger_keywords": ["incident", "regression", "postmortem", "outage", "p0", "p1"],
-    "branch_prefixes": ["fix/", "hotfix/"],
-    "template_path": null
-  }
-}
-```
-
 ## Field semantics
+
+The full annotated JSON shape of every field lives in [`config-authoring.md`](config-authoring.md) §"Full schema"; below is what each field *means* when the skill reads it. **No field is strictly required** — `version` is recommended (validators default to `1` + warn if omitted; an explicit `version: 2` mismatch is a hard failure), every other field is optional and falls back to the defaults documented here.
 
 ### Core (universal)
 
@@ -226,7 +41,7 @@ Sonnet reads it before exploring. `sections` = name → number-or-anchor map. `r
 Each enables the corresponding Phase 3 gate. Omit → gate skipped.
 
 #### `specialists`
-`subagent_type` lists for parallel review. Omit → Opus inline review fallback. A CONFIGURED entry whose plugin is unavailable at spawn time also falls back to Opus inline — per seat, announced, never Sonnet (audit #9; [`phase-2-implementation.md`](phase-2-implementation.md) Plan Review, [`phase-3-review.md`](phase-3-review.md) §3.6). Auto-init writes only entries verified against `~/.claude/plugins/installed_plugins.json` ([`phase-0-setup.md`](phase-0-setup.md) Step 4).
+`subagent_type` lists for parallel review. Omit → Opus inline review fallback. A CONFIGURED entry whose plugin is unavailable at spawn time also falls back to Opus inline — per seat, announced, never Sonnet (audit #9; [`phase-2-implementation.md`](phase-2-implementation.md) Plan Review, [`phase-3-review.md`](phase-3-review.md) §3.6). Auto-init writes only entries verified against `~/.claude/plugins/installed_plugins.json` ([`phase-0-setup.md`](phase-0-setup.md) Step 4). The full default preset is shown in [`config-authoring.md`](config-authoring.md) §"Full schema".
 
 #### `naming`
 Branch/worktree/ref formats. Defaults match `i{N}` convention. Override for Linear / Jira / etc.
@@ -356,7 +171,7 @@ Phase 3 check: if diff modifies public API surface AND `public_docs_dir` exists,
 Phase 4.10: optional prompt "Anything surprising worth recording?" → append to this doc.
 
 #### `metrics`
-Phase 4: append per-task JSONL entry to `log_path`. For DORA-ish self-analysis + skill evolution feedback loop.
+Phase 4: append per-task JSONL entry to `log_path`. For DORA-ish self-analysis + skill evolution feedback loop. The full Tier-1 entry shape (and the gate-vocabulary rules) live in [`config-authoring.md`](config-authoring.md) §"Telemetry JSONL entry schema"; the `metrics-append` wrapper owns and enforces it.
 
 Two documented opt-outs, both schema-valid (nullable like `ui_gate`):
 - `metrics: null` — explicit opt-out; `config-ensure-metrics` respects the null and never re-patches the default preset in
@@ -369,95 +184,6 @@ Two documented opt-outs, both schema-valid (nullable like `ui_gate`):
 - `capture_self_review_calibration` — Phase 2.5 self-review claims are recorded; Phase 3 outcomes are compared; calibration computed: `accurate` (claim matched reality), `false_positive` (claimed clean, Phase 3 found issues), `false_negative` (claimed issues, Phase 3 found none). Recorded in **three** dimensions: `calibration` (legacy combined, back-compat), `calibration_defect` (real CODE defect missed — the de-confounded primary signal), and `calibration_size` (diff-size prediction; `n_a` when pr_size gate didn't run). The split exists because ~39% of historical `false_positive` entries fired ONLY `pr_size=warn` — diff-size noise, not code defects. All three verdicts are computed **inside the `metrics-append` wrapper** from the raw inputs (gates, claimed status, specialist blockers, `size_assessment`, rebump flag) — hand-passed `--sr-calibration*` flags are optional cross-checks that hard-REJECT on contradiction. See [`phase-4-finalize.md`](phase-4-finalize.md) §4.11 "Calibration logic".
 - `capture_specialist_iterations` — High-complexity Phase 3.6 records each cycle's auditors / approvers / blockers with file:line citations
 - `max_string_length` — truncate captured strings (error messages, code snippets) at this length to keep JSONL parseable
-
-JSONL entry schema (Tier 1):
-```json
-{
-  "ref": "i42",
-  "title": "...",
-  "started_at": "ISO8601",
-  "ended_at": "ISO8601",
-  "complexity": "M",
-  "scope": "Frontend|Backend|Fullstack",
-  "implementer": "sonnet|opus|haiku",
-  "models": {
-    "orchestrator": "opus",
-    "implementer": "sonnet|opus|haiku",
-    "specialists": ["backend-development:backend-architect", "code-refactoring:code-reviewer"]
-  },
-  "files_changed": 7,
-  "lines_added": 320,
-  "lines_deleted": 45,
-  "phase_durations_seconds": {"0": 12, "1": 40, "2": 900, "3": 180, "4": 60},
-  "review_cycles": 1,
-  "gates": {
-    "test": { "status": "pass" },
-    "i18n": {
-      "status": "fail",
-      "fix_cycle": 1,
-      "details": { "unwrapped_count": 4, "locale_drift": { "ru.json": ["users.greeting"] } }
-    },
-    "contract": {
-      "status": "fail",
-      "fix_cycle": 1,
-      "details": { "mismatches": [{ "endpoint": "/api/users", "field": "createdAt", "be": "time.Time", "fe": "number" }] }
-    },
-    "pr_size": { "status": "warn", "details": { "lines": 950, "files": 12 } },
-    "dep_vuln": { "status": "pass" },
-    "ui_gate": { "status": "skipped", "skip_reason": "infra_unavailable" }
-  },
-  "self_review": {
-    "performed": true,
-    "claimed_status": "ready",
-    "calibration": "false_positive",
-    "calibration_defect": "false_positive",
-    "calibration_size": "n_a",
-    "miscalibrated": ["AC2: claimed implemented; Phase 3.3 found 4 unwrapped strings"]
-  },
-  "specialist_iterations": [
-    {
-      "cycle": 1,
-      "auditors": ["backend-architect", "security-auditor"],
-      "approvers": ["backend-architect"],
-      "blockers": [
-        { "agent": "security-auditor", "category": "input_validation", "file_line": "internal/api/users.go:42", "summary": "Unbounded query allows resource exhaustion" }
-      ]
-    },
-    { "cycle": 2, "auditors": ["..."], "approvers": ["backend-architect", "security-auditor"], "blockers": [] }
-  ],
-  "ci_status": "green|red|skipped",
-  "auto_merge": false,
-  "outcome": "merged|ready_for_review|blocked",
-  "blocked_reason": null,
-  "complexity_rebumped_from": "M"   // OPTIONAL — present only when Phase 2.0 plan-size sanity check
-                                    // re-routed the task to a higher tier. Value = original tier
-                                    // before bump (T|L|M). Absent in entries where no re-bump
-                                    // happened (the common case). Use this to measure plan-size-
-                                    // check effectiveness — count of T→H / L→H / M→H entries
-                                    // over time tells whether Phase 0 routing accuracy is
-                                    // improving or plan-size is the load-bearing layer.
-}
-```
-
-**Gate keys are a controlled vocabulary.** The `gates` object's keys are normalized by
-the `metrics-append` wrapper to a canonical set (`build`, `lint`, `type_check`, `test`,
-`dep_vuln`, `pr_size`, `i18n`, `contract`, `ui_gate`, `migration_audit`,
-`specialist_audit`, `opus_review`, `public_docs`, `secret_scan`, `diff_scan`,
-`plan_size`, `codeowners`, `stale_main`, `concurrent_edit`). Common aliases
-(`tests`→`test`, `i18n_gate`→`i18n`, `ui`/`visual_verify`/`visual_smoke`→`ui_gate`,
-`dep_vuln_go`/`dep_vuln_pnpm`→`dep_vuln`, `type-check`/`lint_typecheck`→`type_check`,
-`go_vet`/`vet`→`lint`, …) are renamed automatically; gate statuses coerce to
-`pass`|`warn`|`fail`|`block`|`skipped`. Keys with no canonical home (task-specific
-ad-hoc checks) are preserved verbatim but flagged in the wrapper's `noncanon=` output.
-See [`phase-4-finalize.md`](phase-4-finalize.md) §4.11 "Gate vocabulary" for the full
-mapping and rationale. **Confounder warning for cross-cohort analysis:** the specialist
-plugins were installed mid-stream (≈2026-05-17), so `false_positive`/`self_review`
-calibration rates are NOT comparable across that boundary — pre-install cohorts had zero
-specialist review, hence mechanically fewer findings. Segment any FP-rate trend on the
-install date; see the `self_review` calibration split (`calibration_defect` /
-`calibration_size`) for the de-confounded signal.
-
-Set tier=0 to revert to lean metrics (just outcome + per-gate pass/fail/skip booleans).
 
 #### `postmortem`
 Phase 0 detection: if `$ARGUMENTS` matches `trigger_keywords` OR branch matches `branch_prefixes` → suggest postmortem template addition to issue body / link to a separate `/postmortem` skill.
@@ -472,16 +198,7 @@ Override either array to customize. Set `trigger_keywords: []` AND `branch_prefi
 ## Defaults if no config
 
 - Single-repo: CWD must be inside a git repo
-- All Phase 1-4 features above: skipped or use built-in defaults (CI gate OFF (opt-in only — most setups have no cloud CI), auto-merge OFF, self-review ON, PR-size guard ON with shown thresholds, stale-main check ON with shown thresholds (warn 20 / block 50 — Phase 2.0.5 applies them whether or not `stale_main` is configured), CODEOWNERS routing ON if file exists, WIP limit OFF (opt-in only), concurrent-edit check ON, security scan ON with threshold "high", everything else OFF)
+- All Phase 1-4 features above: skipped or use built-in defaults (CI gate OFF (opt-in only — most setups have no cloud CI), auto-merge OFF, self-review ON, PR-size guard ON with the `pr_size` thresholds above (warn 800/20, block 2000/50), stale-main check ON with the `stale_main` thresholds above (warn 20 / block 50 — Phase 2.0.5 applies them whether or not `stale_main` is configured), CODEOWNERS routing ON if file exists, WIP limit OFF (opt-in only), concurrent-edit check ON, security scan ON with threshold "high", everything else OFF)
 - Acceptance extensions: none
 - Issue locale: en
 - Memory path: auto
-
-## Examples
-
-Live at repo root, not inside the skill (paths assume the plugin layout `<plugin>/skills/do/references/`):
-
-- [`multi-repo-go-react-config.json`](../../../examples/multi-repo-go-react-config.json) — full multi-repo workspace (Go + React + docs)
-- [`minimal-config.json`](../../../examples/minimal-config.json) — single-repo + GitHub
-- [`python-fastapi-config.json`](../../../examples/python-fastapi-config.json) — Python + Alembic
-- [`rust-workspace-config.json`](../../../examples/rust-workspace-config.json) — Rust + GitLab
