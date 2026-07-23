@@ -147,6 +147,118 @@ LINES_DELETED=""
 SR_PERFORMED=""
 SR_CLAIMED=""
 
+# --- Amend mode (`--amend-tokens` as the FIRST argument) -------------------
+# Adds a `tokens` object to an EXISTING entry — the write half of the token
+# accounting loop. The only sanctioned caller is the opt-in Stop hook
+# `do-tokens-stop-amend.sh` (references/hooks.md), which sums harness-recorded
+# `message.usage` objects from the session transcript; operators may also call
+# it by hand when they hold a genuine harness readout. Same estimate ban as
+# --tokens-in/--tokens-out on append.
+#
+# Deliberately narrow: amends ONLY an absent `tokens` key on the LAST entry
+# matching --ref (the entry this run just appended — refs repeat across
+# re-runs of the same issue, so "last" is the current run's). An entry that
+# already has tokens REJECTs — amend is enrich-once, never overwrite; every
+# other field is untouchable by construction (the rewrite is verified to
+# change nothing but the tokens key).
+#
+#   metrics-append --amend-tokens --log <path> --ref <ref> \
+#     [--tokens-in <N>] [--tokens-out <N>]     # at least one required
+#
+# Exit codes match append: 0 = amended + content-verified, stdout
+# "OK amended ref=<ref> path=<log> in=<N|-> out=<N|->"; 1 REJECT; 2 IOFAIL.
+if [ "${1:-}" = "--amend-tokens" ]; then
+  shift
+  A_LOG=""; A_REF=""; A_TIN=""; A_TOUT=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --log)        A_LOG="$2";  shift 2 ;;
+      --ref)        A_REF="$2";  shift 2 ;;
+      --tokens-in)  A_TIN="$2";  shift 2 ;;
+      --tokens-out) A_TOUT="$2"; shift 2 ;;
+      *) die "amend: unknown arg: $1 (amend mode accepts only --log --ref --tokens-in --tokens-out)" ;;
+    esac
+  done
+  [ -n "$A_LOG" ] || die "amend: --log required"
+  # shellcheck disable=SC2088  # matching the LITERAL quoted tilde is the point (audit #18c)
+  case "$A_LOG" in
+    "~")   A_LOG="$HOME" ;;
+    "~/"*) A_LOG="$HOME/${A_LOG#\~/}" ;;
+  esac
+  [ -f "$A_LOG" ] || die "amend: log not found: $A_LOG (amend never creates a log — nothing to amend)"
+  [ -n "$A_REF" ] || die "amend: --ref required"
+  [ -n "$A_TIN$A_TOUT" ] || die "amend: at least one of --tokens-in/--tokens-out required"
+  [ -z "$A_TIN" ]  || [[ "$A_TIN"  =~ ^[0-9]+$ ]] || die "amend: --tokens-in must be a non-negative int (harness-reported usage only; never estimate), got: $A_TIN"
+  [ -z "$A_TOUT" ] || [[ "$A_TOUT" =~ ^[0-9]+$ ]] || die "amend: --tokens-out must be a non-negative int (harness-reported usage only; never estimate), got: $A_TOUT"
+
+  # Same mkdir lock as the append path below (see that block for the full
+  # rationale: atomic on every POSIX FS, stale-break at ≥60s). The whole
+  # read-modify-write runs under it so wrapper writers can't interleave.
+  A_LOCK="$A_LOG.lock"
+  A_WAITED=0
+  until mkdir "$A_LOCK" 2>/dev/null; do
+    if [ "$A_WAITED" -ge 100 ]; then
+      A_MTIME=$(stat -f %m "$A_LOCK" 2>/dev/null) \
+        || A_MTIME=$(stat -c %Y "$A_LOCK" 2>/dev/null) \
+        || A_MTIME=0
+      case "$A_MTIME" in *[!0-9]*|"") A_MTIME=0 ;; esac
+      if [ "$(( $(date +%s) - A_MTIME ))" -ge 60 ]; then
+        echo "NOTE lock: breaking stale lock $A_LOCK (mtime ≥60s old — holder crashed)" >&2
+        rmdir "$A_LOCK" 2>/dev/null || true
+        continue
+      fi
+      iofail "amend: could not acquire lock $A_LOCK after 10s (a live metrics-append holds it; if no writer is running, rmdir it)"
+    fi
+    A_WAITED=$((A_WAITED + 1))
+    sleep 0.1
+  done
+  trap 'rmdir "$A_LOCK" 2>/dev/null' EXIT
+
+  # Locate the LAST line whose .ref matches. Malformed lines are skipped, not
+  # fatal (same tolerance as metrics-report — one corrupt line must not kill
+  # the amend). Line numbers are 1-based over the RAW file so the awk rewrite
+  # below addresses exactly the bytes we read.
+  A_LN=0; A_LINE=""; A_CUR=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    A_CUR=$((A_CUR + 1))
+    r=$(printf '%s' "$line" | jq -r '.ref // empty' 2>/dev/null) || continue
+    if [ "$r" = "$A_REF" ]; then A_LN=$A_CUR; A_LINE="$line"; fi
+  done < "$A_LOG"
+  [ "$A_LN" -gt 0 ] || die "amend: no entry with ref=$A_REF in $A_LOG"
+  if printf '%s' "$A_LINE" | jq -e 'has("tokens")' >/dev/null 2>&1; then
+    die "amend: tokens already recorded for ref=$A_REF (last matching entry) — amend is enrich-once, never overwrite"
+  fi
+
+  A_AMENDED=$(printf '%s' "$A_LINE" | jq -c \
+    --arg tin "$A_TIN" --arg tout "$A_TOUT" \
+    '. + {tokens: ((if $tin  == "" then {} else {"in":  ($tin  | tonumber)} end)
+                 + (if $tout == "" then {} else {"out": ($tout | tonumber)} end))}') \
+    || die "amend: target line is not valid JSON (ref=$A_REF line=$A_LN) — refusing to rewrite"
+  # Invariant check: the amended line differs from the original ONLY in tokens.
+  jq -en --argjson a "$A_AMENDED" --argjson b "$A_LINE" \
+    '($a | del(.tokens)) == $b and ($a.tokens | (type=="object") and (length>0)
+      and ((keys - ["in","out"]) | length == 0) and all(.[]; type=="number"))' >/dev/null \
+    || die "amend: internal invariant failed (amended entry would change more than tokens) — please report"
+
+  # Rewrite in place via same-dir temp + mv (atomic on POSIX). The line count
+  # must be unchanged and the amended line present before the swap — any
+  # mismatch aborts with the original file untouched.
+  A_TMP="$A_LOG.amend.$$"
+  awk -v n="$A_LN" -v repl="$A_AMENDED" 'NR==n{print repl; next}{print}' "$A_LOG" > "$A_TMP" \
+    || { rm -f "$A_TMP"; iofail "amend: rewrite to $A_TMP failed"; }
+  A_PRE=$(grep -c '' "$A_LOG" || true); A_POST=$(grep -c '' "$A_TMP" || true)
+  if [ "${A_PRE:-0}" -ne "${A_POST:-0}" ] || ! grep -qxF -- "$A_AMENDED" "$A_TMP"; then
+    rm -f "$A_TMP"
+    iofail "amend: verify-before-swap failed (pre=$A_PRE post=$A_POST) — original log untouched"
+  fi
+  mv "$A_TMP" "$A_LOG" || { rm -f "$A_TMP"; iofail "amend: mv into place failed"; }
+  grep -qxF -- "$A_AMENDED" "$A_LOG" \
+    || iofail "amend: post-swap content verify failed in $A_LOG"
+
+  echo "OK amended ref=$A_REF path=$A_LOG in=${A_TIN:--} out=${A_TOUT:--}"
+  exit 0
+fi
+
 # --- Parse args (long-options only; unknown = reject) ---
 while [ $# -gt 0 ]; do
   case "$1" in

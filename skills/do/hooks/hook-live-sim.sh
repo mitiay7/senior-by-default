@@ -15,9 +15,9 @@
 #
 #   R. REGISTRATION — copies this repo into the sandbox (origin remote
 #      removed: the sim can never hit the network), runs the REAL install.sh
-#      with ENABLE_HOOKS=Y against the sandbox HOME, and asserts all four
+#      with ENABLE_HOOKS=Y against the sandbox HOME, and asserts all five
 #      hook entries land in $HOME/.claude/settings.json exactly as hooks.md
-#      documents (Stop ×1, PreToolUse Task ×1, PreToolUse Bash ×2; every
+#      documents (Stop ×2, PreToolUse Task ×1, PreToolUse Bash ×2; every
 #      registered command resolves to an executable through the symlink).
 #      Re-runs install.sh to prove the merge is idempotent; runs uninstall.sh
 #      at the end to prove removal leaves no stranded entries.
@@ -121,7 +121,10 @@ else
   failc "R2a" "sandbox settings.json missing/invalid"; KEEP=1
 fi
 
-STOP_HOOK=$(jq -r '.hooks.Stop[0].hooks[0].command // empty' "$SETTINGS" 2>/dev/null)
+# The metrics gate is the FIRST Stop entry; the token-amend hook is matched by
+# basename anywhere in the Stop array (order-independent).
+STOP_HOOK=$(jq -r '[.hooks.Stop[]?.hooks[]?.command | select(endswith("do-metrics-stop-gate.sh"))][0] // empty' "$SETTINGS" 2>/dev/null)
+TOKENS_HOOK=$(jq -r '[.hooks.Stop[]?.hooks[]?.command | select(endswith("do-tokens-stop-amend.sh"))][0] // empty' "$SETTINGS" 2>/dev/null)
 PLAN_HOOK=$(jq -r '[.hooks.PreToolUse[]? | select(.matcher == "Task")][0].hooks[0].command // empty' "$SETTINGS" 2>/dev/null)
 SECRET_HOOK=$(jq -r '[.hooks.PreToolUse[]?.hooks[]?.command | select(endswith("do-secret-scan-pretooluse.sh"))][0] // empty' "$SETTINGS" 2>/dev/null)
 PRSIZE_HOOK=$(jq -r '[.hooks.PreToolUse[]?.hooks[]?.command | select(endswith("do-pr-size-pretooluse.sh"))][0] // empty' "$SETTINGS" 2>/dev/null)
@@ -129,7 +132,8 @@ PRSIZE_HOOK=$(jq -r '[.hooks.PreToolUse[]?.hooks[]?.command | select(endswith("d
 for pair in "R2b-stop:$STOP_HOOK:do-metrics-stop-gate.sh" \
             "R2c-plan:$PLAN_HOOK:do-plan-size-pretooluse.sh" \
             "R2d-secret:$SECRET_HOOK:do-secret-scan-pretooluse.sh" \
-            "R2e-prsize:$PRSIZE_HOOK:do-pr-size-pretooluse.sh"; do
+            "R2e-prsize:$PRSIZE_HOOK:do-pr-size-pretooluse.sh" \
+            "R2g-tokens:$TOKENS_HOOK:do-tokens-stop-amend.sh"; do
   name=${pair%%:*}; rest=${pair#*:}; cmd=${rest%:*}; base=${rest##*:}
   if [ -n "$cmd" ] && [ "$(basename "$cmd")" = "$base" ] && [ -x "$cmd" ]; then
     okc "$name registered + executable ($base)"
@@ -141,8 +145,8 @@ done
 N_TASK=$(jq '[.hooks.PreToolUse[]? | select(.matcher == "Task")] | length' "$SETTINGS" 2>/dev/null)
 N_BASH=$(jq '[.hooks.PreToolUse[]? | select(.matcher == "Bash")] | length' "$SETTINGS" 2>/dev/null)
 N_STOP=$(jq '.hooks.Stop | length' "$SETTINGS" 2>/dev/null)
-if [ "$N_STOP" = "1" ] && [ "$N_TASK" = "1" ] && [ "$N_BASH" = "2" ]; then
-  okc "R2f entry counts Stop=1 Task=1 Bash=2 (per hooks.md)"
+if [ "$N_STOP" = "2" ] && [ "$N_TASK" = "1" ] && [ "$N_BASH" = "2" ]; then
+  okc "R2f entry counts Stop=2 Task=1 Bash=2 (per hooks.md)"
 else
   failc "R2f" "counts Stop=$N_STOP Task=$N_TASK Bash=$N_BASH"
 fi
@@ -152,7 +156,7 @@ HOME="$SB_HOME" INSTALL_DIR="$SB_INSTALL" SKILL_NAME="do" TRIGGER=none ENABLE_HO
 N_TASK2=$(jq '[.hooks.PreToolUse[]? | select(.matcher == "Task")] | length' "$SETTINGS" 2>/dev/null)
 N_BASH2=$(jq '[.hooks.PreToolUse[]? | select(.matcher == "Bash")] | length' "$SETTINGS" 2>/dev/null)
 N_STOP2=$(jq '.hooks.Stop | length' "$SETTINGS" 2>/dev/null)
-if [ "$N_STOP2" = "1" ] && [ "$N_TASK2" = "1" ] && [ "$N_BASH2" = "2" ]; then
+if [ "$N_STOP2" = "2" ] && [ "$N_TASK2" = "1" ] && [ "$N_BASH2" = "2" ]; then
   okc "R3 re-run is idempotent (no duplicate entries)"
 else
   failc "R3" "after re-run: Stop=$N_STOP2 Task=$N_TASK2 Bash=$N_BASH2"
@@ -390,8 +394,8 @@ echo "U. uninstall.sh removes registrations"
 
 HOME="$SB_HOME" bash "$SB_INSTALL/uninstall.sh" >"$SB/uninstall.log" 2>&1
 if [ -f "$SETTINGS" ] \
-   && ! grep -qE 'do-(metrics-stop-gate|plan-size-pretooluse|secret-scan-pretooluse|pr-size-pretooluse)\.sh' "$SETTINGS"; then
-  okc "U1 all four hook entries stripped from settings.json"
+   && ! grep -qE 'do-(metrics-stop-gate|tokens-stop-amend|plan-size-pretooluse|secret-scan-pretooluse|pr-size-pretooluse)\.sh' "$SETTINGS"; then
+  okc "U1 all five hook entries stripped from settings.json"
 else
   failc "U1" "hook entries still present (or settings gone) — see $SB/uninstall.log"
 fi

@@ -98,14 +98,15 @@ fi
 # those hook commands resolve through — leaving the entries behind means
 # missing-script hook errors on every Stop, every Task spawn, and every Bash
 # call, in every project, with nothing attributing them to this skill. Matched
-# by script basename (do-metrics-stop-gate.sh / do-plan-size-pretooluse.sh /
-# do-secret-scan-pretooluse.sh / do-pr-size-pretooluse.sh), so custom-skill-name
-# installs and manual settings.with-hooks.json merges are covered too.
+# by script basename (do-metrics-stop-gate.sh / do-tokens-stop-amend.sh /
+# do-plan-size-pretooluse.sh / do-secret-scan-pretooluse.sh /
+# do-pr-size-pretooluse.sh), so custom-skill-name installs and manual
+# settings.with-hooks.json merges are covered too.
 # Fail-open: an un-editable settings.json warns and never aborts the rest of
 # the uninstall.
 
 SETTINGS_JSON="$HOME/.claude/settings.json"
-HOOK_RE='do-(metrics-stop-gate|plan-size-pretooluse|secret-scan-pretooluse|pr-size-pretooluse)\.sh'
+HOOK_RE='do-(metrics-stop-gate|tokens-stop-amend|plan-size-pretooluse|secret-scan-pretooluse|pr-size-pretooluse)\.sh'
 HOOKS_SUMMARY="No /do enforcement hook entries in $SETTINGS_JSON — nothing to remove"
 
 if [ -f "$SETTINGS_JSON" ] && grep -qE "$HOOK_RE" "$SETTINGS_JSON" 2>/dev/null; then
@@ -139,8 +140,9 @@ if [ -f "$SETTINGS_JSON" ] && grep -qE "$HOOK_RE" "$SETTINGS_JSON" 2>/dev/null; 
       rm -f "$tmp"
       warn "Could not edit $SETTINGS_JSON (invalid JSON?) — left untouched."
       warn "Remove the Stop/PreToolUse entries whose command ends in"
-      warn "do-metrics-stop-gate.sh / do-plan-size-pretooluse.sh /"
-      warn "do-secret-scan-pretooluse.sh / do-pr-size-pretooluse.sh manually,"
+      warn "do-metrics-stop-gate.sh / do-tokens-stop-amend.sh /"
+      warn "do-plan-size-pretooluse.sh / do-secret-scan-pretooluse.sh /"
+      warn "do-pr-size-pretooluse.sh manually,"
       warn "then run /hooks in Claude Code to confirm they're gone."
       HOOKS_SUMMARY="LEFT IN PLACE: /do hook entries in $SETTINGS_JSON (file un-editable) — remove manually"
     fi
@@ -149,8 +151,9 @@ if [ -f "$SETTINGS_JSON" ] && grep -qE "$HOOK_RE" "$SETTINGS_JSON" 2>/dev/null; 
     warn "Without removal, Claude Code errors on every Stop, Task spawn, and Bash"
     warn "call (the hook scripts no longer exist). Remove manually: open"
     warn "$SETTINGS_JSON and delete the Stop/PreToolUse entries whose command ends"
-    warn "in do-metrics-stop-gate.sh / do-plan-size-pretooluse.sh /"
-    warn "do-secret-scan-pretooluse.sh / do-pr-size-pretooluse.sh, then run"
+    warn "in do-metrics-stop-gate.sh / do-tokens-stop-amend.sh /"
+    warn "do-plan-size-pretooluse.sh / do-secret-scan-pretooluse.sh /"
+    warn "do-pr-size-pretooluse.sh, then run"
     warn "/hooks in Claude Code to confirm they're gone."
     HOOKS_SUMMARY="LEFT IN PLACE: /do hook entries in $SETTINGS_JSON (jq missing) — remove manually"
   fi

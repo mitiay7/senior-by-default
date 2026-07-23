@@ -69,6 +69,14 @@ Measured validation (2026-07-17 re-audit, 227 runs on one repo + 109 on a second
 
 The 2026-07-17 re-audit's biggest measurement finding: across 369 telemetry entries in all logs, **zero** carried any cost field — durations, gates, and diff sizes were logged, but the skill could not compute its own ROI (every cost claim in every audit was a chars/4 guess). `--tokens-in`/`--tokens-out` close that hole. They are optional and **must come from harness-reported usage only** — an estimated or reconstructed number is worse than an absent one, because downstream ROI math can't tell measured entries from guessed ones. No harness figure available → omit the flags; absence is honest.
 
+**Why the manual flags stayed empty (and what fills them now).** A 2026-07-23 re-audit found the flags at **0 % adoption** — 0 of 27 post-v0.10.0 entries carried a `tokens` object — and diagnosed it as structural, not negligence: *no in-session actor can read its own usage*. `/cost` is TUI-only; a sub-agent can't observe its own usage; a headless `claude -p --output-format json` usage block lands at the invoking process only after the session ends. The one actor the runtime hands harness-recorded usage is a **hook** — a Stop hook receives `transcript_path`, and the transcript's assistant records carry `message.usage`. v0.12.0 ships that: the opt-in `do-tokens-stop-amend.sh` (see [`hooks.md`](hooks.md)) sums those records after the finalize turn and back-fills the run's entry via a new `metrics-append --amend-tokens` mode. Design points worth pinning:
+
+- **Amend, not append** — the entry already exists (Phase 4.11 wrote it); the hook adds only an absent `tokens` key. `--amend-tokens` runs the read-modify-write under the same log lock, verifies the rewrite touched nothing but `tokens`, and REJECTs a second amend on an already-filled entry → **idempotent** re-fires.
+- **Ref-match, not last-line** — the target is the last entry whose `.ref` is named in the announce, so concurrent same-log sessions don't cross-fill each other.
+- **`in` counts cache** — `in = input + cache_creation_input_tokens + cache_read_input_tokens`; cached reads are billed input and belong in ROI. `out = output_tokens`.
+- **Window** — `[started_at − 120s, ended_at + 900s]` bounds the sum to this task; both bounds unusable → whole-transcript sum (a /do run is one task per session). All-zero → no write (absence stays honest; the hook never records `{in:0,out:0}`).
+- **Still harness-measured** — every summed figure is a number the harness recorded, so the estimate ban holds; the manual flags remain legal for an operator who genuinely has a readout.
+
 ## Why structural coupling + external wrapper, not soft instruction
 
 Three enforcement layers, each addressing a failure mode the previous one missed:
