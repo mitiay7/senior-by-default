@@ -453,7 +453,7 @@ three-way split, and the trend-reading guidance live in
 instructions.
 
 ### Schema reference
-See [`config-schema.md`](config-schema.md) under `metrics` for the full Tier 1 entry schema; what the accumulated data enables: [`telemetry-internals.md`](telemetry-internals.md) §What metrics enable.
+See [`config-authoring.md`](config-authoring.md) §"Telemetry JSONL entry schema" for the full Tier 1 entry shape (and [`config-schema.md`](config-schema.md) `#### metrics` for the per-field meaning); what the accumulated data enables: [`telemetry-internals.md`](telemetry-internals.md) §What metrics enable.
 
 ## 4.12 Notify completion
 If `config.notifications` configured AND `task_completed` in events → send. See [`notifications.md`](notifications.md). Include PR url, auto-merge status, ADR ref if applicable.

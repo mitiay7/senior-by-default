@@ -179,7 +179,7 @@ Available examples:
 
 If you have a local clone (manual install dir at `~/.local/share/senior-by-default/examples/`), copy from there. Plugin-install users — Claude Code stores plugins under `~/.claude/plugins/cache/...` with versioned subdirs that change across updates; that path is **not stable** to copy from. Use the curl above or clone the repo separately.
 
-Full schema: [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md).
+Full annotated schema + examples: [`skills/do/references/config-authoring.md`](skills/do/references/config-authoring.md) (read when authoring a config). Per-field semantics for a config you already have: [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md).
 JSON Schema for programmatic validation: [`skills/do/references/config.schema.json`](skills/do/references/config.schema.json).
 
 ## Architecture
@@ -235,7 +235,7 @@ Three Claude models with hard role boundaries — see [`skills/do/SKILL.md`](ski
 | PR-size ceiling | `pr_size.{warn_lines, block_lines, auto_split, ...}` (on by default: warn 800/20, block 2000/50, auto_split true) | Phase 3.0 `pr-size-check` wrapper: ≤warn PASS, >warn WARN (note in PR), >block **BLOCK** (exit 3). On BLOCK the change never ships as one PR — by default Phase 4.2.1 **auto-splits** it into a stack of sub-cap PRs (`pr-split` wrapper), reviewed once as a unit and merged in order; `auto_split:false` / `--no-split` reverts to the hard halt (draft PR + `blocked`). Plan-time sibling: Phase 2.0 `plan-size-check` H ceiling (values owned by the wrapper, scrubbed from spec prose) → SPLIT-REQUIRED |
 | Metrics for skill iteration | `metrics.log_path` + `tier: 1` | JSONL append per task; self-review calibration tracked in 3 dimensions (`calibration` + de-confounded `calibration_defect` / `calibration_size`); gate keys normalized to a controlled vocabulary; consume with the shipped `metrics-report` CLI (below) |
 
-See [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md) for the full schema and [`examples/`](examples/) for ready-to-adapt configs.
+See [`skills/do/references/config-authoring.md`](skills/do/references/config-authoring.md) for the full annotated schema (and [`config-schema.md`](skills/do/references/config-schema.md) for per-field semantics) plus [`examples/`](examples/) for ready-to-adapt configs.
 
 ### Reading the telemetry — `metrics-report`
 
@@ -359,7 +359,8 @@ Full flag semantics: [`skills/do/SKILL.md`](skills/do/SKILL.md).
 ## Documentation map
 
 - [`skills/do/SKILL.md`](skills/do/SKILL.md) — main skill file, Phase 0 entry point, top-level rules
-- [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md) — full config schema (markdown)
+- [`skills/do/references/config-schema.md`](skills/do/references/config-schema.md) — config read-path: field semantics + defaults (markdown)
+- [`skills/do/references/config-authoring.md`](skills/do/references/config-authoring.md) — config authoring: full annotated schema + JSONL entry shape + examples (loaded only when writing a config)
 - [`skills/do/references/config.schema.json`](skills/do/references/config.schema.json) — JSON Schema for programmatic validation
 - [`skills/do/references/config-validation.md`](skills/do/references/config-validation.md) — validation rules + flow
 - [`skills/do/references/stack-detection.md`](skills/do/references/stack-detection.md) — language/PM detection + cache mechanics
