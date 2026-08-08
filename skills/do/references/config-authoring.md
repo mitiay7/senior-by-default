@@ -108,7 +108,8 @@ All other fields are optional; missing fields fall back to defaults documented i
     "warn_files": 20,
     "block_lines": 2000,
     "block_files": 50,
-    "auto_split": true
+    "auto_split": true,
+    "generated_paths": ["openapi/*.json", "**/*.pb.go"]
   },
 
   "stale_main": {

@@ -88,11 +88,12 @@ After PR creation (Phase 4.2), enable auto-merge so PR merges automatically when
 - Override per-task: `--auto-merge` or `--no-auto-merge` in `$ARGUMENTS`
 
 #### `pr_size`
-Phase 3.0 (pre-gate) check via `git diff main...HEAD --shortstat`.
+Phase 3.0 (pre-gate) check. The `pr-size-check` wrapper measures the diff itself (`--repo`) — the spec never pre-computes counts.
 - `warn_lines: 800` (default) — warn user, proceed
 - `warn_files: 20`
 - `block_lines: 2000` — over this, the change cannot ship as ONE PR
 - `block_files: 50`
+- `generated_paths: []` (default) — globs for **machine-generated files committed to the repo** (`["openapi/*.json", "**/*.pb.go"]`). Their lines/files are subtracted from the counted size: a reviewer doesn't read them line by line, a drift check in CI keeps them correct, so counting them measures the wrong thing and forces serial threshold bumps. Both enforcement tiers honor it — the wrapper reads the key, the PreToolUse hook delegates *to the wrapper* — so gate and hook can't split WARN/BLOCK on one diff. The excluded volume is always printed alongside the counted one (`900 handwritten + 1200 generated = 2100 total lines`); it is never hidden. There is no per-run CLI flag, on purpose: the list can only come from the repo's committed config, so it can't be widened to argue a BLOCK down. Globs: `*` doesn't cross `/`, `**` does, `?` = one non-`/` char, a slash-free pattern matches at any depth, a trailing `/` means everything under; no character classes.
 - `auto_split: true` (default) — on a BLOCK, Phase 4.2.1 auto-splits delivery into a **stack of sub-cap PRs** (`pr-split` wrapper) each ≤ the WARN caps, reviewed once as a unit and merged in order; the run ends `ready_for_review` with *k* open PRs. Set `false` (or pass `--no-split`) to revert to the pre-0.11 hard halt: draft PR + `blocked` label, user splits manually.
 
 #### `stale_main`

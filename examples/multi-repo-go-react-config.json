@@ -21,6 +21,13 @@
     }
   },
 
+  "_pr_size_note": "generated_paths excludes committed machine-generated artifacts from the Phase 3.0 size verdict — a reviewer doesn't read them line by line, a drift check in CI keeps them correct. Both enforcement tiers (the pr-size-check wrapper and the do-pr-size-pretooluse.sh hook) read this same key. The excluded volume is still printed next to the counted one, so a runaway generator stays visible. Delete this block if your repo commits no generated files.",
+  "pr_size": {
+    "warn_lines": 800,
+    "block_lines": 2000,
+    "generated_paths": ["api/openapi/*.json", "**/*.pb.go", "web/src/api/generated/**"]
+  },
+
   "issue_tracker": {
     "type": "github",
     "repo": "your-org/your-issues-repo",

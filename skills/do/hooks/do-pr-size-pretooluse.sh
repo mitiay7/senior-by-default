@@ -33,15 +33,23 @@
 # a confirmed over-block-cap diff (pr-size-check exit 3) for a NON-draft
 # creation. A backstop must never break legitimate PRs on uncertainty.
 #
+# MEASUREMENT IS NOT DUPLICATED HERE (lea-docs#1399). This hook parses the *command*
+# and hands the wrapper a repo + the refs it named; `pr-size-check --repo` does
+# the ref resolution, the `--numstat` churn, the `.claude/do/config.json` read
+# (thresholds AND `pr_size.generated_paths` exclusion) and the verdict. Before
+# that the hook re-implemented all of it and read exactly four config keys,
+# so any new config field — path exclusion above all — would have taken effect
+# in the §3.0 wrapper call and NOT here: gate says WARN, hook says BLOCK. That
+# split is what lea-docs#1399 was filed over; one implementation is the fix.
+#
 # Inputs it derives (all from the hook payload + the repo, never trusted from
 # the model): repo dir = leading `cd <dir> &&` in the command (quote-stripped;
 # an unexpandable `$VAR` falls through) else the call's `.cwd`; base ref =
-# `--base/-B` (gh) / `--target-branch/-b` (glab) else `origin/HEAD` →
-# origin/main → origin/master → main → master; head ref = `--head/-H` (gh) /
-# `--source-branch/-s` (glab) if locally resolvable else HEAD. Thresholds =
-# `.pr_size.*` from `<repo>/.claude/do/config.json` when present (numeric),
-# else the wrapper's config-schema.md defaults. Lines = added+deleted churn
-# from `git diff base...head --numstat`, same formula as §3.0.
+# `--base/-B` (gh) / `--target-branch/-b` (glab); head ref = `--head/-H` (gh) /
+# `--source-branch/-s` (glab). Both refs are passed through verbatim — the
+# wrapper resolves them (origin/<ref> first, then <ref>; no base ⇒ origin/HEAD →
+# origin/main → origin/master → main → master; unresolvable head ⇒ HEAD) and
+# fails with REJECT (exit 1 → fail-open here) when nothing resolves.
 #
 # Self-locating: finds the sibling pr-size-check via $0, so it works under any
 # skill name / install path.
@@ -112,49 +120,20 @@ fi
 case "$BASE"    in \$*) BASE=""    ;; esac
 case "$HEADREF" in \$*) HEADREF="" ;; esac
 
-# Base ref: explicit flag (prefer its origin/ mirror) → origin/HEAD → the
-# usual defaults. First resolvable candidate wins; none → fail-open.
-CANDIDATES=""
-if [ -n "$BASE" ]; then
-  CANDIDATES="origin/$BASE $BASE"
-else
-  OH=$(git -C "$DIR" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  CANDIDATES="${OH:+$OH }origin/main origin/master main master"
-fi
-BASEREF=""
-for c in $CANDIDATES; do
-  if git -C "$DIR" rev-parse --verify -q "$c^{commit}" >/dev/null 2>&1; then BASEREF="$c"; break; fi
-done
-[ -n "$BASEREF" ] || exit 0
-
-# Head ref: explicit flag if it resolves locally, else the checked-out HEAD.
-if [ -z "$HEADREF" ] || ! git -C "$DIR" rev-parse --verify -q "$HEADREF^{commit}" >/dev/null 2>&1; then
-  HEADREF="HEAD"
-fi
-
-# Same churn formula as §3.0: added+deleted from numstat ("-" binary counts
-# coerce to 0 in awk); file count = numstat line count.
-NUM=$(git -C "$DIR" diff "$BASEREF...$HEADREF" --numstat 2>/dev/null) || exit 0
-LINES=$(printf '%s\n' "$NUM" | awk '{a+=$1; d+=$2} END {print a+d+0}')
-FILES=$(printf '%s' "$NUM" | grep -c '^' 2>/dev/null); FILES="${FILES:-0}"
-
-# Project threshold overrides, when the repo carries a /do config.
-ARGS=(--lines "$LINES" --files "$FILES")
-ROOT=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || true)
-CFGF="$ROOT/.claude/do/config.json"
-if [ -n "$ROOT" ] && [ -f "$CFGF" ]; then
-  for k in warn_lines warn_files block_lines block_files; do
-    v=$(jq -r ".pr_size.${k} // empty" "$CFGF" 2>/dev/null || true)
-    case "$v" in (*[!0-9]*|'') : ;; (*) ARGS=("${ARGS[@]}" "--${k//_/-}" "$v") ;; esac
-  done
-fi
+# Everything downstream — ref resolution, the diff, the project config
+# (thresholds + generated-path exclusion), the verdict — belongs to the wrapper.
+# The hook contributes only what it can see that the wrapper cannot: which repo
+# and which refs this command named.
+ARGS=(--repo "$DIR")
+[ -n "$BASE" ]    && ARGS=("${ARGS[@]}" --base "$BASE")
+[ -n "$HEADREF" ] && ARGS=("${ARGS[@]}" --head "$HEADREF")
 
 OUT=$("$PR_SIZE_CHECK" "${ARGS[@]}" 2>/dev/null)
 RC=$?
 
 if [ "$RC" -eq 3 ] && [ -z "$DRAFT" ]; then
   {
-    echo "[pr-size-check / PreToolUse hook] BLOCKED this PR/MR creation — the real diff ($BASEREF...$HEADREF in $DIR) is over the hard PR-size cap:"
+    echo "[pr-size-check / PreToolUse hook] BLOCKED this PR/MR creation — the real diff in $DIR is over the hard PR-size cap:"
     printf '%s\n' "$OUT"
     echo "Phase 3.0 BLOCK is not advisory (anti-pattern §19f/§21) and this verdict came from the repo's actual diff — do NOT retry a mergeable single PR and do NOT shrink the numbers. Sanctioned paths: (default) auto-split via the pr-split wrapper into a STACK of sub-cap PRs, each opened with --base set to the previous part branch (phase-4-pr.md §4.2.1) — those per-part creations are under cap and pass this hook; OR (--no-split / auto_split:false) re-run this command with --draft (title prefixed WIP:), apply the \`blocked\` label, file the split sub-issues, record gates.pr_size.status=\"block\" with OUTCOME=\"blocked\" (phase-3-review.md §3.0)."
   } >&2

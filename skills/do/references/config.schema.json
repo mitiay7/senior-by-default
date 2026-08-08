@@ -252,7 +252,12 @@
         "warn_files":  { "type": "integer", "minimum": 0 },
         "block_lines": { "type": "integer", "minimum": 0 },
         "block_files": { "type": "integer", "minimum": 0 },
-        "auto_split":  { "type": "boolean", "description": "On a Phase 3.0 BLOCK, split delivery into a stack of sub-cap PRs (Phase 4.2.1) instead of halting. Default true; false reverts to the pre-0.11 draft-PR + blocked hard halt. Per-run override: --no-split." }
+        "auto_split":  { "type": "boolean", "description": "On a Phase 3.0 BLOCK, split delivery into a stack of sub-cap PRs (Phase 4.2.1) instead of halting. Default true; false reverts to the pre-0.11 draft-PR + blocked hard halt. Per-run override: --no-split." },
+        "generated_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Globs (repo-root-relative) for machine-generated files committed to the repo, e.g. [\"openapi/*.json\", \"**/*.pb.go\"]. Their lines/files are excluded from the Phase 3.0 size verdict — a reviewer does not read them line by line; a drift check in CI keeps them correct. Both enforcement tiers read this same key (the pr-size-check wrapper measures, the PreToolUse hook delegates to it), so the gate and the hook cannot disagree. The excluded volume is always printed next to the counted volume. Glob syntax: * (not across /), ** (across /), ? (one non-/ char); a slash-free pattern matches at any depth; a trailing / means everything under. No character classes. Default: [] (nothing excluded)."
+        }
       }
     },
 
