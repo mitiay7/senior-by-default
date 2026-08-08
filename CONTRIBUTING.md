@@ -94,6 +94,12 @@ There's no automated functional test suite — the skill runs through Claude. Sm
    bash tests/tokens-stop-amend.test.sh   # 23 assertions, synthetic logs + transcripts, sandboxed
    ```
 
+   The PR-size gate has its own suite — run it if you touch `pr-size-check`, `do-pr-size-pretooluse.sh`, or the §3.0 block. It runs **both** enforcement tiers on one fixture and fails on any verdict split, which is the failure mode that made a hook-only or wrapper-only path-exclusion field unimplementable in the first place:
+
+   ```bash
+   bash tests/pr-size-generated-paths.test.sh   # 24 assertions, synthetic repos, sandboxed
+   ```
+
 ## Adding a new tracker
 
 To support a new issue tracker beyond GitHub/GitLab:

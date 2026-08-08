@@ -10,7 +10,7 @@ Per gate, on failure / warning, capture:
 
 | Gate | `details` shape |
 |---|---|
-| 3.0 PR Size | `{ "lines": <int>, "files": <int>, "thresholds_breached": ["lines"\|"files"\|both]` + on BLOCK-with-auto-split `, "auto_split": { "parts": <k>, "branches": [...] }` (parts/branches filled by Phase 4.2) `}` |
+| 3.0 PR Size | `{ "lines": <int>, "files": <int>, "thresholds_breached": ["lines"\|"files"\|both]` + when the wrapper reported a `generated excluded:` clause `, "generated_lines": <int>, "generated_files": <int>` (`lines`/`files` stay the **counted** handwritten numbers the verdict used) + on BLOCK-with-auto-split `, "auto_split": { "parts": <k>, "branches": [...] }` (parts/branches filled by Phase 4.2) `}` |
 | 3.0.5 Dep Vuln | `{ "scanner": "<tool>", "findings": [{"severity","package","id"}], "threshold": "<level>" }` (cap at 10 findings; rest as `"truncated_count"`) |
 | 3.0.6 Public Docs | `{ "api_files_changed": [...], "missing_docs": [...] }` |
 | 3.1 Verify | per key `build`/`lint`/`test`: `{ "tell": "<that leg's per-command wrapper line(s), verbatim>" }`; on fail add `"failing_cmd"`, `"rc"`, `"self_report_mismatch": true\|false`; coverage misses add `"uncovered_branching_funcs": [...]` under `test` |
@@ -45,13 +45,19 @@ All applicable gates must PASS before 3.6 / 3.7 — **except a `pr_size` BLOCK w
 
 ## 3.0 PR Size Guard — **decision comes from the `pr-size-check` wrapper, NOT your judgment**
 
-Measure the actual diff, then run the wrapper. Do NOT eyeball the numbers and decide PASS/WARN/BLOCK yourself — production shipped **8 PRs >2000 lines as `pr_size=warn`** because the orchestrator read "block → STOP" and treated it as advisory (anti-patterns §19f / §21). The wrapper owns the decision; **BLOCK exits 3 (a hard halt)**, so it cannot be narrated past.
+Run the wrapper against the worktree — it measures the diff itself. Do NOT eyeball the numbers and decide PASS/WARN/BLOCK yourself, and do NOT hand it counts you computed: production shipped **8 PRs >2000 lines as `pr_size=warn`** because the orchestrator read "block → STOP" and treated it as advisory (anti-patterns §19f / §21). The wrapper owns both the measurement and the decision; **BLOCK exits 3 (a hard halt)**, so it cannot be narrated past.
+
+**Generated artifacts don't count as handwritten code.** A repo that commits machine-generated files — `openapi/*.json`, `*.pb.go`, snapshots — sets `config.pr_size.generated_paths` (glob list) and the wrapper subtracts those paths from the counted lines/files. Nobody reviews them line by line; a drift check in CI keeps them honest, so counting them measures the wrong quantity and pushes the repo into serial threshold bumps (the lea-api ledger: 2000→3000→4000→4500 across one epic, every bump caused by generated files). The excluded volume is **always printed** next to the counted volume (`900 handwritten + 1200 generated = 2100 total lines`) — hiding it would hide "the generator produced a 40k-line diff". The list lives only in the repo's committed config; there is no per-run flag, so this is not a way to talk a BLOCK down.
 
 **BLOCK → auto-split by default (v0.11.0).** A BLOCK verdict means the change cannot ship as ONE PR. It is *never* downgraded to a single mergeable PR. But the default response is no longer "halt and ask the user to split" — it is to **split automatically in Phase 4.2** into a stack of individually-reviewable, sub-cap PRs (via the `pr-split` wrapper). Resolve `CFG_AUTO_SPLIT` from `config.pr_size.auto_split` (default `true`); `--no-split` in `$ARGUMENTS` or `auto_split:false` reverts to the pre-0.11 hard halt (draft PR + `blocked`, user splits manually). Auto-split sets `PR_SPLIT_REQUIRED=1` and **continues** the rest of Phase 3 on the full diff — it does NOT set `BLOCKED`, because the run ends `ready_for_review` with *k* open PRs, not blocked.
 
 ```bash
-DIFF_LINES=$(git -C "$WORKTREE_PATH" diff main...HEAD --numstat | awk '{a+=$1; d+=$2} END {print a+d+0}')   # total churn (added+deleted)
-DIFF_FILES=$(git -C "$WORKTREE_PATH" diff main...HEAD --name-only | wc -l | tr -d ' ')
+# Do NOT pre-compute the numbers here. `--repo` hands the wrapper the repo and
+# the base ref; IT resolves the refs, runs `--numstat`, reads the project's
+# `.claude/do/config.json` (thresholds AND `pr_size.generated_paths`) and
+# decides. The PreToolUse hook calls the same mode with the same repo, so the
+# two enforcement tiers cannot disagree on the same diff — the WARN-here /
+# BLOCK-there split that a hook-only or wrapper-only exclusion would produce.
 
 # Canonical do-scripts resolver — identical line in every wrapper block; each
 # block runs in a fresh shell, so re-resolve here (rationale: phase-0-setup.md Step 1).
@@ -74,7 +80,7 @@ add_opt --block-files "${CFG_BLOCK_FILES:-}"
 
 if [ -x "$DO_SCRIPTS/pr-size-check" ]; then
   PR_SIZE_LINE="$("$DO_SCRIPTS/pr-size-check" \
-    --lines "$DIFF_LINES" --files "$DIFF_FILES" \
+    --repo "$WORKTREE_PATH" --base main \
     ${PR_SIZE_ARGS[@]+"${PR_SIZE_ARGS[@]}"})" && PR_SIZE_RC=0 || PR_SIZE_RC=$?
 else
   # FAIL CLOSED — explicit token so the case below has a matching arm.
@@ -120,7 +126,7 @@ case "$PR_SIZE_LINE" in
 esac
 ```
 
-**Why a wrapper, not inline threshold bash**: identical to the [plan-size-check §2.0](phase-2-implementation.md) lesson — the orchestrator reliably runs `$(wrapper)` + `case`, but reliably *fabricates* a plausible verdict from inline `if [ $lines -gt $block ]` it's told to evaluate itself. The wrapper output's `breached: [..]` list + `+N lines/+N files` overage are the anti-fabrication tell (computed from the real numbers); the non-zero BLOCK exit is the structural halt. Record the result in the metrics `gates.pr_size` entry: `{ "status": pass|warn|block, "details": { "lines": <int>, "files": <int>, "thresholds_breached": [...] } }`.
+**Why a wrapper, not inline threshold bash**: identical to the [plan-size-check §2.0](phase-2-implementation.md) lesson — the orchestrator reliably runs `$(wrapper)` + `case`, but reliably *fabricates* a plausible verdict from inline `if [ $lines -gt $block ]` it's told to evaluate itself. The wrapper output's `breached: [..]` list + `+N lines/+N files` overage + the trailing `| diff <base>...<head>` range are the anti-fabrication tell (all computed from the real repo); the non-zero BLOCK exit is the structural halt. Record the result in the metrics `gates.pr_size` entry: `{ "status": pass|warn|block, "details": { "lines": <int>, "files": <int>, "thresholds_breached": [...] } }` — `lines`/`files` are the **counted** (handwritten) numbers the verdict used; when the output carries a `generated excluded:` clause, add `"generated_lines": <int>, "generated_files": <int>` from it so the telemetry can tell a 900-line PR apart from a 900-line PR carrying 1200 generated lines.
 
 > **`block` is not advisory — but the default response is auto-split, not halt.** BLOCK means the change cannot ship as ONE PR; it never downgrades to a single mergeable PR (§19f/§21). By default Phase 4.2 splits it into a **stack of sub-cap PRs** (`pr-split` wrapper) and the run ends `ready_for_review` with *k* open PRs. With `config.pr_size.auto_split:false` or `--no-split` it reverts to the pre-0.11 hard halt (draft + `blocked`; user splits manually). Either way the plan was over-budget — Phase 2.0 plan-size-check should have said SPLIT-REQUIRED earlier; auto-split is the safety net, not a licence to plan huge.
 

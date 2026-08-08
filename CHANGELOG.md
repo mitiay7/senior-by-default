@@ -4,6 +4,35 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Added — `config.pr_size.generated_paths`: the size gate stops counting machine-generated artifacts as handwritten code ([lea-docs#1399](https://github.com/mitiay7/lea-docs/issues/1399))
+
+The Phase 3.0 gate summed every line in the diff into one number. In a repo that **commits machine-generated files** that measures the wrong quantity: a reviewer does not read `openapi/routes.json` line by line — a drift check in `make ci` keeps it correct. The observable consequence was a threshold ratchet. One downstream repo (`lea-api`) raised `block_lines` **three times inside a single epic** — 2000→3000 (2110 lines, 746 of them generated), 3000→4000, 4000→4500 (4357 lines: 3574 handwritten + 783 generated) — and the next two issues of that epic were going to hit the cap again *by construction* (another ~746-line artifact, then the full OpenAPI document). Each bump weakened the gate for the whole repository, including the PRs where 4000 lines really are handwritten and really do need splitting.
+
+`config.pr_size.generated_paths` is a glob list; matching paths are subtracted from the counted lines/files:
+
+```json
+"pr_size": { "block_lines": 3000, "generated_paths": ["openapi/*.json", "**/*.pb.go"] }
+```
+
+- **Both numbers are always reported**, never just the count that passed: `Phase 3.0: WARN — 3574 lines / 40 files over warn (800/20); … | generated excluded: 3574 handwritten + 783 generated = 4357 total lines (40 + 3 = 43 files)`. Hiding the excluded volume would hide the one thing worth alarming on — a 40k-line "generated" diff means the generator broke.
+- **Not a loophole.** The list can only come from the repo's committed `.claude/do/config.json`; there is deliberately **no CLI flag** and no `--generated-lines` escape, so nothing in-session can widen the exclusion to argue a BLOCK down. A PR of 4500 handwritten lines against a 4000 cap still blocks with the field configured.
+- Glob semantics: `*` does not cross `/`, `**` does, `?` is one non-`/` character, a slash-free pattern matches at any depth (gitignore convention), a trailing `/` means everything under. Patterns are compiled to an anchored ERE with every non-wildcard character escaped, so a config file cannot smuggle a regex in. Rename rows (`old => new`, `dir/{a => b}/f`) are scored on the new path.
+
+### Changed — `pr-size-check` measures the diff; the PreToolUse hook delegates to it (one implementation, one verdict)
+
+This is the reason the field above could not simply be bolted onto the wrapper. Enforcement had **two independent measurement paths**: the §3.0 spec block computed `--numstat` churn and passed `--lines/--files` to the wrapper, while `do-pr-size-pretooluse.sh` re-implemented ref resolution, the same churn formula, and its own config read of exactly four keys (`warn_lines`, `warn_files`, `block_lines`, `block_files`). A path-exclusion field honored by one and not the other produces the worst possible outcome — **gate says WARN, hook says BLOCK on one diff** — which is precisely why the downstream repo's config carries a note explaining that such a field "would be worse than not having one".
+
+- **New `--repo DIR [--base REF] [--head REF]` mode** on [`pr-size-check`](skills/do/scripts/pr-size-check). It now owns ref resolution (`origin/<ref>` first then `<ref>`; no base ⇒ `origin/HEAD` → origin/main → origin/master → main → master), the `--numstat` churn, the `.claude/do/config.json` read (thresholds **and** `generated_paths`), and the verdict. Explicit threshold flags still win over config; whatever neither sets falls back to the schema defaults. Output gains a trailing `| diff <base>...<head>` — an anti-fabrication tell naming the range actually measured.
+- [`phase-3-review.md`](skills/do/references/phase-3-review.md) §3.0 no longer pre-computes `DIFF_LINES`/`DIFF_FILES`; it calls `--repo "$WORKTREE_PATH" --base main`.
+- [`do-pr-size-pretooluse.sh`](skills/do/hooks/do-pr-size-pretooluse.sh) lost its numstat block and its four-key config loop; it now contributes only what the wrapper cannot see (which repo, which refs the command named) and forwards them. Fail-open behavior is unchanged — a wrapper `REJECT` (exit 1) allows, exactly as an unresolvable base ref did before.
+- `--lines/--files` remains supported and byte-identical for back-compat; it simply has no paths to match, so it never excludes anything.
+
+Surfaces updated in the same change: `generated_paths` in [config.schema.json](skills/do/references/config.schema.json) + [config-schema.md](skills/do/references/config-schema.md) + [config-authoring.md](skills/do/references/config-authoring.md) + [examples/multi-repo-go-react-config.json](examples/multi-repo-go-react-config.json); the §3.0 prose, its metrics `details` shape (new `generated_lines`/`generated_files` alongside the counted `lines`/`files`), [hooks.md](skills/do/references/hooks.md)'s pr-size section, the README PR-size row + hook bullet, and the CONTRIBUTING test checklist.
+
+**Not covered by this change** (both scoped out in the issue): a code *move* between files still counts twice, once as deletion and once as addition — that was the 3000→4000 bump, where zero lines were generated; and the `pr-split` wrapper still packs parts by raw line count, so on a genuine BLOCK a part carrying a large artifact is measured unexcluded. Neither affects the verdict this gate now produces.
+
+**Verified:** new [`tests/pr-size-generated-paths.test.sh`](tests/pr-size-generated-paths.test.sh) — 24 assertions, synthetic repos, no network. It runs the **wrapper and the hook on the same repo state** and fails on any verdict split (the divergence above), covers 3500-handwritten+1000-generated passing a 4000 cap, 4500-handwritten still blocking, the draft escape hatch, glob edge cases (`openapi/*.json` must not match `openapi/v1/deep.json`; `**/*.pb.go` must match at depth; `weird/a+b(c).json` must stay literal), and a mutation arm that drops `generated_paths` and asserts the same diff goes BLOCK in **both** tiers. Green on macOS/BSD and Debian/GNU. `hook-live-sim.sh` 39/39 on both platforms; `shellcheck` clean on the changed scripts. Mutation proof of the exclusion itself: neutering the awk match arm turns the suite red 6/24 (BLOCK where WARN is expected) and restoring it returns 24/24.
+
 ## [0.12.0] — 2026-07-23
 
 **Token-economy release.** Built from a 2026-07-23 audit that re-measured the skill's own telemetry and per-tier context load (fanned-out, adversarially verified against the raw JSONL). Headline finding: the v0.10.0 `tokens` field had **0 % adoption across 27 post-release runs** — structurally unfillable, because no in-session actor can read its own usage. The four issues below close that gap and trim the mandatory per-run context load.

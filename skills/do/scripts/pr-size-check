@@ -12,22 +12,67 @@
 #
 # The fix is the same one that took plan-size rebumps 0%→18%: move the
 # PASS/WARN/BLOCK DECISION out of the orchestrator's judgment and into the
-# wrapper. The spec passes the real `git diff --shortstat` numbers; the wrapper
+# wrapper. The spec passes the real repo/base/head; the wrapper measures and
 # computes the verdict — the orchestrator can no longer "decide" warn when the
 # numbers say block. BLOCK exits NON-ZERO (code 3) so it is a hard halt the
 # spec's `case`/exit-code check (and the optional Stop / PreToolUse hooks in
 # references/hooks.md) must handle, not a line that can be narrated past.
 #
+# MEASUREMENT LIVES HERE (lea-docs#1399). `--repo` mode makes this wrapper the single
+# implementation of "how big is this PR": ref resolution, `--numstat` churn,
+# `.claude/do/config.json` reading (thresholds AND generated-path exclusion).
+# Both callers — the §3.0 spec block and `hooks/do-pr-size-pretooluse.sh` — go
+# through it, so they cannot disagree. Before this, the hook re-implemented the
+# counting and read exactly four config keys, which is why a path-exclusion
+# field could not be added to only one of them without producing the WARN-here /
+# BLOCK-there split that lea-docs#1399 was filed over.
+#
+# GENERATED-ARTIFACT EXCLUSION. A repo that commits machine-generated files
+# (`openapi/*.json`, `*.pb.go`, snapshots) measures the wrong thing when they
+# count as handwritten code: nobody reviews them line by line — a drift check in
+# CI does. `config.pr_size.generated_paths` (glob list) excludes them from the
+# counted lines/files. It is NOT a loophole: the excluded totals are always
+# printed alongside the counted ones, and the exclusion list can ONLY come from
+# the repo's committed config — there is deliberately no CLI flag for it, so the
+# orchestrator cannot widen it per-run to dodge a BLOCK.
+#
+# Glob syntax (matched against repo-root-relative paths, `/`-aware):
+#   *      any run of non-`/` characters       openapi/*.json
+#   **     any run including `/`               docs/**
+#   **/    zero or more leading directories    **/*.pb.go
+#   ?      one non-`/` character
+#   a pattern with NO `/` matches at any depth (gitignore convention):
+#          `*.gen.go` ≡ `**/*.gen.go`
+#   a pattern ending in `/` means everything under it: `gen/` ≡ `gen/**`
+#   Everything else is literal. Character classes (`[a-z]`) are NOT supported —
+#   the brackets are escaped and match literally.
+#
 # Usage:
-#   pr-size-check --lines N --files N \
-#     [--warn-lines 800] [--warn-files 20] [--block-lines 2000] [--block-files 50]
-#   Thresholds default to the config-schema.md pr_size defaults. Pass the
-#   project's config.pr_size.* values when it overrides them.
+#   # A) measure-here (both production callers use this):
+#   pr-size-check --repo DIR [--base REF] [--head REF] [threshold flags]
+#   # B) explicit numbers (back-compat; NO generated exclusion — nothing to
+#   #    match paths against, and hand-passed "generated" counts would be
+#   #    exactly the fabrication surface the wrapper exists to remove):
+#   pr-size-check --lines N --files N [threshold flags]
+#
+#   threshold flags: [--warn-lines 800] [--warn-files 20]
+#                    [--block-lines 2000] [--block-files 50]
+#   Explicit threshold flags win over `config.pr_size.*`; whatever neither sets
+#   falls back to the config-schema.md defaults.
+#
+#   --base resolves origin/<ref> first, then <ref>; with no --base:
+#   origin/HEAD → origin/main → origin/master → main → master. --head is used
+#   only if it resolves locally, else HEAD. Same order the hook used, now shared.
 #
 # Output (stdout, exactly one line — dispatch the spec's `case` on the prefix):
 #   Phase 3.0: PASS — N lines / N files within warn caps (warn WL/WF · block BL/BF)
 #   Phase 3.0: WARN — N lines / N files over warn (WL/WF); breached: [..]; note in PR, proceed
 #   Phase 3.0: BLOCK — N lines / N files over block (BL/BF) by +Lo lines/+Fo files; breached: [..]; cannot ship as ONE PR — auto-split (§4.2.1) or --no-split halt
+#   …with ` | generated excluded: H handwritten + G generated = T total lines
+#   (HF + GF = TF files)` appended whenever anything was excluded (never hidden —
+#   a 40k-line artifact diff must still be visible as "the generator broke"),
+#   and ` | diff BASE...HEAD` appended in --repo mode (anti-fabrication tell: the
+#   range that was actually measured).
 #
 # Exit codes:
 #   0  PASS or WARN — proceed (WARN ⇒ add the PR-size note to the PR description)
@@ -38,7 +83,9 @@
 #      (auto_split:false / --no-split): the pre-0.11 hard halt — draft PR, file
 #      follow-up split issues, apply the `blocked` label (same path as the Phase
 #      3.6 3-cycle escalation). Either way the plan was over-budget, not the impl.
-#   1  rejected (bad/missing arg, non-numeric value); stderr: "REJECT <reason>"
+#   1  rejected (bad/missing arg, non-numeric value, unusable --repo/base);
+#      stderr: "REJECT <reason>". Callers that must not break on uncertainty
+#      (the PreToolUse hook) treat exit 1 as fail-open.
 
 set -euo pipefail
 
@@ -46,32 +93,197 @@ die() { echo "REJECT $*" >&2; exit 1; }
 
 LINES=""
 FILES=""
-# Defaults mirror config-schema.md pr_size defaults.
-WARN_LINES=800
-WARN_FILES=20
-BLOCK_LINES=2000
-BLOCK_FILES=50
+REPO=""
+BASE=""
+HEAD_IN=""
+# Empty = not set on the CLI. Config fills the gaps; these defaults fill what's
+# left (they mirror config-schema.md pr_size defaults).
+WARN_LINES=""
+WARN_FILES=""
+BLOCK_LINES=""
+BLOCK_FILES=""
+DEF_WARN_LINES=800
+DEF_WARN_FILES=20
+DEF_BLOCK_LINES=2000
+DEF_BLOCK_FILES=50
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --lines)       LINES="$2";       shift 2 ;;
-    --files)       FILES="$2";       shift 2 ;;
-    --warn-lines)  WARN_LINES="$2";  shift 2 ;;
-    --warn-files)  WARN_FILES="$2";  shift 2 ;;
-    --block-lines) BLOCK_LINES="$2"; shift 2 ;;
-    --block-files) BLOCK_FILES="$2"; shift 2 ;;
-    -h|--help)     sed -n '2,46p' "$0"; exit 0 ;;
+    --lines)       LINES="${2:-}";       shift 2 ;;
+    --files)       FILES="${2:-}";       shift 2 ;;
+    --repo)        REPO="${2:-}";        shift 2 ;;
+    --base)        BASE="${2:-}";        shift 2 ;;
+    --head)        HEAD_IN="${2:-}";     shift 2 ;;
+    --warn-lines)  WARN_LINES="${2:-}";  shift 2 ;;
+    --warn-files)  WARN_FILES="${2:-}";  shift 2 ;;
+    --block-lines) BLOCK_LINES="${2:-}"; shift 2 ;;
+    --block-files) BLOCK_FILES="${2:-}"; shift 2 ;;
+    -h|--help)     sed -n '2,88p' "$0"; exit 0 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
 
-[ -n "$LINES" ] || die "--lines required (integer; from 'git diff main...HEAD --shortstat')"
-[ -n "$FILES" ] || die "--files required (integer; from 'git diff main...HEAD --name-only | wc -l')"
+if [ -n "$REPO" ]; then
+  [ -z "$LINES" ] && [ -z "$FILES" ] \
+    || die "--repo measures the diff itself; --lines/--files are the other mode (pick one)"
+else
+  [ -z "$BASE" ] && [ -z "$HEAD_IN" ] || die "--base/--head require --repo"
+  [ -n "$LINES" ] || die "--lines required (integer) — or use --repo DIR to measure here"
+  [ -n "$FILES" ] || die "--files required (integer) — or use --repo DIR to measure here"
+fi
+
+# ---------------------------------------------------------------- glob → ERE
+# `*` stops at `/`, `**` does not, a slash-free pattern floats to any depth.
+# Everything not a wildcard is escaped, so a pattern can never smuggle regex in
+# through the config file.
+glob_to_ere() {
+  local g="$1" out="" i=0 c n=0 meta='.[]\()+{}|^$'
+  case "$g" in */) g="${g}**" ;; esac       # `gen/` ≡ `gen/**`
+  case "$g" in */*) : ;; *) g="**/$g" ;; esac  # no slash ⇒ any depth
+  g="${g#./}"; g="${g#/}"
+  n=${#g}
+  while [ "$i" -lt "$n" ]; do
+    c="${g:$i:1}"
+    case "$c" in
+      '*')
+        if [ "${g:$i:3}" = '**/' ]; then out="$out(.*/)?"; i=$((i + 3)); continue; fi
+        if [ "${g:$i:2}" = '**'  ]; then out="$out.*";     i=$((i + 2)); continue; fi
+        out="${out}[^/]*" ;;
+      '?') out="${out}[^/]" ;;
+      # Escape ONLY real ERE metacharacters. Escaping anything else (a space,
+      # say) would emit an undefined ERE escape, which engines are free to read
+      # as something other than the literal character.
+      *) case "$meta" in
+           *"$c"*) out="$out\\$c" ;;
+           *)      out="$out$c"   ;;
+         esac ;;
+    esac
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
+# ------------------------------------------------------- measure (--repo mode)
+GEN_LINES=0
+GEN_FILES=0
+RANGE_NOTE=""
+
+if [ -n "$REPO" ]; then
+  [ -d "$REPO" ] || die "--repo is not a directory: $REPO"
+  git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || die "--repo is not a git repository: $REPO"
+  ROOT=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null || true)
+  [ -n "$ROOT" ] || die "cannot resolve the repo root of $REPO"
+
+  # Base ref: explicit flag (its origin/ mirror first — that is the ref the PR
+  # will actually target), else origin/HEAD, else the usual defaults.
+  if [ -n "$BASE" ]; then
+    CANDIDATES="origin/$BASE $BASE"
+  else
+    OH=$(git -C "$REPO" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    CANDIDATES="${OH:+$OH }origin/main origin/master main master"
+  fi
+  BASEREF=""
+  for c in $CANDIDATES; do
+    if git -C "$REPO" rev-parse --verify -q "$c^{commit}" >/dev/null 2>&1; then BASEREF="$c"; break; fi
+  done
+  [ -n "$BASEREF" ] || die "no resolvable base ref (tried: $CANDIDATES)"
+
+  HEADREF="$HEAD_IN"
+  if [ -z "$HEADREF" ] || ! git -C "$REPO" rev-parse --verify -q "$HEADREF^{commit}" >/dev/null 2>&1; then
+    HEADREF="HEAD"
+  fi
+
+  # Project config: thresholds the CLI did not set, plus the generated-path list.
+  # No jq ⇒ no config ⇒ nothing is excluded — the gate gets STRICTER, never looser.
+  GLOBS=()
+  CFGF="$ROOT/.claude/do/config.json"
+  if [ -f "$CFGF" ] && command -v jq >/dev/null 2>&1; then
+    for k in warn_lines warn_files block_lines block_files; do
+      case "$k" in
+        warn_lines)  [ -n "$WARN_LINES"  ] && continue ;;
+        warn_files)  [ -n "$WARN_FILES"  ] && continue ;;
+        block_lines) [ -n "$BLOCK_LINES" ] && continue ;;
+        block_files) [ -n "$BLOCK_FILES" ] && continue ;;
+      esac
+      v=$(jq -r ".pr_size.${k} // empty" "$CFGF" 2>/dev/null || true)
+      case "$v" in
+        ''|*[!0-9]*) : ;;
+        *) case "$k" in
+             warn_lines)  WARN_LINES="$v"  ;;
+             warn_files)  WARN_FILES="$v"  ;;
+             block_lines) BLOCK_LINES="$v" ;;
+             block_files) BLOCK_FILES="$v" ;;
+           esac ;;
+      esac
+    done
+    while IFS= read -r g; do
+      [ -n "$g" ] && GLOBS+=("$g")
+    done < <(jq -r '.pr_size.generated_paths[]? | select(type == "string")' "$CFGF" 2>/dev/null || true)
+  fi
+
+  GEN_ERE=""
+  if [ "${#GLOBS[@]}" -gt 0 ]; then
+    for g in "${GLOBS[@]}"; do
+      GEN_ERE="${GEN_ERE:+$GEN_ERE|}($(glob_to_ere "$g"))"
+    done
+    GEN_ERE="^($GEN_ERE)\$"
+  fi
+
+  # Same churn formula §3.0 always used: added+deleted from --numstat, binary
+  # "-" counts coerced to 0, file count = numstat rows. quotePath=false keeps
+  # non-ASCII paths matchable; a still-quoted exotic path simply fails to match
+  # a generated glob and is counted as handwritten (fails toward the strict side).
+  NUM=$(git -C "$REPO" -c core.quotePath=false diff "$BASEREF...$HEADREF" --numstat 2>/dev/null) \
+    || die "git diff failed for $BASEREF...$HEADREF in $REPO"
+
+  # GEN_ERE travels through the ENVIRON, never through `awk -v`: -v assignments
+  # are escape-processed, so the `\.` in a compiled glob would reach the regex
+  # engine as a bare `.` (match-anything) and quietly over-exclude.
+  COUNTS=$(printf '%s\n' "$NUM" | GEN_ERE="$GEN_ERE" awk -F'\t' '
+    BEGIN { gre = ENVIRON["GEN_ERE"] }
+    $0 == "" { next }
+    {
+      a = $1; d = $2; p = $3;
+      if (a == "-") a = 0;
+      if (d == "-") d = 0;
+      # Rename rows: "old => new" and "dir/{old => new}/f" — score the NEW path.
+      if (p ~ / => /) {
+        if (p ~ /\{.* => .*\}/) {
+          pre = p;  sub(/\{.*/, "", pre);
+          post = p; sub(/.*\}/, "", post);
+          mid = p;  sub(/^[^{]*\{/, "", mid); sub(/\}.*$/, "", mid); sub(/^.* => /, "", mid);
+          p = pre mid post;
+          gsub(/\/\/+/, "/", p);
+        } else {
+          sub(/^.* => /, "", p);
+        }
+      }
+      if (gre != "" && p ~ gre) { gl += a + d; gf += 1 }
+      else                      { hl += a + d; hf += 1 }
+    }
+    END { printf "%d %d %d %d\n", hl + 0, hf + 0, gl + 0, gf + 0 }
+  ')
+  read -r LINES FILES GEN_LINES GEN_FILES <<< "$COUNTS"
+  RANGE_NOTE=" | diff $BASEREF...$HEADREF"
+fi
+
+WARN_LINES="${WARN_LINES:-$DEF_WARN_LINES}"
+WARN_FILES="${WARN_FILES:-$DEF_WARN_FILES}"
+BLOCK_LINES="${BLOCK_LINES:-$DEF_BLOCK_LINES}"
+BLOCK_FILES="${BLOCK_FILES:-$DEF_BLOCK_FILES}"
 
 for pair in "LINES=$LINES" "FILES=$FILES" "WARN_LINES=$WARN_LINES" "WARN_FILES=$WARN_FILES" "BLOCK_LINES=$BLOCK_LINES" "BLOCK_FILES=$BLOCK_FILES"; do
   val="${pair#*=}"
   [[ "$val" =~ ^[0-9]+$ ]] || die "${pair%%=*} must be a non-negative integer, got: $val"
 done
+
+# Never hide the excluded volume: a diff that is 40k lines of "generated" is a
+# broken generator, and a silent gate would be the only thing not saying so.
+GEN_NOTE=""
+if [ "$GEN_LINES" -gt 0 ] || [ "$GEN_FILES" -gt 0 ]; then
+  GEN_NOTE=" | generated excluded: $LINES handwritten + $GEN_LINES generated = $((LINES + GEN_LINES)) total lines ($FILES + $GEN_FILES = $((FILES + GEN_FILES)) files)"
+fi
+TAIL="${GEN_NOTE}${RANGE_NOTE}"
 
 # Build the breached-dimension list for a given (lines-cap, files-cap) pair.
 # Echoes a bracketed list like "[lines,files]" or "[lines]" or "[]".
@@ -86,14 +298,14 @@ breached() {
 if [ "$LINES" -gt "$BLOCK_LINES" ] || [ "$FILES" -gt "$BLOCK_FILES" ]; then
   LINES_OVER=$(( LINES > BLOCK_LINES ? LINES - BLOCK_LINES : 0 ))
   FILES_OVER=$(( FILES > BLOCK_FILES ? FILES - BLOCK_FILES : 0 ))
-  echo "Phase 3.0: BLOCK — $LINES lines / $FILES files over block ($BLOCK_LINES/$BLOCK_FILES) by +$LINES_OVER lines/+$FILES_OVER files; breached: $(breached "$BLOCK_LINES" "$BLOCK_FILES"); cannot ship as ONE PR — default auto-split into a stack of sub-cap PRs (Phase 4.2.1), or draft PR + 'blocked' with --no-split."
+  echo "Phase 3.0: BLOCK — $LINES lines / $FILES files over block ($BLOCK_LINES/$BLOCK_FILES) by +$LINES_OVER lines/+$FILES_OVER files; breached: $(breached "$BLOCK_LINES" "$BLOCK_FILES"); cannot ship as ONE PR — default auto-split into a stack of sub-cap PRs (Phase 4.2.1), or draft PR + 'blocked' with --no-split.$TAIL"
   exit 3
 fi
 
 if [ "$LINES" -gt "$WARN_LINES" ] || [ "$FILES" -gt "$WARN_FILES" ]; then
-  echo "Phase 3.0: WARN — $LINES lines / $FILES files over warn ($WARN_LINES/$WARN_FILES); breached: $(breached "$WARN_LINES" "$WARN_FILES"); note in PR description, proceed."
+  echo "Phase 3.0: WARN — $LINES lines / $FILES files over warn ($WARN_LINES/$WARN_FILES); breached: $(breached "$WARN_LINES" "$WARN_FILES"); note in PR description, proceed.$TAIL"
   exit 0
 fi
 
-echo "Phase 3.0: PASS — $LINES lines / $FILES files within warn caps (warn $WARN_LINES/$WARN_FILES · block $BLOCK_LINES/$BLOCK_FILES)"
+echo "Phase 3.0: PASS — $LINES lines / $FILES files within warn caps (warn $WARN_LINES/$WARN_FILES · block $BLOCK_LINES/$BLOCK_FILES)$TAIL"
 exit 0
