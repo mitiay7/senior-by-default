@@ -69,7 +69,7 @@ Branch already exists → increment suffix `-v2`, `-v3`, ..., **cap at `-v9` →
 
 ## Secret guard (every push) — executed by the `secret-scan` wrapper, NOT by inspection
 
-The gate is the **`secret-scan` wrapper** (`scripts/secret-scan`), invoked by the Phase 4.1.2 push block ([`phase-4-finalize.md`](phase-4-finalize.md)) — the push is dispatched on its exit code (0 = push, 3 = BLOCK, 1 = REJECT/fail-closed). Manual diff eyeballing is not the gate (anti-pattern [§19g](anti-patterns.md)).
+The gate is the **`secret-scan` wrapper** (`scripts/secret-scan`), invoked by the Phase 4.1.2 push block ([`phase-4-finalize.md`](phase-4-finalize.md)) — the push is dispatched on its exit code (0 = push, 3 = BLOCK, 4 = INCONCLUSIVE/nothing was scanned, 1 = REJECT — all three non-zero states withhold the push). Manual diff eyeballing is not the gate (anti-pattern [§19g](anti-patterns.md)).
 
 What the wrapper enforces, over the **full push range** `merge-base(origin/main, HEAD)..HEAD` (per-commit names + added content; full-tree fallback when no origin/main):
 
