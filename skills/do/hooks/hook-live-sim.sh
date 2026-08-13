@@ -106,6 +106,50 @@ stop_payload_no_msg() { # $1=transcript_path — no last_assistant_message field
 echo "R. registration (real install.sh against sandbox HOME)"
 
 cp -R "$REPO_ROOT" "$SB_INSTALL"
+# In a WORKTREE checkout `.git` is a FILE (`gitdir: …`) pointing outside the copy,
+# so the copied tree is not a repository by itself. install.sh keys its
+# already-installed branch on `[ -d "$INSTALL_DIR/.git" ]`, takes the CLONE branch
+# instead, and dies with "destination path already exists and is not an empty
+# directory" — every one of the 39 cases then fails for that one reason.
+#
+# This is not hypothetical housekeeping: the skill's own git-rules.md mandates
+# worktree-only development, so before this line the release gate for hooks/
+# could not certify any change developed the way the skill requires. Measured
+# 2026-08-13: 39/39 from the main checkout, 0/39 from a worktree of the same
+# commit (lea-docs#1463 PR).
+#
+# Re-root the copy as a standalone repo with the same CONTENT — including
+# uncommitted edits, which is the point of copying a working tree rather than
+# cloning a ref.
+if [ ! -d "$SB_INSTALL/.git" ]; then
+  rm -f "$SB_INSTALL/.git"
+  git -C "$SB_INSTALL" init -q
+  git -C "$SB_INSTALL" add -A >/dev/null 2>&1
+  git -C "$SB_INSTALL" -c user.email=sim@example.com -c user.name=sim \
+      commit -qm "hook-live-sim sandbox snapshot" >/dev/null 2>&1
+fi
+
+# The re-rooting above is also what keeps the next line inside the sandbox, and
+# THAT is the more serious half of the bug it fixes. While `.git` was a file
+# pointing at the real repository's worktree gitdir, `git -C "$SB_INSTALL"
+# remote remove origin` did not act on the copy at all — it deleted the `origin`
+# remote from the DEVELOPER'S OWN CLONE. Observed 2026-08-13 on this repository:
+# after one worktree run, `git branch -r` was empty and `git ls-remote origin`
+# answered "'origin' does not appear to be a git repository"; recovery is
+# `git remote add origin <url> && git fetch origin`, and nothing warned that it
+# had happened. A harness whose header promises "it never touches your real
+# ~/.claude, your settings.json, or a deployed install" must not mutate the
+# repository it is run from either.
+#
+# Hard-stop rather than continue: if the copy is still not self-contained, the
+# next command would reach back out of the sandbox again.
+if [ ! -d "$SB_INSTALL/.git" ]; then
+  failc "R0" "sandbox copy is not a self-contained repo — refusing to run `git remote remove` against it (it would hit the real repository)"
+  KEEP=1
+  echo "hook-live-sim: aborted before touching remotes" >&2
+  exit 1
+fi
+okc "R0 sandbox copy is a self-contained repo (worktree checkouts included)"
 git -C "$SB_INSTALL" remote remove origin >/dev/null 2>&1 || true   # never network
 
 if HOME="$SB_HOME" INSTALL_DIR="$SB_INSTALL" SKILL_NAME="do" TRIGGER=none ENABLE_HOOKS=Y \

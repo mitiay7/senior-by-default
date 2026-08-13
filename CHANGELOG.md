@@ -4,6 +4,38 @@ All notable changes to this skill will be documented here. Format follows [Keep 
 
 ## [Unreleased]
 
+### Fixed — the pre-push secret gate scanned the wrong directory and called it a pass ([lea-docs#1463](https://github.com/mitiay7/lea-docs/issues/1463))
+
+The tier-3 hook resolved the directory to scan from the hook payload's `.cwd` — the **session's** directory. In the /do flow the push runs in a worktree, so those two are almost never the same, and the session's checkout usually sits on `origin/main`. The range then came out empty, and an empty range printed:
+
+```
+Phase 4.1: SECRETS PASS — range f1c451e..f1c451e clean (0 commits, 0 files; globs=8 patterns=7)
+```
+
+Zero commits, zero files, verdict PASS. §4.1.2 instructs the model to paste that line into `gates.secret_scan` as proof the gate ran — so the **absence** of a check was filed as **evidence** of one, signed with the SHAs of a real run. Reproduced live on 2026-08-13: a commit containing a quoted password assignment was allowed through, twice in a row, on two different pushes.
+
+The hook's own header comment had already considered this case and dismissed it — *"worst case the fallback scans the wrong repo and yields an empty-range PASS — degraded to no-op, never a false block"*. That reasoning is exactly half right: there is no false block, and a no-op that prints PASS is not a no-op.
+
+Three changes, and the first one fixes the class independently of the other two:
+
+1. **`secret-scan`: an empty range is `INCONCLUSIVE`, exit 4** — never PASS. The text says `NOTHING WAS SCANNED` and refuses its own use as gate evidence. Exit 4 is deliberately non-zero so `secret-scan && git push` cannot push on it, and §4.1.2's `elif` takes the push-withheld branch.
+2. **Honest directory choice in the hook**: `git -C <dir>` → a `cd <dir>` / `pushd <dir>` in the same command → `.cwd`. The `cd` form is how a push from a worktree is actually written; the pr-size hook has resolved `cd` prefixes since v0.13.0 while the hook guarding the *irreversible* skip did not. When the resolved directory turns up empty, every worktree of that repository ahead of `origin/main` is scanned and the verdicts unioned — one BLOCK blocks.
+3. **Every verdict line names the directory** (`[dir: <abs path>]`). Before this, a scan of the wrong checkout was textually indistinguishable from a successful one.
+
+If nothing anywhere has commits to scan, the push is still allowed — a backstop must not break legitimate pushes — but the injected context says `NOT SCANNED` outright and refuses to be used as evidence.
+
+### Fixed — `hook-live-sim.sh` could not certify a change developed in a worktree
+
+Found while trying to run the release gate on the fix above. The harness copies the repository into its sandbox with `cp -R`; in a **worktree** checkout `.git` is a *file* pointing outside the copy, so the copied tree is not a repository. `install.sh` keys its already-installed branch on `[ -d "$INSTALL_DIR/.git" ]`, took the clone branch instead, and died with *"destination path already exists and is not an empty directory"* — after which all 39 cases failed for that single reason.
+
+Measured on the same commit: **39/39 from the main checkout, 0/39 from a worktree of it.** The skill's own `git-rules.md` mandates worktree-only development, so the gate that CONTRIBUTING requires before any release touching `hooks/` was unable to certify changes made the way the skill requires — and its failure looked like 39 unrelated regressions rather than one environmental cause.
+
+**And the failing clone was the milder half.** While `.git` was a file pointing at the real repository's worktree gitdir, the harness's very next line — `git -C "$SB_INSTALL" remote remove origin`, there to keep the sandbox off the network — did not act on the copy at all: it deleted the `origin` remote from **the developer's own clone**. Observed on this repository during the work: after one worktree run `git branch -r` was empty and `git ls-remote origin` answered *"'origin' does not appear to be a git repository"*, with nothing said about it. Recovery is `git remote add origin <url> && git fetch origin`, but you have to notice first. A harness whose header promises it "never touches your real `~/.claude`, your `settings.json`, or a deployed install" must not mutate the repository it is run from either.
+
+The copy is now re-rooted as a standalone repository (preserving uncommitted edits, which is why it copies a working tree instead of cloning a ref), the remote-removal is **hard-gated** on the copy actually being self-contained — it aborts rather than reaching outside the sandbox — and a new `R0` assertion states that gate. 40/40 from a worktree and 40/40 from the main checkout.
+
+**Verified:** new [`tests/secret-scan-worktree-scope.test.sh`](tests/secret-scan-worktree-scope.test.sh) — 21 assertions, synthetic repos, no network. Covers both wrapper verdicts and both hook paths (`cd`-form push, bare push resolved through the worktree fan-out), the genuinely-clean pass, and the nothing-to-scan case asserting the context does **not** offer itself as gate evidence. Case M mechanically strips both mechanisms out of the real hook and asserts the secret push is no longer blocked — without it the passing cases could hold for unrelated reasons.
+
 ### Added — `config.pr_size.generated_paths`: the size gate stops counting machine-generated artifacts as handwritten code ([lea-docs#1399](https://github.com/mitiay7/lea-docs/issues/1399))
 
 The Phase 3.0 gate summed every line in the diff into one number. In a repo that **commits machine-generated files** that measures the wrong quantity: a reviewer does not read `openapi/routes.json` line by line — a drift check in `make ci` keeps it correct. The observable consequence was a threshold ratchet. One downstream repo (`lea-api`) raised `block_lines` **three times inside a single epic** — 2000→3000 (2110 lines, 746 of them generated), 3000→4000, 4000→4500 (4357 lines: 3574 handwritten + 783 generated) — and the next two issues of that epic were going to hit the cap again *by construction* (another ~746-line artifact, then the full OpenAPI document). Each bump weakened the gate for the whole repository, including the PRs where 4000 lines really are handwritten and really do need splitting.

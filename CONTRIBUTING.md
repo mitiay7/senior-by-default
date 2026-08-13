@@ -100,6 +100,12 @@ There's no automated functional test suite — the skill runs through Claude. Sm
    bash tests/pr-size-generated-paths.test.sh   # 24 assertions, synthetic repos, sandboxed
    ```
 
+   The pre-push secret gate has its own suite — run it if you touch `secret-scan`, `do-secret-scan-pretooluse.sh`, or §4.1.2. It asserts what the gate does when it is pointed at the WRONG directory, which is the state that let a secret through on 2026-08-13 (lea-docs#1463):
+
+   ```bash
+   bash tests/secret-scan-worktree-scope.test.sh   # 21 assertions, synthetic repos, sandboxed
+   ```
+
 ## Adding a new tracker
 
 To support a new issue tracker beyond GitHub/GitLab:
