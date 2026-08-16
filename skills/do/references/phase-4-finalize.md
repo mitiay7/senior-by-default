@@ -408,13 +408,47 @@ announce coupling depends on capturing its stdout into `$METRICS_LINE`):
    --auto-merge              "$AUTO_MERGE_FLAG" \              # optional, defaults false
    --blocked-reason          "$BLOCKED_REASON" \               # optional
    --title                   "$TITLE" \                        # optional
-   --scope                   "$SCOPE" \                        # optional
+   --scope                   "$SCOPE" \                        # optional — normalized to
+                                                               #   backend|frontend|fullstack|infra|docs
+                                                               #   (case folded, "B"/"F"/"api"/"ui" expanded);
+                                                               #   anything else preserved with a stderr NOTE
    --notes                   "$NOTES" \                        # optional free-text
-   --specialist-iterations-json "$SPECIALIST_ITERATIONS_JSON" \# optional
+   --specialist-iterations-json "$SPECIALIST_ITERATIONS_JSON" \# optional — but REQUIRED (non-[]) whenever
+                                                               #   gates.specialist_audit.status is a real
+                                                               #   verdict; see "Contradictions" below
    --sr-miscalibrated-json   "$SR_MISCALIBRATED_JSON" \         # optional, defaults []
    --tokens-in               "$TOKENS_IN" \                     # optional — harness-reported ONLY, never estimated
    --tokens-out              "$TOKENS_OUT"]                     # optional — see "Computing $TOKENS_IN/$TOKENS_OUT"
 ```
+
+#### Contradictions the wrapper rejects (v0.13.0)
+
+Two REJECTs were added after reading 93 production entries. Both are contradictions
+fully expressible in the wrapper's own inputs — the same standard as the existing
+`outcome`/`blocked_reason` pair — and both were previously silent corruptions of an
+aggregate rather than visible errors:
+
+- **`gates.specialist_audit.status` is a real verdict (`pass`/`warn`/`fail`/`block`) while
+  `--specialist-iterations-json` is `[]`.** The gate says N agents reviewed the diff; the
+  detail array says none ran. Such an entry parses, passes the schema gate, and
+  contributes *nothing* to the SPECIALIST AUDITS aggregate — which is how it went
+  unnoticed across 14 of 34 audited runs (i1540 recorded `auditors: 4, approvers: 4` in
+  the gate details next to an empty array). Fix: pass the real cycles from §3.6. If
+  specialists genuinely did not run, the gate status is `skipped`.
+- **A duplicate `(ref, started_at)` pair already on the log.** Re-running `/do` on one
+  issue is legitimate and carries its own start time; a re-fired finalize or a retried
+  append repeats both. Origin: i1183 is a byte-identical duplicate line, i1233 appears
+  twice with different bodies, and each was double-counted in every tier count, gate
+  rate, and calibration figure. **If the wrapper already printed an `OK`, the append
+  succeeded — do not retry it.** `--allow-duplicate-ref` exists only for two genuine runs
+  that started inside the same second.
+
+Two more inputs are normalized rather than rejected, because a hard failure on a
+descriptive field would pressure the caller into the §19a direct-write bypass — losing
+the whole entry to save one string: `--scope` (folded to the controlled vocabulary, with
+a NOTE when it lands outside it) and bare-string `blockers[]` (lifted to
+`{agent: "<string>"}`, `category`/`summary` left absent rather than fabricated). Details
+and origins: [`config-authoring.md`](config-authoring.md) §"Field vocabularies".
 
 #### Defense in depth
 
@@ -594,6 +628,14 @@ ${SPLIT_LINE:+$SPLIT_LINE
 ${METRICS_LINE}.
 EOF
 ```
+
+### The announce is a protocol, not prose — emit it in English even in a non-English session
+
+The heredoc above is **machine-parsed**, and by two consumers that never see the rest of the turn: `do-metrics-stop-gate.sh` (enforcement — asserts a `Metrics:` line exists) and `do-tokens-stop-amend.sh` (enrichment — resolves the log path and the ref out of these exact lines). Both are anchored greps against the literal tokens `Complete. Branch:`, `Models: orchestrator=`, `Metrics:`.
+
+So the announce block is emitted **verbatim in English regardless of the session language**, exactly like a commit trailer or a JSON key. Translating `Complete. Branch:` into the user's language does not localize the output — it disconnects the hooks, and it does so silently, because both hooks are designed to no-op rather than block. That is not hypothetical: v0.12.0 shipped the token hook, the next `/do` run was conducted in Russian, and the entry landed with **no `tokens` field and no error anywhere** — a shipped feature that produced nothing on its only opportunity to fire. v0.13.0 hardened the hook (it now also triggers on the machine-readable `Metrics:` line, which has no translatable words in it) and added `DO_TOKENS_DEBUG=1` to print the reason for each silent no-op, but the guarantee lives here: **emit the block as written.**
+
+Say whatever you like *around* it in the session's language — a Russian summary above or below the block is fine and expected. The five announce lines themselves do not get translated, reordered, reformatted, or "cleaned up".
 
 ### Why structural coupling + external wrapper, not soft instruction
 

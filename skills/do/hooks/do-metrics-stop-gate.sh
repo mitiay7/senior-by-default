@@ -73,6 +73,17 @@ fi
 [ -z "$MSG" ] && exit 0   # nothing to inspect → allow
 
 # /do finalize signature. Neither present → not a /do finalize turn → allow.
+#
+# These are English literals and stay English literals: the §4.13 announce is a
+# PROTOCOL block, mandated to be emitted verbatim regardless of the session's
+# language (phase-4-finalize.md §"The announce is a protocol, not prose"). A
+# translated announce reads as "not a finalize turn" here and this gate allows
+# it — the enforcement disappears silently, which is precisely the §19a
+# direct-write bypass it exists to catch. Do NOT try to fix that by guessing at
+# translations; fix it upstream by emitting the block as written. (The sibling
+# token hook additionally triggers on the machine-readable `Metrics:` line,
+# which carries no translatable words — that widening is safe there because it
+# only ever ENRICHES; widening an enforcement trigger is a different risk.)
 printf '%s\n' "$MSG" | grep -qE '^(Complete\. Branch:|Models: orchestrator=)' || exit 0
 
 # Template-quoting guard (false-positive fix): a message carrying unexpanded

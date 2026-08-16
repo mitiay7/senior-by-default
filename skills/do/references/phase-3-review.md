@@ -47,6 +47,8 @@ All applicable gates must PASS before 3.6 / 3.7 — **except a `pr_size` BLOCK w
 
 Run the wrapper against the worktree — it measures the diff itself. Do NOT eyeball the numbers and decide PASS/WARN/BLOCK yourself, and do NOT hand it counts you computed: production shipped **8 PRs >2000 lines as `pr_size=warn`** because the orchestrator read "block → STOP" and treated it as advisory (anti-patterns §19f / §21). The wrapper owns both the measurement and the decision; **BLOCK exits 3 (a hard halt)**, so it cannot be narrated past.
 
+**The warn caps come from the run's own tier (v0.13.0).** `--tier "$COMPLEXITY"` makes the amber threshold the same budget Phase 2.0 approved the plan against (T 2f/50L · L 3/200 · M 8/600 · H 25/1500 — `plan-size-check`'s buckets). Before this the caps were flat 800/20 for every tier, which sat *below* the H bucket's own 1500-line cap: an H plan that legitimately PASSED §2.0 at 1400 lines was **guaranteed** to WARN at §3.0 for being exactly the size it was authorized to be. Telemetry across 93 runs: `pr_size` warned on 43 of 86 — 80 % of all H runs — so amber meant nothing, and `calibration_size` (which scores the self-review's size prediction *against this gate*) sat at 53 %, a coin flip. WARN now states one interpretable fact: **the delivered diff exceeded the budget its own plan was approved against.** Block caps are unchanged and deliberately tier-independent — "unreviewable as one PR" is a property of the diff, not of the tier that produced it. A project that sets `config.pr_size.warn_lines`/`warn_files` still wins over the tier bucket; the verdict line names which source it used (`[warn caps: tier H]`).
+
 **Generated artifacts don't count as handwritten code.** A repo that commits machine-generated files — `openapi/*.json`, `*.pb.go`, snapshots — sets `config.pr_size.generated_paths` (glob list) and the wrapper subtracts those paths from the counted lines/files. Nobody reviews them line by line; a drift check in CI keeps them honest, so counting them measures the wrong quantity and pushes the repo into serial threshold bumps (the lea-api ledger: 2000→3000→4000→4500 across one epic, every bump caused by generated files). The excluded volume is **always printed** next to the counted volume (`900 handwritten + 1200 generated = 2100 total lines`) — hiding it would hide "the generator produced a 40k-line diff". The list lives only in the repo's committed config; there is no per-run flag, so this is not a way to talk a BLOCK down.
 
 **BLOCK → auto-split by default (v0.11.0).** A BLOCK verdict means the change cannot ship as ONE PR. It is *never* downgraded to a single mergeable PR. But the default response is no longer "halt and ask the user to split" — it is to **split automatically in Phase 4.2** into a stack of individually-reviewable, sub-cap PRs (via the `pr-split` wrapper). Resolve `CFG_AUTO_SPLIT` from `config.pr_size.auto_split` (default `true`); `--no-split` in `$ARGUMENTS` or `auto_split:false` reverts to the pre-0.11 hard halt (draft PR + `blocked`, user splits manually). Auto-split sets `PR_SPLIT_REQUIRED=1` and **continues** the rest of Phase 3 on the full diff — it does NOT set `BLOCKED`, because the run ends `ready_for_review` with *k* open PRs, not blocked.
@@ -73,6 +75,10 @@ DO_SCRIPTS="$(find -L ${CLAUDE_PLUGIN_ROOT:+"$CLAUDE_PLUGIN_ROOT/skills"} "$HOME
 # and zsh, skips unset/empty values, and keeps values containing spaces intact.
 PR_SIZE_ARGS=()
 add_opt() { [ -n "${2:-}" ] && PR_SIZE_ARGS+=("$1" "$2"); return 0; }
+# The ROUTED tier (post-rebump — if Phase 2.0 re-bumped M→H, the H budget is the
+# one this diff was authorized against). Warn caps come from it unless the
+# project overrides them below.
+add_opt --tier        "${COMPLEXITY:-}"
 add_opt --warn-lines  "${CFG_WARN_LINES:-}"
 add_opt --warn-files  "${CFG_WARN_FILES:-}"
 add_opt --block-lines "${CFG_BLOCK_LINES:-}"
@@ -313,6 +319,7 @@ Acceptance criteria PASS / FAIL — check each from the issue:
 
 - **Requirements** → each checkbox maps to diff
 - **Tests pass** → §3.1 `VERIFY PASS` test leg from YOUR wrapper re-run (the Sonnet report alone is never evidence — §19h); coverage listed in self-review
+- **Guard coverage** → the self-review's `guard_coverage:` tally (Phase 2.5 step 3) is present, and its `mutation-verified` count covers every new/changed condition you can see in the diff — `if`/`switch` arms, `WHERE` / `ON CONFLICT` predicates, middleware and route guards, permission / ownership / tenancy checks, retry and timeout branches, early returns, success callbacks. A guard the implementer listed as `deferred` is a **known** gap: judge it on merit. A guard present in the diff and **absent from the tally** is an unknown one — spot-check it by inverting the condition and running the named test yourself; a suite that stays green is a FAIL with criterion `guard-coverage`. This is the largest single defect class in the pipeline's history (~25 % of all criteria failures across 93 runs), which is why it is checked here and not left to the tests-pass line above.
 - **Build passes** → §3.1 `VERIFY PASS` build + lint legs from the same run — rc=0 for ALL commands in Build/Lint/Test
 - **No hardcoded strings** → confirmed by 3.3
 - **Migration applies** → confirmed in Sonnet report; zero-downtime audit PASS

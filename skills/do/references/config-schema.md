@@ -89,10 +89,10 @@ After PR creation (Phase 4.2), enable auto-merge so PR merges automatically when
 
 #### `pr_size`
 Phase 3.0 (pre-gate) check. The `pr-size-check` wrapper measures the diff itself (`--repo`) — the spec never pre-computes counts.
-- `warn_lines: 800` (default) — warn user, proceed
-- `warn_files: 20`
+- `warn_lines`, `warn_files` — warn user, proceed. **Unset, these come from the run's complexity tier** (v0.13.0): T 2 files/50 lines · L 3/200 · M 8/600 · H 25/1500 — the same buckets `plan-size-check` gates the *plan* against, so WARN means one interpretable thing: the delivered diff exceeded the budget its own plan was approved against. Setting either key pins that dimension for **every** tier, which is a real trade: it is the right call when a repo's shape genuinely differs from the buckets, and the wrong one if you are only trying to silence H-tier warns (that is what the tier default now does correctly). The verdict line names the source it used — `[warn caps: tier H]` / `[warn caps: config]` / `[warn caps: lines=cli files=config]`. The flat pre-0.13 defaults (800/20) remain in force for any caller that passes no tier, which includes the PreToolUse hook.
 - `block_lines: 2000` — over this, the change cannot ship as ONE PR
 - `block_files: 50`
+  Block caps are deliberately **tier-independent**: an unreviewable diff is unreviewable whoever planned it. This is also what keeps the two enforcement tiers honest — the hook cannot know the run's tier, and since it only ever DENIES on BLOCK, it cannot disagree with the gate on anything enforced.
 - `generated_paths: []` (default) — globs for **machine-generated files committed to the repo** (`["openapi/*.json", "**/*.pb.go"]`). Their lines/files are subtracted from the counted size: a reviewer doesn't read them line by line, a drift check in CI keeps them correct, so counting them measures the wrong thing and forces serial threshold bumps. Both enforcement tiers honor it — the wrapper reads the key, the PreToolUse hook delegates *to the wrapper* — so gate and hook can't split WARN/BLOCK on one diff. The excluded volume is always printed alongside the counted one (`900 handwritten + 1200 generated = 2100 total lines`); it is never hidden. There is no per-run CLI flag, on purpose: the list can only come from the repo's committed config, so it can't be widened to argue a BLOCK down. Globs: `*` doesn't cross `/`, `**` does, `?` = one non-`/` char, a slash-free pattern matches at any depth, a trailing `/` means everything under; no character classes.
 - `auto_split: true` (default) — on a BLOCK, Phase 4.2.1 auto-splits delivery into a **stack of sub-cap PRs** (`pr-split` wrapper) each ≤ the WARN caps, reviewed once as a unit and merged in order; the run ends `ready_for_review` with *k* open PRs. Set `false` (or pass `--no-split`) to revert to the pre-0.11 hard halt: draft PR + `blocked` label, user splits manually.
 
@@ -199,7 +199,7 @@ Override either array to customize. Set `trigger_keywords: []` AND `branch_prefi
 ## Defaults if no config
 
 - Single-repo: CWD must be inside a git repo
-- All Phase 1-4 features above: skipped or use built-in defaults (CI gate OFF (opt-in only — most setups have no cloud CI), auto-merge OFF, self-review ON, PR-size guard ON with the `pr_size` thresholds above (warn 800/20, block 2000/50), stale-main check ON with the `stale_main` thresholds above (warn 20 / block 50 — Phase 2.0.5 applies them whether or not `stale_main` is configured), CODEOWNERS routing ON if file exists, WIP limit OFF (opt-in only), concurrent-edit check ON, security scan ON with threshold "high", everything else OFF)
+- All Phase 1-4 features above: skipped or use built-in defaults (CI gate OFF (opt-in only — most setups have no cloud CI), auto-merge OFF, self-review ON, PR-size guard ON with the `pr_size` thresholds above (warn = the run's tier bucket, block 2000/50), stale-main check ON with the `stale_main` thresholds above (warn 20 / block 50 — Phase 2.0.5 applies them whether or not `stale_main` is configured), CODEOWNERS routing ON if file exists, WIP limit OFF (opt-in only), concurrent-edit check ON, security scan ON with threshold "high", everything else OFF)
 - Acceptance extensions: none
 - Issue locale: en
 - Memory path: auto

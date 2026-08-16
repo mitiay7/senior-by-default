@@ -42,6 +42,15 @@
 # in the §3.0 wrapper call and NOT here: gate says WARN, hook says BLOCK. That
 # split is what lea-docs#1399 was filed over; one implementation is the fix.
 #
+# NO `--tier` HERE, ON PURPOSE (v0.13.0). §3.0 passes the run's complexity tier
+# so the WARN cap matches the budget the plan was approved against; a PreToolUse
+# hook sees only a shell command and cannot know the tier. That is safe because
+# the ONLY thing this hook enforces is BLOCK, and block caps are deliberately
+# tier-independent — an unreviewable diff is unreviewable whoever planned it. So
+# the enforced verdict can never split between the two callers; at most the
+# advisory WARN *text* differs, and the wrapper stamps `[warn caps: …]` on its
+# line so a reader can see which budget produced it.
+#
 # Inputs it derives (all from the hook payload + the repo, never trusted from
 # the model): repo dir = leading `cd <dir> &&` in the command (quote-stripped;
 # an unexpandable `$VAR` falls through) else the call's `.cwd`; base ref =
