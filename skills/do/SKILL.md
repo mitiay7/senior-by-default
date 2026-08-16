@@ -1,6 +1,6 @@
 ---
 name: do
-version: 0.12.0
+version: 0.13.0
 model: opus
 description: |
   Multi-actor implementation pipeline for Claude Code. Routes coding tasks by complexity (Trivial→Haiku, Low/Medium→Sonnet, High→Sonnet plan + specialist/Opus plan review + Sonnet impl), creates issue in tracker, runs gated review (PR-size, dep-vuln, i18n, contract, zero-downtime migration audit), opens PR with optional CI gate and auto-merge. `+++`-form invocations additionally merge the gated branch and clean the worktree at the end (opt out with `nomerge`).

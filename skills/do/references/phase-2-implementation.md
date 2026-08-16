@@ -285,10 +285,20 @@ Now, the rules for the implementation work:
 After implementation + tests + build pass, run a self-review pass:
 1. For EACH acceptance criterion, cite the file:line that proves it implemented (or "test name" for test criteria).
 2. For EACH new public function with branching logic, name the happy-path test AND error-path test that cover it.
-3. Re-read your own diff (`git diff main...HEAD`) and check against the rules above + the issue's "Out of Scope" section.
-4. Confirm simplicity + surgical scope: no speculative abstraction/config/deps/flags, no unrelated formatting/comment churn, every changed line traceable to the task.
-5. Flag anything you skipped or deferred. Don't hide it.
-6. **Size check on the ACTUAL diff — wrapper-owned, run verbatim.** The bucket caps are deliberately NOT printed in this prompt (copyable caps get eyeballed, and eyeballed checks get skipped) — the same `plan-size-check` wrapper that gated the plan judges the real diff:
+3. **Guard coverage — invert every new condition and prove a test goes red.** A test that exercises a guard's *code path* is not the same as a test that fails when the guard is *wrong*, and only the second one is coverage. This step is here because it is the single largest defect class the pipeline still ships into Phase 3: across 93 production runs, **~25 % of all Phase 3 criteria failures were exactly this** — new guard written, guard not covered, whole suite green. The reviewer's own words, verbatim from telemetry: *"scope==crm guard was mutation-provably untested"*, *"second ON CONFLICT condition mutation-provably untested"*, *"emptying all three dialogs onSuccess left the entire 818-test admin suite green"*.
+
+   Enumerate every **new or changed condition** in the diff — `if`/`switch` arms, `WHERE` / `ON CONFLICT` predicates, middleware and route guards, permission / ownership / tenancy checks, retry and timeout branches, early returns, success callbacks and toasts. For each one:
+
+   1. Name the test that is supposed to cover it.
+   2. **Invert the condition in place** — flip `==` to `!=`, drop the trailing `AND` clause, empty the guard body, delete the callback.
+   3. Re-run **only that test** (not the suite — this is a per-condition local check, and it is cheap precisely because it is scoped).
+   4. Still green ⇒ the guard is untested; the test is asserting something else. **Restore the condition immediately** (undo the edit / `git checkout -p`), then either add the missing case or list the guard under `Deferred (code)`.
+
+   A guard whose inversion genuinely cannot be tested cheaply (needs infrastructure, external service, real clock) goes under `Deferred (code)` **with the reason**. That is a signal Phase 3 can act on, not a failure — the failure is claiming `ready` over an unverified guard. Report the tally on the machine-readable `guard_coverage:` line in the output block below.
+4. Re-read your own diff (`git diff main...HEAD`) and check against the rules above + the issue's "Out of Scope" section.
+5. Confirm simplicity + surgical scope: no speculative abstraction/config/deps/flags, no unrelated formatting/comment churn, every changed line traceable to the task.
+6. Flag anything you skipped or deferred. Don't hide it.
+7. **Size check on the ACTUAL diff — wrapper-owned, run verbatim.** The bucket caps are deliberately NOT printed in this prompt (copyable caps get eyeballed, and eyeballed checks get skipped) — the same `plan-size-check` wrapper that gated the plan judges the real diff:
 
    ```bash
    # Canonical do-scripts resolver — identical line as everywhere else in this skill.
@@ -305,22 +315,26 @@ After implementation + tests + build pass, run a self-review pass:
    ```
 
    (`{COMPLEXITY}` is the literal tier letter, interpolated by the orchestrator — same value as the `PLAN-SIZE:` marker in Flags.) Dispatch on the line: `PASS` → `size_assessment: fits`. `REBUMP`/`SPLIT-REQUIRED` → `size_assessment: exceeds` AND claimed_status MUST be `deferred`, not `ready` — quote `$ACTUAL_SIZE_LINE` verbatim (its `[tell:…]` suffix included) under `Deferred (size)` with a re-route hint. `SIZE CHECK UNAVAILABLE` → `size_assessment: unknown`, quote the line. Calibration rationale: production audit of 32 post-v0.6.0 entries showed M-tasks shipping far over bucket while self-claiming `ready`, with Phase 3 catching `pr_size=warn` after the fact — wasted cycles. Phase 2.0 plan-size check is layer 1 (plan-time estimates); this is layer 2 on the ACTUAL post-write diff, judged by the same wrapper so the two layers cannot drift. If both layers miss, that's a calibration-data-point for skill iteration.
-7. **Declare an overall claimed_status** — one of:
-   - `ready` — all acceptance criteria implemented + verified, no known issues, AND diff fits the routed bucket
-   - `deferred` — implemented + tested, but explicitly deferred something (with note) OR diff exceeds routed bucket caps (re-route hint above)
+8. **Declare an overall claimed_status** — one of:
+   - `ready` — all acceptance criteria implemented + verified, no known issues, every new guard mutation-verified (step 3), AND diff fits the routed bucket
+   - `deferred` — implemented + tested, but explicitly deferred something (with note) OR left a guard un-mutation-verified OR diff exceeds routed bucket caps (re-route hint above)
    - `uncertain` — uncertain about a specific aspect (Phase 3 should pay extra attention here)
-8. **Distinguish a CODE concern from a SIZE concern when you defer.** Phase 4.11 splits self-review calibration into two de-confounded dimensions: `calibration_defect` (did you miss a real code defect?) and `calibration_size` (did you predict diff size?). So when you defer/flag, say WHICH it is — a deferral for "diff size exceeds bucket" is a size signal, not a defect. Emit the explicit `size_assessment:` line so this is machine-readable rather than guessed from prose.
+9. **Distinguish a CODE concern from a SIZE concern when you defer.** Phase 4.11 splits self-review calibration into two de-confounded dimensions: `calibration_defect` (did you miss a real code defect?) and `calibration_size` (did you predict diff size?). So when you defer/flag, say WHICH it is — a deferral for "diff size exceeds bucket" is a size signal, not a defect. Emit the explicit `size_assessment:` line so this is machine-readable rather than guessed from prose.
 
 Output the self-review as a section in your completion report (this section is parsed by Phase 4.11 for metrics calibration — match the format):
 ```
 ## Self-Review
 claimed_status: ready
-size_assessment: fits          # fits | exceeds | unknown — from the step-6 wrapper verdict on the ACTUAL diff, never eyeballed (drives calibration_size)
+size_assessment: fits          # fits | exceeds | unknown — from the step-7 wrapper verdict on the ACTUAL diff, never eyeballed (drives calibration_size)
 Acceptance Criterion 1: ✓ {file.go:42}
 Acceptance Criterion 2: ✓ {file.go:80}, test {file_test.go: TestX}
 Tests for new fns:
   - HandleFoo: TestHandleFoo_OK / TestHandleFoo_ErrInvalidInput
   - HandleBar: TestHandleBar_OK / TestHandleBar_ErrNotFound
+guard_coverage: 4 new, 4 mutation-verified, 0 deferred   # step 3 — new/changed conditions; "verified" = inverting it turned a named test RED
+Guard mutations:
+  - service.go:169 `scope == "crm"` → inverted → TestGrantScope_RejectsNonCRM RED ✓
+  - repository.go:88 ON CONFLICT `AND deleted_at IS NULL` → dropped → TestUpsert_SkipsSoftDeleted RED ✓
 Simplicity/surgical check: no speculative abstractions or drive-by edits; changed lines trace to task
 Out-of-scope check: no scope creep detected
 Deferred (code): {nothing | "concurrency in connection pool — flagged for reviewer"}
@@ -329,6 +343,8 @@ Uncertain: {none | "..."}
 ```
 
 The first line `claimed_status: <ready|deferred|uncertain>` is REQUIRED — Phase 4.11 reads it to compute self-review calibration by comparing against actual Phase 3 outcomes. The `size_assessment: fits|exceeds` line and the split `Deferred (code)` / `Deferred (size)` framing feed the two calibration dimensions (`calibration_defect`, `calibration_size`). This is the highest-signal data point for skill iteration; do not omit.
+
+`guard_coverage:` is the step-3 tally and is REQUIRED whenever the diff introduces or changes a condition (`0 new, 0 mutation-verified, 0 deferred` is a legitimate line for a pure-refactor or docs diff — an *absent* line is not). "mutation-verified" has exactly one meaning: **you inverted the condition and watched a named test go red.** A guard you merely believe is covered counts as `deferred`, not `verified` — over-claiming here is the specific behavior that put this class at ~25 % of Phase 3 failures, and claiming `ready` over an unverified guard is what `calibration_defect` scores as a `false_positive`.
 
 [+ if --no-self-review in $ARGUMENTS: omit this entire section, metrics will record `self_review.performed: false`]
 ```

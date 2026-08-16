@@ -21,9 +21,8 @@
     }
   },
 
-  "_pr_size_note": "generated_paths excludes committed machine-generated artifacts from the Phase 3.0 size verdict — a reviewer doesn't read them line by line, a drift check in CI keeps them correct. Both enforcement tiers (the pr-size-check wrapper and the do-pr-size-pretooluse.sh hook) read this same key. The excluded volume is still printed next to the counted one, so a runaway generator stays visible. Delete this block if your repo commits no generated files.",
+  "_pr_size_note": "generated_paths excludes committed machine-generated artifacts from the Phase 3.0 size verdict — a reviewer doesn't read them line by line, a drift check in CI keeps them correct. Both enforcement tiers (the pr-size-check wrapper and the do-pr-size-pretooluse.sh hook) read this same key. The excluded volume is still printed next to the counted one, so a runaway generator stays visible. Delete this block if your repo commits no generated files. NOTE (v0.13.0): warn_lines/warn_files are deliberately NOT set here. Left unset they come from the run's complexity tier (T 2f/50L · L 3/200 · M 8/600 · H 25/1500 — the same buckets the plan was gated against), which is what makes a WARN mean something. Setting them pins one flat cap across every tier; only do that if your repo's shape genuinely differs from the buckets.",
   "pr_size": {
-    "warn_lines": 800,
     "block_lines": 2000,
     "generated_paths": ["api/openapi/*.json", "**/*.pb.go", "web/src/api/generated/**"]
   },

@@ -203,7 +203,7 @@ The shape `metrics-append` writes when `metrics.tier: 1` — consulted when work
   "started_at": "ISO8601",
   "ended_at": "ISO8601",
   "complexity": "M",
-  "scope": "Frontend|Backend|Fullstack",
+  "scope": "backend|frontend|fullstack|infra|docs",
   "implementer": "sonnet|opus|haiku",
   "models": {
     "orchestrator": "opus",
@@ -263,6 +263,18 @@ The shape `metrics-append` writes when `metrics.tier: 1` — consulted when work
                                     // improving or plan-size is the load-bearing layer.
 }
 ```
+
+### Field vocabularies and the contradictions the wrapper rejects (v0.13.0)
+
+Three shapes above are enforced, not merely documented — each because the un-enforced version drifted in production and quietly corrupted an aggregate:
+
+- **`scope` is a controlled vocabulary**: `backend | frontend | fullstack | infra | docs`. `metrics-append` folds case and expands the common shorthands (`B`/`be`/`api`/`server` → `backend`, `F`/`fe`/`ui`/`web` → `frontend`, `fs`/`full-stack` → `fullstack`, …). Anything outside the list is **preserved with a stderr NOTE**, never rejected — a descriptive field is not worth pushing a caller toward the §19a direct-write bypass. Origin: 93 entries carried eleven spellings of six concepts (`backend` 27, `Backend` 24, `B` 3, `Frontend` 14, `frontend` 4, `F` 1, …), so every per-scope aggregate silently split one bucket into three.
+- **`blockers[]` is an array of objects**, `{agent, category, file_line, summary}` — never bare agent-name strings. The wrapper lifts stray strings to `{agent: "<string>"}` and leaves `category`/`summary` **absent rather than stubbed** (inventing them would be the exact fabrication the anti-stub gate exists to catch), with a NOTE. Origin: i1233 wrote both cycles as string arrays; every consumer doing `.blockers[].category` then died mid-report with `Cannot index string with string`, and `metrics-report` scored those blockers as zero.
+- **`specialist_iterations` must be non-empty whenever `gates.specialist_audit.status` is a real verdict** (`pass`/`warn`/`fail`/`block`). The wrapper REJECTs the combination: the gate saying N agents reviewed the diff while the array says none ran is a contradiction fully expressible in its own inputs — same class as the `outcome`/`blocked_reason` check. It parses and passes the schema gate, yet contributes nothing to the specialist aggregate, which is how it went unnoticed for 14 of 34 audited runs (i1540 recorded `auditors: 4, approvers: 4` in the gate details next to an empty array). If specialists genuinely did not run, the honest gate status is `skipped`.
+
+**Agent naming**: the namespaced form (`backend-development:security-auditor`) is canonical. Production logs carry both it and the bare `security-auditor` for the same agent, sometimes inside one entry; the wrapper does **not** rewrite either (the prefix is real information and it has no manifest to expand a bare name against) but does NOTE the mixture, and every consumer folds on `split(":") | last`.
+
+**Duplicate entries**: identity is `(ref, started_at)`. A second append with both equal is REJECTed — re-running `/do` on the same issue is legitimate and carries its own start time, whereas a re-fired finalize or a retried append repeats both. Origin: i1183 is a byte-identical duplicate line and i1233 appears twice with different bodies, each double-counted in every tier count, gate rate, and calibration figure. `--allow-duplicate-ref` exists only for two genuine runs starting inside the same second.
 
 **Gate keys are a controlled vocabulary.** The `gates` object's keys are normalized by
 the `metrics-append` wrapper to a canonical set (`build`, `lint`, `type_check`, `test`,

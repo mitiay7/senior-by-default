@@ -248,10 +248,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "warn_lines":  { "type": "integer", "minimum": 0 },
-        "warn_files":  { "type": "integer", "minimum": 0 },
-        "block_lines": { "type": "integer", "minimum": 0 },
-        "block_files": { "type": "integer", "minimum": 0 },
+        "warn_lines":  { "type": "integer", "minimum": 0,
+          "description": "Phase 3.0 WARN threshold on counted lines. LEAVE UNSET unless you mean it: unset, the cap comes from the run's complexity tier (T 50 / L 200 / M 600 / H 1500 — the same buckets plan-size-check gates the plan against), so a WARN means 'this diff exceeded the budget its own plan was approved against'. Setting this pins one flat cap across every tier, which is how the pre-0.13 default (800) ended up below H's own 1500-line plan ceiling and warned on 80% of H runs. Per-run override: --warn-lines." },
+        "warn_files":  { "type": "integer", "minimum": 0,
+          "description": "Phase 3.0 WARN threshold on counted files. Same tier-derived default as warn_lines (T 2 / L 3 / M 8 / H 25); leave unset to use it. Per-run override: --warn-files." },
+        "block_lines": { "type": "integer", "minimum": 0,
+          "description": "Phase 3.0 BLOCK threshold on counted lines (default 2000). Deliberately tier-INDEPENDENT: an unreviewable diff is unreviewable whoever planned it, and it is what lets the PreToolUse hook — which cannot know the run's tier — enforce the same verdict as the gate." },
+        "block_files": { "type": "integer", "minimum": 0,
+          "description": "Phase 3.0 BLOCK threshold on counted files (default 50). Tier-independent, same reason as block_lines." },
         "auto_split":  { "type": "boolean", "description": "On a Phase 3.0 BLOCK, split delivery into a stack of sub-cap PRs (Phase 4.2.1) instead of halting. Default true; false reverts to the pre-0.11 draft-PR + blocked hard halt. Per-run override: --no-split." },
         "generated_paths": {
           "type": "array",

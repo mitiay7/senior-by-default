@@ -77,6 +77,24 @@ The 2026-07-17 re-audit's biggest measurement finding: across 369 telemetry entr
 - **Window** — `[started_at − 120s, ended_at + 900s]` bounds the sum to this task; both bounds unusable → whole-transcript sum (a /do run is one task per session). All-zero → no write (absence stays honest; the hook never records `{in:0,out:0}`).
 - **Still harness-measured** — every summed figure is a number the harness recorded, so the estimate ban holds; the manual flags remain legal for an operator who genuinely has a readout.
 
+**What v0.12.0's hook actually produced: nothing (and why that took a release to notice).** Between shipping it on 2026-08-08 and the next audit on 2026-08-16 there was exactly **one** `/do` run, and its entry carried no `tokens` key — one opportunity, zero amends, no error anywhere. The hook was registered, executable, and byte-identical to the dev copy; it simply never matched. Root cause: that run was conducted in Russian, and the self-scoping guard was an anchored grep for the English prose lines `Complete. Branch:` / `Models: orchestrator=`. Every guard in the hook is a silent `exit 0` by design — enrichment must never wedge a Stop — so a hook that never triggers is externally indistinguishable from one that correctly had nothing to do. Three things changed in v0.13.0, and the ordering is the lesson:
+
+1. **The spec is the fix.** [`phase-4-finalize.md`](phase-4-finalize.md) §"The announce is a protocol, not prose" now states outright that the §4.13 block is emitted verbatim in English regardless of session language, because two hooks parse it. Say anything you like around it in the user's language; the five lines themselves are a wire format.
+2. **The hook is hardened, not made clever.** It additionally triggers on the machine-readable `Metrics:` line — a literal key, a count, and a path, with no translatable words — instead of trying to enumerate translations. Scoping is unaffected: the real check was always structural (the announce must name a ref that is on the resolved log and still lacks `tokens`), not textual.
+3. **Silence is now debuggable.** `DO_TOKENS_DEBUG=1` prints the reason for each no-op. Any hook whose every failure path is a silent success needs this from day one; shipping without it is what turned a one-line guard mismatch into a release-long blind spot.
+
+The `do-metrics-stop-gate.sh` trigger was deliberately **not** widened the same way. It is enforcement, not enrichment, and widening an enforcement trigger changes what gets blocked; the announce mandate in (1) covers it.
+
+## Why `calibration_size` read 53 % — and why that was the gate's fault, not the reviewer's
+
+`calibration_size` scores the Phase 2.5 self-review's diff-size prediction against the Phase 3.0 `pr_size` verdict. Across 93 post-v0.10.0 runs it sat at **53 % accuracy** — indistinguishable from guessing, on a dimension the skill deliberately de-confounded from `calibration_defect` (75 %) in v0.10.0 specifically to make it readable.
+
+The measurement was broken at the other end. `pr_size` warn caps were flat 800 lines / 20 files for **every** complexity tier, while the H bucket's own plan-time cap is 25 files / 1500 lines. So an H plan approved at 1400 lines PASSed Phase 2.0 and was **guaranteed** to WARN at Phase 3.0 for being exactly the size it had been authorized to be — the two gates contradicted each other by construction. Measured effect: `pr_size` warned on 43 of 86 runs, **80 % of all H runs**; the amber verdict carried no information, and a metric scored against it could not either.
+
+v0.13.0 derives the warn caps from the run's tier (`pr-size-check --tier`), so WARN states one interpretable fact: the delivered diff exceeded the budget its own plan was approved against. Block caps stay flat and tier-independent — unreviewable is unreviewable. Expected effect on the same 93-run cohort: H warn rate 80 % → 57 %, M 22 % → 40 % (M's flat 800 was *looser* than its own 600-line bucket, so the gate gets stricter exactly where it was too permissive). The residual 57 % on H is not threshold noise — it is the finding that H plans systematically under-estimate, which is now a readable signal instead of a constant.
+
+**General lesson for this telemetry system:** a calibration metric is only as meaningful as the gate it scores against. Before concluding "the model predicts badly", check whether the threshold it is being scored against fires on the median case.
+
 ## Why structural coupling + external wrapper, not soft instruction
 
 Three enforcement layers, each addressing a failure mode the previous one missed:

@@ -81,7 +81,7 @@ There's no automated functional test suite — the skill runs through Claude. Sm
 7. **RELEASE GATE — hook live-sim must pass** (both platforms) if your change touches `hooks/`, the §4.13 announce format, `install.sh`'s hook merge, or `uninstall.sh`'s hook removal. The v0.8.0 hooks shipped validated with mock stdin only and had never been live-registered — a wrong payload-field assumption would have made the tier-3 backstop silently no-op forever (audit finding #16). Never again:
 
    ```bash
-   ./skills/do/hooks/hook-live-sim.sh   # macOS/BSD — 39 cases, sandboxed (never touches your real ~/.claude)
+   ./skills/do/hooks/hook-live-sim.sh   # macOS/BSD — 40 cases, sandboxed (never touches your real ~/.claude)
    docker run --rm -v "$PWD":/w -w /w debian:stable-slim bash -c \
      'apt-get -qq update && apt-get -qq install -y jq git python3 >/dev/null 2>&1 && ./skills/do/hooks/hook-live-sim.sh'
    ```
@@ -104,6 +104,18 @@ There's no automated functional test suite — the skill runs through Claude. Sm
 
    ```bash
    bash tests/secret-scan-worktree-scope.test.sh   # 21 assertions, synthetic repos, sandboxed
+   ```
+
+   The per-tier warn caps have a second suite. Run it if you touch either size wrapper — its TEST 3 reads each tier's caps **off `plan-size-check`'s own output** and asserts `pr-size-check` treats exactly those numbers as the WARN boundary. The two tables are duplicated on purpose (each wrapper must work in a bare checkout with no siblings), so editing one alone is caught only here:
+
+   ```bash
+   bash tests/pr-size-tier-warn.test.sh   # 37 assertions, no fixtures needed for most cases
+   ```
+
+   Telemetry integrity has its own suite — run it if you touch `metrics-append` or `metrics-report`. Every case corresponds to a defect found by reading 93 production entries (scope vocabulary drift, duplicate entries, a `specialist_audit` verdict beside an empty detail array, bare-string blockers, a block-rate that could print 200 %):
+
+   ```bash
+   bash tests/telemetry-integrity.test.sh   # 30 assertions, temp logs, sandboxed
    ```
 
 ## Adding a new tracker

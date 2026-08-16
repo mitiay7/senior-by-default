@@ -47,18 +47,44 @@
 #   Everything else is literal. Character classes (`[a-z]`) are NOT supported —
 #   the brackets are escaped and match literally.
 #
+# TIER-AWARE WARN (v0.13.0). The warn caps used to be flat 800/20 for every
+# complexity tier, which put them BELOW the H bucket's own plan-time cap (25
+# files / 1500 lines, `plan-size-check`). Two gates in one pipeline then
+# contradicted each other by construction: an H plan measured at 1400 lines
+# PASSED Phase 2.0 and was GUARANTEED to WARN at Phase 3.0 for being exactly
+# the size it was authorized to be. Telemetry (93 post-v0.10.0 runs): pr_size
+# warned on 43 of 86 runs — 80% of all H runs — so the amber verdict carried no
+# information, and `calibration_size` (which scores the self-review's size
+# prediction against this gate) sat at 53% accuracy, a coin flip.
+#
+# `--tier T|L|M|H` therefore derives the warn caps from that tier's plan
+# bucket, so WARN now states one interpretable fact: *the delivered diff
+# exceeded the budget its own plan was approved against*. Block caps are
+# unchanged and tier-independent — "unreviewable as one PR" is a property of
+# the diff, not of the tier that produced it.
+#
+# Precedence, strictest-wins-last: explicit --warn-* flag > `config.pr_size.*`
+# > tier bucket (only with --tier) > flat defaults. Omitting --tier reproduces
+# pre-0.13 behavior byte-for-byte, which is what `do-pr-size-pretooluse.sh`
+# does: the hook cannot know the run's tier, and it does not need to — it only
+# ever DENIES on BLOCK, and block caps do not vary by tier. WARN text can
+# differ between the two callers; the enforced verdict cannot.
+#
 # Usage:
 #   # A) measure-here (both production callers use this):
-#   pr-size-check --repo DIR [--base REF] [--head REF] [threshold flags]
+#   pr-size-check --repo DIR [--base REF] [--head REF] [--tier T|L|M|H] [threshold flags]
 #   # B) explicit numbers (back-compat; NO generated exclusion — nothing to
 #   #    match paths against, and hand-passed "generated" counts would be
 #   #    exactly the fabrication surface the wrapper exists to remove):
-#   pr-size-check --lines N --files N [threshold flags]
+#   pr-size-check --lines N --files N [--tier T|L|M|H] [threshold flags]
 #
 #   threshold flags: [--warn-lines 800] [--warn-files 20]
 #                    [--block-lines 2000] [--block-files 50]
 #   Explicit threshold flags win over `config.pr_size.*`; whatever neither sets
-#   falls back to the config-schema.md defaults.
+#   falls back to the tier bucket (with --tier) and then to the flat defaults.
+#
+#   tier warn buckets (mirrors plan-size-check, single source of the numbers):
+#     T 2 files / 50 lines · L 3/200 · M 8/600 · H 25/1500
 #
 #   --base resolves origin/<ref> first, then <ref>; with no --base:
 #   origin/HEAD → origin/main → origin/master → main → master. --head is used
@@ -67,6 +93,8 @@
 # Output (stdout, exactly one line — dispatch the spec's `case` on the prefix):
 #   Phase 3.0: PASS — N lines / N files within warn caps (warn WL/WF · block BL/BF)
 #   Phase 3.0: WARN — N lines / N files over warn (WL/WF); breached: [..]; note in PR, proceed
+#   …with ` [warn caps: cli|config|tier X]` after the warn pair whenever the caps
+#   did not come from the flat defaults (per-dimension when the two differ).
 #   Phase 3.0: BLOCK — N lines / N files over block (BL/BF) by +Lo lines/+Fo files; breached: [..]; cannot ship as ONE PR — auto-split (§4.2.1) or --no-split halt
 #   …with ` | generated excluded: H handwritten + G generated = T total lines
 #   (HF + GF = TF files)` appended whenever anything was excluded (never hidden —
@@ -96,8 +124,10 @@ FILES=""
 REPO=""
 BASE=""
 HEAD_IN=""
-# Empty = not set on the CLI. Config fills the gaps; these defaults fill what's
-# left (they mirror config-schema.md pr_size defaults).
+TIER=""
+# Empty = not set on the CLI. Config fills the gaps; the tier bucket fills what
+# config left (only with --tier); these defaults fill what remains (they mirror
+# config-schema.md pr_size defaults).
 WARN_LINES=""
 WARN_FILES=""
 BLOCK_LINES=""
@@ -114,14 +144,22 @@ while [ $# -gt 0 ]; do
     --repo)        REPO="${2:-}";        shift 2 ;;
     --base)        BASE="${2:-}";        shift 2 ;;
     --head)        HEAD_IN="${2:-}";     shift 2 ;;
+    --tier)        TIER="${2:-}";        shift 2 ;;
     --warn-lines)  WARN_LINES="${2:-}";  shift 2 ;;
     --warn-files)  WARN_FILES="${2:-}";  shift 2 ;;
     --block-lines) BLOCK_LINES="${2:-}"; shift 2 ;;
     --block-files) BLOCK_FILES="${2:-}"; shift 2 ;;
-    -h|--help)     sed -n '2,88p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '2,115p' "$0"; exit 0 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
+
+[ -z "$TIER" ] || [[ "$TIER" =~ ^[TLMH]$ ]] || die "--tier must be T|L|M|H, got: $TIER"
+
+# Snapshot the CLI-set warn caps BEFORE the config loop overwrites the empties,
+# so the verdict line can name the real source of each cap (cli / config / tier).
+CLI_WARN_LINES="$WARN_LINES"
+CLI_WARN_FILES="$WARN_FILES"
 
 if [ -n "$REPO" ]; then
   [ -z "$LINES" ] && [ -z "$FILES" ] \
@@ -267,10 +305,40 @@ if [ -n "$REPO" ]; then
   RANGE_NOTE=" | diff $BASEREF...$HEADREF"
 fi
 
-WARN_LINES="${WARN_LINES:-$DEF_WARN_LINES}"
-WARN_FILES="${WARN_FILES:-$DEF_WARN_FILES}"
+# Tier bucket fills whatever the CLI and the config both left unset. These are
+# the SAME numbers plan-size-check gates the plan on — deliberately duplicated
+# rather than shelled out for, because this wrapper must stay usable in a bare
+# checkout with no sibling scripts. Any change here is a change there; the
+# `tests/pr-size-tier-warn.test.sh` suite asserts the two agree.
+TIER_WARN_FILES=""
+TIER_WARN_LINES=""
+case "$TIER" in
+  T) TIER_WARN_FILES=2;  TIER_WARN_LINES=50   ;;
+  L) TIER_WARN_FILES=3;  TIER_WARN_LINES=200  ;;
+  M) TIER_WARN_FILES=8;  TIER_WARN_LINES=600  ;;
+  H) TIER_WARN_FILES=25; TIER_WARN_LINES=1500 ;;
+esac
+
+# Per-dimension, because `--warn-lines 900 --tier H` is legal and must not be
+# labelled as if the whole pair came from one place.
+src_of() {
+  if   [ -n "$1" ]; then echo cli
+  elif [ -n "$2" ]; then echo config
+  elif [ -n "$TIER" ]; then echo "tier $TIER"
+  else echo default; fi
+}
+SRC_L=$(src_of "$CLI_WARN_LINES" "$WARN_LINES")
+SRC_F=$(src_of "$CLI_WARN_FILES" "$WARN_FILES")
+if [ "$SRC_L" = "$SRC_F" ]; then WARN_SRC="$SRC_L"; else WARN_SRC="lines=$SRC_L files=$SRC_F"; fi
+WARN_LINES="${WARN_LINES:-${TIER_WARN_LINES:-$DEF_WARN_LINES}}"
+WARN_FILES="${WARN_FILES:-${TIER_WARN_FILES:-$DEF_WARN_FILES}}"
 BLOCK_LINES="${BLOCK_LINES:-$DEF_BLOCK_LINES}"
 BLOCK_FILES="${BLOCK_FILES:-$DEF_BLOCK_FILES}"
+
+# Where the warn caps came from is part of the verdict: a reader comparing this
+# line against the §2.0 plan verdict must be able to see they used one budget.
+WARN_SRC_NOTE=""
+[ "$WARN_SRC" = "default" ] || WARN_SRC_NOTE=" [warn caps: $WARN_SRC]"
 
 for pair in "LINES=$LINES" "FILES=$FILES" "WARN_LINES=$WARN_LINES" "WARN_FILES=$WARN_FILES" "BLOCK_LINES=$BLOCK_LINES" "BLOCK_FILES=$BLOCK_FILES"; do
   val="${pair#*=}"
@@ -303,9 +371,9 @@ if [ "$LINES" -gt "$BLOCK_LINES" ] || [ "$FILES" -gt "$BLOCK_FILES" ]; then
 fi
 
 if [ "$LINES" -gt "$WARN_LINES" ] || [ "$FILES" -gt "$WARN_FILES" ]; then
-  echo "Phase 3.0: WARN — $LINES lines / $FILES files over warn ($WARN_LINES/$WARN_FILES); breached: $(breached "$WARN_LINES" "$WARN_FILES"); note in PR description, proceed.$TAIL"
+  echo "Phase 3.0: WARN — $LINES lines / $FILES files over warn ($WARN_LINES/$WARN_FILES)$WARN_SRC_NOTE; breached: $(breached "$WARN_LINES" "$WARN_FILES"); note in PR description, proceed.$TAIL"
   exit 0
 fi
 
-echo "Phase 3.0: PASS — $LINES lines / $FILES files within warn caps (warn $WARN_LINES/$WARN_FILES · block $BLOCK_LINES/$BLOCK_FILES)$TAIL"
+echo "Phase 3.0: PASS — $LINES lines / $FILES files within warn caps (warn $WARN_LINES/$WARN_FILES · block $BLOCK_LINES/$BLOCK_FILES)$WARN_SRC_NOTE$TAIL"
 exit 0

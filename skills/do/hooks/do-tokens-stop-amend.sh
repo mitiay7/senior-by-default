@@ -29,17 +29,28 @@
 
 set -uo pipefail
 
+# DIAGNOSING A HOOK THAT NEVER FIRES. Every failure path below is a silent
+# `exit 0` by design — telemetry enrichment must never wedge a Stop — but that
+# also means a hook that is registered, executable, and simply never matching
+# looks identical to a hook that is doing nothing because there was nothing to
+# do. It happened: v0.12.0 shipped this hook and the next /do run recorded no
+# `tokens`, with no way to tell which of eight guards had dropped the turn.
+# `DO_TOKENS_DEBUG=1` prints the reason for each no-op to stderr (visible in
+# the hook's transcript output) and changes nothing else.
+dbg() { [ "${DO_TOKENS_DEBUG:-}" = "1" ] && echo "[do-tokens-stop-amend] $*" >&2; return 0; }
+noop() { dbg "no-op: $*"; exit 0; }
+
 INPUT=$(cat 2>/dev/null || true)
-command -v jq >/dev/null 2>&1 || exit 0   # no jq → cannot evaluate → no-op
+command -v jq >/dev/null 2>&1 || noop "jq not on PATH — cannot evaluate"
 
 SCRIPTS_DIR=$(cd "$(dirname "$0")/../scripts" 2>/dev/null && pwd -P || echo "")
 METRICS_APPEND="$SCRIPTS_DIR/metrics-append"
-[ -x "$METRICS_APPEND" ] || exit 0   # can't amend without the wrapper → no-op
+[ -x "$METRICS_APPEND" ] || noop "metrics-append not executable at $METRICS_APPEND"
 
 jqr() { printf '%s' "$INPUT" | jq -r "$1" 2>/dev/null || true; }
 
 # Loop guard.
-[ "$(jqr '.stop_hook_active')" = "true" ] && exit 0
+[ "$(jqr '.stop_hook_active')" = "true" ] && noop "stop_hook_active=true (loop guard)"
 
 MSG=$(jqr '.last_assistant_message')
 TP=$(jqr '.transcript_path'); TP="${TP/#\~/$HOME}"
@@ -56,31 +67,43 @@ if [ -z "$MSG" ] || [ "$MSG" = "null" ]; then
       | tail -40 || true)
   fi
 fi
-[ -z "$MSG" ] && exit 0
+[ -z "$MSG" ] && noop "no last_assistant_message and none recoverable from the transcript"
 
-# /do finalize signature. Neither present → not a /do finalize turn → no-op.
-printf '%s\n' "$MSG" | grep -qE '^(Complete\. Branch:|Models: orchestrator=)' || exit 0
+# /do finalize signature. None present → not a /do finalize turn → no-op.
+#
+# `^Metrics:` is in the set (v0.13.0) and it is the load-bearing one. The other
+# two are PROSE lines of the §4.13 announce, and prose gets localized: the
+# session that exposed this ran in Russian, and every guard keyed to an English
+# sentence dropped the turn silently. `Metrics:` is a machine line — a literal
+# key, a count, and a filesystem path — so it survives a translated announce.
+# Widening the trigger costs nothing in scoping, because the real scope check is
+# further down and is structural, not textual: the message must name a ref that
+# is on the resolved log AND that has no `tokens` key yet. No match, no write.
+printf '%s\n' "$MSG" | grep -qE '^(Complete\. Branch:|Models: orchestrator=|Metrics:)' \
+  || noop "message carries no /do finalize signature (Complete. Branch: / Models: orchestrator= / Metrics:)"
 
 # Template-quoting guard: a message carrying unexpanded §4.13 variables is
 # quoting/editing the spec, not announcing a finalize.
-printf '%s' "$MSG" | grep -qE '\$(\{)?(METRICS_LINE|METRICS_RESULT|POST_COUNT|EXPECTED|BRANCH_NAME|BRANCH_LINE|ORCHESTRATOR_MODEL)' && exit 0
+printf '%s' "$MSG" | grep -qE '\$(\{)?(METRICS_LINE|METRICS_RESULT|POST_COUNT|EXPECTED|BRANCH_NAME|BRANCH_LINE|ORCHESTRATOR_MODEL)' \
+  && noop "message quotes the §4.13 template (unexpanded variables) — not a real finalize"
 
 # Need a transcript to sum usage from — no transcript path, no enrichment.
-[ -n "$TP" ] && [ -f "$TP" ] || exit 0
+[ -n "$TP" ] && [ -f "$TP" ] || noop "transcript_path missing or not a file: ${TP:-<unset>}"
 
 # Parse the log path out of the Metrics line (closed set — §4.13). Terminal
 # states (not configured / APPEND FAILED) carry no usable path → no-op.
 METRICS_LINE=$(printf '%s\n' "$MSG" | grep -E '^Metrics:' | tail -1)
-[ -n "$METRICS_LINE" ] || exit 0
+[ -n "$METRICS_LINE" ] || noop "no 'Metrics:' line in the announce — nothing names the log to amend"
 case "$METRICS_LINE" in
-  "Metrics: not configured"*) exit 0 ;;
-  "Metrics: APPEND FAILED"*)  exit 0 ;;
+  "Metrics: not configured"*) noop "Metrics: not configured — no log for this repo" ;;
+  "Metrics: APPEND FAILED"*)  noop "Metrics: APPEND FAILED — no entry to enrich" ;;
 esac
 LINE="${METRICS_LINE%.}"
 LINE=$(printf '%s\n' "$LINE" | sed 's/ (pre=[0-9][0-9]* gates=[0-9][0-9]*)$//')
 PATHV=$(printf '%s\n' "$LINE" | sed -n 's/^Metrics:[[:space:]]*[0-9][0-9]*[[:space:]]*entries in \(..*\)$/\1/p')
 PATHV="${PATHV/#\~/$HOME}"
-[ -n "$PATHV" ] && [ -f "$PATHV" ] || exit 0
+[ -n "$PATHV" ] && [ -f "$PATHV" ] \
+  || noop "could not resolve a readable log from: $METRICS_LINE"
 
 # Find the target entry: the LAST log entry whose .ref appears in the announce
 # text AND which has no `tokens` key yet. Ref-match (not "last line") is what
@@ -92,7 +115,8 @@ while IFS= read -r ref; do
   printf '%s' "$MSG" | grep -qF -- "$ref" || continue
   TARGET_REF="$ref"   # keep scanning; last match on-file wins
 done < <(jq -r 'select(has("tokens") | not) | .ref // empty' "$PATHV" 2>/dev/null || true)
-[ -n "$TARGET_REF" ] || exit 0
+[ -n "$TARGET_REF" ] \
+  || noop "no ref from $PATHV appears in the announce and still lacks a tokens key (already amended, or the announce names no on-log ref)"
 
 # Grab the entry's time window to bound the transcript sum. Pad generously:
 # 120s before started_at (Phase 0 preflight vs first model turn) and 900s after
@@ -150,10 +174,13 @@ TOUT=$(printf '%s' "$SUMS" | awk '{print $2}')
 [[ "$TOUT" =~ ^[0-9]+$ ]] || TOUT=0
 # Nothing measured (empty/zero transcript window) → don't write a misleading
 # {in:0,out:0}. Absence stays honest.
-[ "$TIN" -eq 0 ] && [ "$TOUT" -eq 0 ] && exit 0
+[ "$TIN" -eq 0 ] && [ "$TOUT" -eq 0 ] \
+  && noop "transcript window [${LO:-<open>}, ${HI:-<open>}] summed to 0 in / 0 out — writing {in:0,out:0} would be misleading"
 
 # Amend. Silent on any wrapper result — this hook never blocks a Stop.
-"$METRICS_APPEND" --amend-tokens --log "$PATHV" --ref "$TARGET_REF" \
-  --tokens-in "$TIN" --tokens-out "$TOUT" >/dev/null 2>&1 || true
+dbg "amending ref=$TARGET_REF log=$PATHV in=$TIN out=$TOUT"
+AMEND_OUT=$("$METRICS_APPEND" --amend-tokens --log "$PATHV" --ref "$TARGET_REF" \
+  --tokens-in "$TIN" --tokens-out "$TOUT" 2>&1) || true
+dbg "metrics-append said: ${AMEND_OUT:-<no output>}"
 
 exit 0

@@ -34,8 +34,10 @@
 # transitions, self-review calibration accuracy (3 dimensions), per-gate
 # pass/fail table, top failing gates, TIER DETAIL (median wall-minutes /
 # lines / files, mean review cycles, gate-caused fix-cycle rate, normalized
-# rebump transitions), SPECIALIST AUDITS (per-agent auditor appearances /
-# blockers / block-rate from specialist_iterations), TOKENS (per-tier medians
+# rebump transitions), SPECIALIST AUDITS (per-agent review cycles / cycles in
+# which the agent blocked / raw finding count / block-rate — the rate's
+# denominator is cycles the agent took part in, so it cannot exceed 100% the way
+# the pre-0.13 findings-over-appearances ratio did), TOKENS (per-tier medians
 # of the optional harness-reported `tokens` object; a notice line when none
 # recorded), a SOFT DRIFT section (canonical entries whose empty gates or
 # missing self_review.calibration silently contribute nothing to the gate/
@@ -250,29 +252,51 @@ REPORT=$(jq -s \
 
   # --- Specialist table from specialist_iterations (canonical entries only;
   # entries with a missing/empty/non-array list contribute nothing). Names
-  # normalized via split(":") | last. An iteration normally carries
-  # .auditors[] (strings) + .blockers[] (objects with .agent); the legacy
-  # per-agent shape {agent, verdict, …} without .auditors counts its .agent
-  # as one auditor appearance. ---
+  # normalized via split(":") | last — production logs carry BOTH the namespaced
+  # `backend-development:security-auditor` and the bare `security-auditor` for
+  # the same agent, so an un-normalized table would split one agent into two rows.
+  #
+  # PER-ITERATION SETS, not flat counts (v0.13.0). block% used to be
+  # `total blocker records / auditor appearances`, which is a ratio of two
+  # different units: one audit that files three blockers scored 300%. The
+  # printed report showed `silent-failure-hunter 200%` and an implausible
+  # `backend-architect 100%`. The denominator is now the number of ITERATIONS
+  # the agent took part in (auditor OR blocker — an agent that blocked while
+  # missing from .auditors is still a participant, and including it is what
+  # keeps the rate ≤100% by construction), and the numerator is the number of
+  # those iterations in which it filed at least one blocker. The raw finding
+  # count is kept as its own column so nothing is lost.
+  #
+  # An iteration normally carries .auditors[] (strings) + .blockers[] (objects
+  # with .agent); the legacy per-agent shape {agent, verdict, …} without
+  # .auditors counts its .agent as one auditor appearance. Blockers written as
+  # BARE STRINGS instead of objects (a real drift, i1233) are read as the agent
+  # name — pre-fix they crashed `.blockers[].category` consumers and silently
+  # scored 0 here. ---
   | ([$sel[] | .specialist_iterations? | select(type == "array") | .[]
       | select(type == "object")]) as $iters
   | ([$iters[]
-      | (if (.auditors? | type) == "array"
-         then (.auditors[] | select(type == "string"))
-         elif (.agent? | type) == "string" then .agent
-         else empty end)
-      | split(":") | last]) as $aud
-  | ([$iters[] | (.blockers? // []) | (if type == "array" then .[] else empty end)
-      | select(type == "object") | .agent? | select(type == "string")
-      | split(":") | last]) as $blk
-  | ((($aud | unique) + ($blk | unique)) | unique | map(. as $a
+      | { aud: ([ (if (.auditors? | type) == "array"
+                   then (.auditors[] | select(type == "string"))
+                   elif (.agent? | type) == "string" then .agent
+                   else empty end)
+                  | split(":") | last ] | unique),
+          blk: ([ (.blockers? // []) | (if type == "array" then .[] else empty end)
+                  | (if type == "object" then (.agent? // empty) else . end)
+                  | select(type == "string") | split(":") | last ] | unique),
+          nfind: ([ (.blockers? // []) | (if type == "array" then .[] else empty end)
+                  | (if type == "object" then (.agent? // empty) else . end)
+                  | select(type == "string") | split(":") | last ]) }
+      | .part = ((.aud + .blk) | unique) ]) as $rounds
+  | ([$rounds[] | .part[]] | unique | map(. as $a
       | { agent: $a,
-          appearances: ([$aud[] | select(. == $a)] | length),
-          blockers:    ([$blk[] | select(. == $a)] | length) }
+          appearances: ([$rounds[] | select(.part | index($a))]        | length),
+          blocked:     ([$rounds[] | select(.blk  | index($a))]        | length),
+          blockers:    ([$rounds[] | .nfind[] | select(. == $a)]       | length) }
       | .block_rate_pct = (if .appearances > 0
-                           then ((.blockers * 100 / .appearances) | round)
+                           then ((.blocked * 100 / .appearances) | round)
                            else null end))
-    | sort_by([-.appearances, -.blockers, .agent])) as $specialists
+    | sort_by([-.appearances, -.blocked, .agent])) as $specialists
 
   # --- Token usage (optional harness-reported `tokens` object) ---
   | ($sel | map(select(.tokens? | type == "object"))) as $tok
@@ -435,17 +459,18 @@ echo "$REPORT" | jq -r '.rebump_transitions_normalized |
   end'
 
 echo
-echo "SPECIALIST AUDITS (per agent from specialist_iterations; block% = blockers / auditor appearances)"
+echo "SPECIALIST AUDITS (per agent from specialist_iterations; audits = review cycles the agent took part in;"
+echo "                   blocked = of those, cycles where it filed ≥1 blocker; findings = raw blocker records)"
 SPECN=$(echo "$REPORT" | jq -r '.specialists | length')
 if [ "$SPECN" -eq 0 ]; then
   echo "  none recorded"
 else
-  printf '  %-28s %7s %9s %7s\n' "agent" "audits" "blockers" "block%"
+  printf '  %-28s %7s %8s %9s %7s\n' "agent" "audits" "blocked" "findings" "block%"
   echo "$REPORT" | jq -r '.specialists[] |
-    [.agent, .appearances, .blockers,
+    [.agent, .appearances, .blocked, .blockers,
      (.block_rate_pct | if . == null then "-" else "\(.)%" end)] | @tsv' \
-  | while IFS=$'\t' read -r a ap b br; do
-      printf '  %-28s %7s %9s %7s\n' "$a" "$ap" "$b" "$br"
+  | while IFS=$'\t' read -r a ap bd b br; do
+      printf '  %-28s %7s %8s %9s %7s\n' "$a" "$ap" "$bd" "$b" "$br"
     done
 fi
 

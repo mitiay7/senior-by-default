@@ -49,8 +49,18 @@
 #                                     # bucket transitions?).
 #     [--gates-json '{...}' --phase-durations-json '{...}' --review-cycles 1 \
 #      --ci-status skipped --auto-merge false --blocked-reason '' \
-#      --title '...' --scope Backend --notes '...' \
+#      --title '...' --scope backend --notes '...' \
 #      --specialist-iterations-json '[]' --sr-miscalibrated-json '[]']
+#                                 # --scope is normalized to the controlled
+#                                 # vocabulary backend|frontend|fullstack|infra|
+#                                 # docs (case folded, "B"/"F"/"api"/"ui"…
+#                                 # expanded); anything else is preserved with a
+#                                 # stderr NOTE.
+#     [--allow-duplicate-ref]     # bypass the (ref, started_at) duplicate gate.
+#                                 # ONLY for two genuine runs of one ref that
+#                                 # started in the same second. Never use it to
+#                                 # retry a failed-looking append: if the entry
+#                                 # is already on the log, the append SUCCEEDED.
 #     [--tokens-in <N> --tokens-out <N>]
 #                                 # OPTIONAL token usage for this run — populate
 #                                 # ONLY from harness-reported usage; never
@@ -116,6 +126,7 @@ GATES_JSON='{}'
 PHASE_DURATIONS_JSON='{}'
 SPECIALIST_ITERATIONS_JSON='[]'
 SR_MISCALIBRATED_JSON='[]'
+ALLOW_DUPLICATE_REF="false"   # see the duplicate-ref gate below
 ORCHESTRATOR="opus"   # spec mandates orchestrator=opus; caller MAY pass running model id e.g. opus-<version> (never hardcode)
 COMPLEXITY_REBUMPED_FROM=""   # optional: T|L|M if Phase 2.0 plan-size check re-routed; "" if no rebump
 SR_SIZE_ASSESSMENT="n_a"      # raw Phase 2.5 `size_assessment:` value (fits|exceeds|unknown|n_a)
@@ -293,6 +304,7 @@ while [ $# -gt 0 ]; do
     --complexity-rebumped-from)  COMPLEXITY_REBUMPED_FROM="$2";  shift 2 ;;
     --tokens-in)                 TOKENS_IN="$2";                 shift 2 ;;
     --tokens-out)                TOKENS_OUT="$2";                shift 2 ;;
+    --allow-duplicate-ref)       ALLOW_DUPLICATE_REF="true";     shift 1 ;;
     -h|--help)
       sed -n '4,99p' "$0"
       exit 0
@@ -524,6 +536,72 @@ if [ -n "$GATE_NONCANON_STATUS" ]; then
   echo "NOTE gate-normalize: non-canonical gate status(es) preserved: $GATE_NONCANON_STATUS (expected pass|warn|fail|block|skipped)" >&2
 fi
 
+# --- Scope normalization (controlled vocabulary; v0.13.0) -------------------
+# `scope` was free text and drifted exactly as `outcome` and the gate names did
+# before their vocabularies landed. 93 production entries carried ELEVEN
+# spellings of six concepts: backend(27) + Backend(24) + B(3), Frontend(14) +
+# frontend(4) + F(1), fullstack(9), landing(2), docs(2), infra(1), ""(6) — so
+# `group_by(.scope)` split one bucket into three and no per-scope aggregate was
+# trustworthy. Policy mirrors the gate-name normalizer deliberately: fold case,
+# expand the single-letter shorthands, map known synonyms — and PRESERVE
+# anything outside the vocabulary with a stderr NOTE rather than REJECT. A hard
+# reject on a descriptive field would push the caller toward the §19a
+# direct-write bypass, which costs the whole entry to save one string.
+SCOPE_RAW="$SCOPE"
+if [ -n "$SCOPE" ]; then
+  SCOPE_LC=$(printf '%s' "$SCOPE" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+  case "$SCOPE_LC" in
+    b|be|backend|api|server)              SCOPE="backend"   ;;
+    f|fe|frontend|ui|web|client)          SCOPE="frontend"  ;;
+    fs|fullstack|full-stack|both|be+fe)   SCOPE="fullstack" ;;
+    infra|infrastructure|ops|devops|ci)   SCOPE="infra"     ;;
+    docs|doc|documentation)               SCOPE="docs"      ;;
+    *)                                    SCOPE="$SCOPE_LC" ;;
+  esac
+  case "$SCOPE" in
+    backend|frontend|fullstack|infra|docs) : ;;
+    *) echo "NOTE scope-normalize: '$SCOPE' is not in the controlled vocabulary (backend|frontend|fullstack|infra|docs) — preserved as-is; per-scope aggregates will treat it as its own bucket" >&2 ;;
+  esac
+  [ "$SCOPE" = "$SCOPE_RAW" ] \
+    || echo "NOTE scope-normalize: '$SCOPE_RAW' → '$SCOPE'" >&2
+fi
+
+# --- specialist_iterations shape normalization (v0.13.0) --------------------
+# `blockers` is specified as an array of {agent, category, file_line, summary}
+# objects, but the wrapper only ever checked the array's LENGTH, so a caller
+# could write bare agent-name strings and the entry sailed through the schema
+# gate (real drift: i1233, both of its cycles). Downstream that is not cosmetic
+# — every consumer doing `.blockers[].category` dies mid-report with
+# "Cannot index string with string", and `metrics-report` scored those blockers
+# as zero. Bare strings are lifted to `{agent: "<the string>"}`: the one field
+# the string actually carries is filled and the rest are left ABSENT rather than
+# stubbed, because inventing a category/summary here would be fabrication of
+# exactly the kind the anti-stub gate below exists to catch.
+if [ "$SPECIALIST_ITERATIONS_JSON" != "[]" ]; then
+  SI_FIXED=$(echo "$SPECIALIST_ITERATIONS_JSON" | jq -c '
+    [ .[] | if type == "object" and ((.blockers? | type) == "array")
+            then .blockers |= [ .[] | if type == "string" then {agent: .} else . end ]
+            else . end ]') \
+    || die "--specialist-iterations-json is not a JSON array of objects: $SPECIALIST_ITERATIONS_JSON"
+  SI_LIFTED=$(echo "$SPECIALIST_ITERATIONS_JSON" | jq '[.[]? | (.blockers? // []) | (if type=="array" then .[] else empty end) | select(type=="string")] | length' 2>/dev/null || echo 0)
+  if [ "${SI_LIFTED:-0}" -gt 0 ]; then
+    echo "NOTE specialist-normalize: lifted $SI_LIFTED bare-string blocker(s) to {\"agent\": …} — the documented shape is {agent, category, file_line, summary}; category/summary are absent, not stubbed. Pass the full objects and the finding text survives into the report." >&2
+  fi
+  SPECIALIST_ITERATIONS_JSON="$SI_FIXED"
+
+  # Agent naming drift: production logs carry BOTH `backend-development:security-auditor`
+  # and bare `security-auditor` for the same agent — sometimes inside one log.
+  # Not normalized here on purpose (the plugin prefix is real information and
+  # this wrapper has no manifest to expand a bare name against); consumers
+  # normalize on read. Surfaced so the drift is visible at write time.
+  SI_MIXED=$(echo "$SPECIALIST_ITERATIONS_JSON" | jq -r '
+    [ .[]? | ((.auditors? // []) + ((.blockers? // []) | map(.agent? // empty))) | .[]? | select(type=="string") ]
+    | map({bare: (split(":") | last), ns: (contains(":"))})
+    | group_by(.bare) | map(select((map(.ns) | unique | length) > 1) | .[0].bare) | join(",")' 2>/dev/null || true)
+  [ -z "$SI_MIXED" ] \
+    || echo "NOTE specialist-normalize: agent(s) named in BOTH namespaced and bare form in this entry: $SI_MIXED — pick one spelling (the namespaced 'plugin:agent' is canonical); consumers fold them, but the log reads as two agents." >&2
+fi
+
 # Anti-stub validation for specialist_iterations: reject if ANY cycle has
 # auditors=[] AND approvers=[] AND blockers=[] (the i1023 fabrication
 # pattern — sub-agent fabricated a 4-cycle structure with all-empty
@@ -539,6 +617,24 @@ if [ "$SPECIALIST_ITERATIONS_JSON" != "[]" ]; then
   )] | length')
   [ "$STUB_CYCLES" -eq 0 ] || die "--specialist-iterations-json contains $STUB_CYCLES all-empty cycle(s) (auditors=[], approvers=[], blockers=[] — stub pattern observed in i1023 fabrication). Real cycles MUST have at least auditors populated. If specialists genuinely didn't run for a cycle, omit the cycle from the array — don't fabricate placeholder shape."
 fi
+
+# --- The gate and the detail array must agree (v0.13.0) ---------------------
+# A run whose `specialist_audit` gate has a real verdict but whose
+# specialist_iterations is `[]` is self-contradictory: the gate says N agents
+# reviewed the diff, the array says nobody did. It parses, it passes the schema
+# gate, and it silently contributes NOTHING to the SPECIALIST AUDITS aggregate —
+# which is why the contradiction went unnoticed for 14 of 34 audited runs
+# (i1540 recorded `auditors: 4, approvers: 4` in the gate details and `[]` here).
+# Same class as the outcome↔blocked_reason check above: a contradiction fully
+# expressible in the wrapper's own inputs, so the wrapper rejects it.
+# `skipped` (or an absent gate) is the honest "no specialists ran" and is fine.
+SPECIALIST_GATE_STATUS=$(echo "$GATES_JSON" | jq -r '.specialist_audit.status // ""' 2>/dev/null || true)
+case "$SPECIALIST_GATE_STATUS" in
+  pass|warn|fail|block)
+    [ "$SPECIALIST_ITERATIONS_JSON" != "[]" ] \
+      || die "gates.specialist_audit.status=$SPECIALIST_GATE_STATUS but --specialist-iterations-json is [] — contradictory: the gate says specialists reviewed this diff, the detail array says none ran. Pass the real cycles: [{\"cycle\":1,\"auditors\":[...],\"approvers\":[...],\"blockers\":[{\"agent\",\"category\",\"file_line\",\"summary\"}]}] (phase-3-review.md §3.6). If specialists genuinely did NOT run, the gate status is \"skipped\", not $SPECIALIST_GATE_STATUS."
+    ;;
+esac
 
 # --- Calibration computation (wrapper-owned; formula = phase-4-finalize.md §4.11) ---
 #
@@ -737,6 +833,22 @@ if [ -f "$LOG_PATH" ]; then
     echo "NOTE terminator-repair: $LOG_PATH did not end in a newline (interrupted prior write) — repaired before appending" >&2
   fi
   PRE_COUNT=$(wc -l < "$LOG_PATH" | tr -d ' ')
+
+  # --- Duplicate-entry gate (v0.13.0; inside the lock, so it cannot race) ----
+  # Identity is (ref, started_at), not ref alone: re-running /do on the same
+  # issue is legitimate and produces a genuinely new run with a new start time,
+  # while a re-fired finalize, a retried append, or a copy-pasted command
+  # repeats BOTH. Production logs carry both failure modes — i1183 appears as a
+  # byte-identical duplicate line, i1233 twice with different bodies — and every
+  # aggregate downstream (tier counts, gate pass rates, calibration accuracy)
+  # silently double-counts them. Escape hatch for the real-but-rare case of two
+  # runs starting inside the same second: --allow-duplicate-ref.
+  if [ "$ALLOW_DUPLICATE_REF" != "true" ] && command -v jq >/dev/null 2>&1; then
+    DUP=$(jq -r --arg r "$REF" --arg s "$STARTED_AT" \
+      'select(type == "object" and .ref == $r and .started_at == $s) | .ref' \
+      "$LOG_PATH" 2>/dev/null | head -1 || true)
+    [ -z "$DUP" ] || die "duplicate entry: ref=$REF started_at=$STARTED_AT is already in $LOG_PATH — appending it again double-counts this run in every aggregate (tier counts, gate pass rates, calibration accuracy). If the previous append succeeded, you are done: do NOT retry. If this really is a second run of the same ref, it has its own --started-at; pass --allow-duplicate-ref only when two runs genuinely started in the same second."
+  fi
 else
   PRE_COUNT=0
 fi
